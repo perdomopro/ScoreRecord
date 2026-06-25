@@ -1,0 +1,8 @@
+*.sh text eol=lf
+deploy/systemd/* text eol=lf
+*.service text eol=lf
+*.timer text eol=lf
+*.ps1 text eol=crlf
+*.py text eol=lf
+*.sql text eol=lf
+*.md text eol=lf
