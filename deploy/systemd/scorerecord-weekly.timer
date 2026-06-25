@@ -1,0 +1,10 @@
+[Unit]
+Description=Run ScoreRecord weekly monitoring
+
+[Timer]
+OnCalendar=Sun 09:00:00
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

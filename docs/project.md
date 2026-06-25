@@ -104,6 +104,7 @@ Fase 6 is deployment:
 
 - Use SSH keys and rotated secrets.
 - Run systemd timers with `MemoryMax`, `Nice`, and single-job scheduling.
+- Deploy to `/home/adrian/scorerecord` on the homeserver with a dedicated SSH key, not password automation.
 
 ## Current Commands
 
@@ -347,6 +348,15 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added `compute-clv` to compare paper recommendations against later closing odds and aggregate CLV into `eval_metric`.
 - Added Fase 4 tests for odds parsing, de-vig, edge persistence, Kelly sizing, recommendation generation, and CLV.
 - Verified dry-run state: 88 resolved fixtures ready for odds fetch, no edge/recommendation/CLV rows until real odds are stored.
+
+### 2026-06-24 - Homeserver deployment packaging
+
+- Added `deploy/bootstrap_homeserver.sh` to create the server virtualenv, install ScoreRecord, initialize SQLite, create `.env` when missing, and install user systemd units.
+- Added `deploy/Deploy-ScoreRecord.ps1` to archive the current committed tree, copy it to `/home/adrian/scorerecord`, bootstrap, and run smoke checks over SSH.
+- Added user systemd units/timers for hourly odds, daily predictions/recommendations, nightly settlement/CLV, and weekly monitoring.
+- Set conservative homeserver resource limits: 2 BLAS/OpenMP threads, `MemoryMax` 700M-900M, `Nice=10`, and idle IO scheduling.
+- Updated `docs/deployment.md` with the SSH-key flow and operational gates.
+- Current deployment blocker: `adrian@homeserver` is reachable, but no SSH key is authorized yet; password automation is intentionally avoided so secrets do not land in commands, logs, or files.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 

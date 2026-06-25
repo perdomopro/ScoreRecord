@@ -1,0 +1,13 @@
+[Unit]
+Description=ScoreRecord hourly odds fetch
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/adrian/scorerecord
+EnvironmentFile=/home/adrian/scorerecord/.env
+Environment=OMP_NUM_THREADS=2
+Environment=OPENBLAS_NUM_THREADS=2
+MemoryMax=700M
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/home/adrian/scorerecord/.venv/bin/scorerecord fetch-odds

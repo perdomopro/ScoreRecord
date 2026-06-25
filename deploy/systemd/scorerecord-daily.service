@@ -1,0 +1,13 @@
+[Unit]
+Description=ScoreRecord daily predictions and paper recommendations
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/adrian/scorerecord
+EnvironmentFile=/home/adrian/scorerecord/.env
+Environment=OMP_NUM_THREADS=2
+Environment=OPENBLAS_NUM_THREADS=2
+MemoryMax=900M
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/bin/sh -lc '/home/adrian/scorerecord/.venv/bin/scorerecord predict-fixtures && /home/adrian/scorerecord/.venv/bin/scorerecord compute-edge && /home/adrian/scorerecord/.venv/bin/scorerecord recommend'
