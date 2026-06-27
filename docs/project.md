@@ -232,6 +232,7 @@ Odds-API.io integration notes:
 - Event mapping uses `/events?sport=football`; odds fetch uses `/odds?eventId=...`.
 - Default league filter: `international-fifa-world-cup`.
 - Event lookup is narrowed to the pending fixture date window and retried to avoid wasting time on broad event queries.
+- Local fixtures are matched by UTC kickoff date to handle venues whose local date differs from the API UTC date.
 - API key is read from `ODDS_API_IO_KEY` in environment or local `.env`.
 - Default selected bookmakers are read from `ODDS_API_IO_BOOKMAKERS` and currently default to `Bet365,Unibet`.
 - Free-tier discipline: `fetch-odds` defaults to 90 fixture odds requests and 36 seconds between odds calls.
@@ -239,7 +240,7 @@ Odds-API.io integration notes:
 
 Latest local Fase 4 dry-runs:
 
-- `fetch-odds --dry-run --min-interval-seconds 0`: 38 pending resolved fixtures planned, 0 rows inserted, 39 planned API requests including the event-index request.
+- `fetch-odds --dry-run --min-interval-seconds 0`: pending resolved future fixtures only; the exact count moves as matches kick off and results arrive.
 - `compute-edge --dry-run`: 0 rows analyzed because no real odds are stored yet.
 - `recommend --dry-run`: 0 recommendations because no edge run exists yet.
 - `compute-clv --dry-run`: 0 CLV rows because no paper recommendations and closing odds exist yet.
@@ -353,6 +354,7 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Refined `fetch-odds` to target only pending resolved fixtures, avoiding wasted requests on fixtures already carrying final scores.
 - Narrowed Odds-API.io event lookup to the pending fixture date window and added network retries for event/odds fetches.
 - Added `ODDS_API_IO_LEAGUE` and defaulted real odds lookup to `international-fifa-world-cup`, avoiding broad all-football event scans.
+- Refined `fetch-odds` again to skip fixtures whose UTC kickoff is already in the past and to match events by UTC date.
 
 ### 2026-06-24 - Homeserver deployment packaging
 

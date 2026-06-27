@@ -7,12 +7,13 @@ are intentionally handled in later steps so each layer stays auditable.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -350,7 +351,7 @@ def _candidate_fixtures(conn: sqlite3.Connection, *, fixture_id: str | None) -> 
     if fixture_id:
         filter_sql = "AND f.fixture_id = ?"
         params = (fixture_id,)
-    return conn.execute(
+    rows = conn.execute(
         f"""
         SELECT
           f.fixture_id, f.kickoff_local, f.kickoff_utc,
@@ -367,6 +368,12 @@ def _candidate_fixtures(conn: sqlite3.Connection, *, fixture_id: str | None) -> 
         """,
         params,
     ).fetchall()
+    now_utc = datetime.now(timezone.utc)
+    return [
+        row
+        for row in rows
+        if (_row_kickoff_utc(row) is None or _row_kickoff_utc(row) > now_utc)
+    ]
 
 
 def _fetch_event_index(
@@ -379,7 +386,7 @@ def _fetch_event_index(
 ) -> tuple[dict[tuple[str, str, str], str], int]:
     if not fixtures:
         return {}, 0
-    dates = [str(row["kickoff_local"] or row["kickoff_utc"] or "")[:10] for row in fixtures]
+    dates = [_fixture_utc_date(row) for row in fixtures]
     earliest = min(date for date in dates if date)
     latest = max(date for date in dates if date)
     params = {
@@ -411,10 +418,45 @@ def _fetch_event_index(
 
 
 def _match_event_id(fixture: sqlite3.Row, index: dict[tuple[str, str, str], str]) -> str | None:
-    fixture_date = str(fixture["kickoff_local"] or fixture["kickoff_utc"] or "")[:10]
+    fixture_date = _fixture_utc_date(fixture)
     home = normalize_key(str(fixture["home_name"]))
     away = normalize_key(str(fixture["away_name"]))
     return index.get((fixture_date, home, away)) or index.get((fixture_date, away, home))
+
+
+def _fixture_utc_date(row: sqlite3.Row) -> str:
+    kickoff = _row_kickoff_utc(row)
+    if kickoff is not None:
+        return kickoff.date().isoformat()
+    return str(row["kickoff_local"] or row["kickoff_utc"] or "")[:10]
+
+
+def _row_kickoff_utc(row: sqlite3.Row) -> datetime | None:
+    if row["kickoff_utc"]:
+        return _parse_datetime(str(row["kickoff_utc"]))
+    kickoff_local = row["kickoff_local"]
+    if not kickoff_local:
+        return None
+    match = re.match(
+        r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})\s+UTC([+-]\d{1,2})$",
+        str(kickoff_local),
+    )
+    if not match:
+        return None
+    date_part, hour, minute, offset_hours = match.groups()
+    offset = timezone(timedelta(hours=int(offset_hours)))
+    local_dt = datetime.fromisoformat(f"{date_part}T{hour}:{minute}:00").replace(tzinfo=offset)
+    return local_dt.astimezone(timezone.utc)
+
+
+def _parse_datetime(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _fetch_odds_payload(
