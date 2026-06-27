@@ -366,6 +366,17 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Updated `docs/deployment.md` with the SSH-key flow and operational gates.
 - Homeserver deployment was verified with an SSH key; public data pipeline ran successfully on the server and published 1672 fixture predictions.
 
+### 2026-06-26 - Homeserver operational activation
+
+- Deployed ScoreRecord to `/home/adrian/scorerecord` on the homeserver using the dedicated SSH key `~/.ssh/scorerecord_homeserver`.
+- Ran the public-data pipeline remotely: 104 fixtures, 8155 historical matches, 10213 goals, 284 Elo-rated teams, 16310 Elo-history rows.
+- Remote validation matched local expectations: Dixon-Coles + Platt model manifest `dixon_coles:hl3y:platt-goals-v1`, validated `run_id=5`, prediction `run_id=6`.
+- Configured `ODDS_API_IO_KEY` in the remote `.env` through stdin without committing or printing the secret.
+- Verified real Odds-API.io ingestion on one pending World Cup fixture: 10 raw odds rows, 2 bookmakers, 2 markets.
+- Ran `compute-edge` on the remote odds sample: 10 analyzed rows, 2 edges above 5%, max EV edge 6.56%.
+- Generated the first paper recommendation: Croatia home 1X2 at Unibet, model probability 0.6020, odds 1.77, EV edge 6.56%, stake 0.0213 units, confidence medium.
+- Started user systemd timers for hourly odds, daily predictions/recommendations, nightly settlement/CLV, and weekly monitoring.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.
