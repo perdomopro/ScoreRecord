@@ -108,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     recommend = subparsers.add_parser("recommend", help="Generate paper recommendations.")
     recommend.add_argument("--edge-run-id", type=int)
     recommend.add_argument("--min-edge", type=float, default=0.05)
+    recommend.add_argument("--max-edge", type=float, default=0.25)
     recommend.add_argument("--min-prob", type=float, default=0.15)
     recommend.add_argument("--kelly-fraction", type=float, default=0.25)
     recommend.add_argument("--max-stake", type=float, default=1.0)
@@ -291,6 +292,7 @@ def main(argv: list[str] | None = None) -> int:
                 conn,
                 edge_run_id=args.edge_run_id,
                 min_edge=args.min_edge,
+                max_edge=args.max_edge,
                 min_prob=args.min_prob,
                 kelly_fraction=args.kelly_fraction,
                 max_stake=args.max_stake,

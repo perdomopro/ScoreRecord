@@ -226,7 +226,7 @@ Fase 4 is implemented as a paper pipeline, not a staking pipeline:
 
 - `fetch-odds`: maps local resolved fixtures to Odds-API.io events and stores raw odds in `odds`.
 - `compute-edge`: applies multiplicative de-vig and writes EV/probability edge to `edge_analysis`.
-- `recommend`: creates paper recommendations from the latest edge run, using a 5% default EV threshold, 15% minimum model probability, quarter Kelly, and 1-unit cap.
+- `recommend`: creates paper recommendations from the latest edge run, using a 5% default EV threshold, 25% max EV sanity cap, 15% minimum model probability, quarter Kelly, and 1-unit cap.
 - `compute-clv`: compares paper recommendations to later `is_closing=1` odds and writes granular CLV to `recommendation_result`.
 - `calibrator-drift`: compares Platt coefficients between the two latest fixture-prediction runs and records drift alerts in `data_quality`.
 
@@ -408,6 +408,14 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Recomputed homeserver edge in `run_id=23`: 48 odds rows analyzed, 10 close-match rows, 12 positive edges above 3%, 9 above 5%, max EV edge 42.32%.
 - Verified `calibrator-drift` on the homeserver: previous prediction run `16`, current prediction run `18`, 4 markets compared, max relative change 0.0000, 0 alerts.
 - Kept recommendations in dry-run after the larger odds sample: default 5% threshold would emit 5 recommendations from 9 candidates; 3% discovery threshold would emit 7 from 12 candidates. No new paper recommendation rows were inserted pending manual review of the high-edge 1X2 prices.
+
+### 2026-06-27 - High-edge guardrails
+
+- Diagnosed homeserver rows with EV edge above 20%. The affected fixtures were `Panama-England`, `Colombia-Portugal`, and `Algeria-Austria`; fixture IDs resolved to the expected teams, so no obvious fixture cross-match was found.
+- The extreme values came from 1X2 model-market disagreement on long prices, not missing Elo fallbacks or unresolved teams.
+- Added `edge_sanity` records in `data_quality`; every real `compute-edge` run now logs `high_edge_alert` and `high_edge_rows` with severity and top-edge details when any EV edge exceeds 25%.
+- Added `recommend --max-edge`, defaulting to `0.25`, so paper recommendations exclude implausibly high edges unless explicitly overridden for manual investigation.
+- Added regression tests for both the high-edge alert and the recommendation cap.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 

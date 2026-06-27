@@ -83,6 +83,7 @@ def generate_recommendations(
     model_version: str = MODEL_VERSION,
     edge_run_id: int | None = None,
     min_edge: float = 0.05,
+    max_edge: float = 0.25,
     min_prob: float = 0.15,
     kelly_fraction: float = 0.25,
     max_stake: float = 1.0,
@@ -94,6 +95,7 @@ def generate_recommendations(
         model_version=model_version,
         edge_run_id=edge_run_id,
         min_edge=min_edge,
+        max_edge=max_edge,
         min_prob=min_prob,
     )
     best = _best_candidates(candidates)
@@ -225,6 +227,7 @@ def _recommendation_candidates(
     model_version: str,
     edge_run_id: int | None,
     min_edge: float,
+    max_edge: float,
     min_prob: float,
 ) -> list[RecommendationCandidate]:
     run_id = edge_run_id or _latest_edge_run(conn)
@@ -237,10 +240,11 @@ def _recommendation_candidates(
         WHERE run_id = ?
           AND model_version = ?
           AND edge_ev >= ?
+          AND edge_ev <= ?
           AND prob_model >= ?
         ORDER BY edge_ev DESC
         """,
-        (run_id, model_version, min_edge, min_prob),
+        (run_id, model_version, min_edge, max_edge, min_prob),
     ).fetchall()
     return [
         RecommendationCandidate(
@@ -307,6 +311,7 @@ def _record_recommendation_quality(
         "recommendations": summary.recommendations,
         "rows_inserted": summary.rows_inserted,
         "min_edge_policy": "paper recommendations only",
+        "max_edge_policy": "edges above the cap require manual review before recommendation",
         "max_edge_ev": max((candidate.edge_ev for candidate in candidates), default=None),
     }
     for metric_name, value in [

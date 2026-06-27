@@ -13,6 +13,9 @@ from scorerecord.models.manifest import MODEL_VERSION
 from scorerecord.runs import ingest_run, record_quality
 
 
+HIGH_EDGE_ALERT_THRESHOLD = 0.25
+
+
 @dataclass(frozen=True)
 class EdgeSummary:
     rows_analyzed: int
@@ -347,6 +350,11 @@ def _record_edge_quality(
 ) -> None:
     by_market: dict[str, list[float]] = {}
     close_edges = [row.edge_ev for row in rows if row.close_match == 1]
+    high_edges = sorted(
+        (row for row in rows if row.edge_ev > HIGH_EDGE_ALERT_THRESHOLD),
+        key=lambda row: row.edge_ev,
+        reverse=True,
+    )
     for row in rows:
         by_market.setdefault(row.market, []).append(row.edge_ev)
     details = {
@@ -382,6 +390,42 @@ def _record_edge_quality(
             metric_name,
             float(value),
             json.dumps(details, sort_keys=True),
+        )
+
+    sanity_details = {
+        "severity": "high" if high_edges else "ok",
+        "threshold": HIGH_EDGE_ALERT_THRESHOLD,
+        "high_edge_rows": len(high_edges),
+        "max_edge_ev": summary.max_edge_ev,
+        "top_edges": [
+            {
+                "fixture_id": row.fixture_id,
+                "market": row.market,
+                "selection": row.selection,
+                "bookmaker": row.bookmaker,
+                "prob_model": row.prob_model,
+                "odds_decimal": row.odds_decimal,
+                "prob_market_devig": row.prob_market_devig,
+                "edge_ev": row.edge_ev,
+                "elo_diff": row.elo_diff,
+                "close_match": row.close_match,
+                "captured_utc": row.captured_utc,
+            }
+            for row in high_edges[:10]
+        ],
+        "action": "Review fixture matching, raw odds, and model disagreement before emitting recommendations.",
+    }
+    for metric_name, value in [
+        ("high_edge_alert", 1.0 if high_edges else 0.0),
+        ("high_edge_rows", float(len(high_edges))),
+    ]:
+        record_quality(
+            conn,
+            run_id,
+            "edge_sanity",
+            metric_name,
+            float(value),
+            json.dumps(sanity_details, sort_keys=True),
         )
     for market, values in by_market.items():
         record_quality(

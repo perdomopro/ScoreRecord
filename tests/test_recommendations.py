@@ -59,6 +59,32 @@ def test_generate_recommendations_uses_latest_edge_run() -> None:
     assert row["confidence"] == "high"
 
 
+def test_generate_recommendations_excludes_implausibly_high_edges_by_default() -> None:
+    conn = _conn()
+    edge_run_id = _run(conn, "compute-edge")
+    conn.execute(
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m3', '2026-06-11 13:00 UTC-6')"
+    )
+    conn.execute(
+        """
+        INSERT INTO edge_analysis (
+          fixture_id, run_id, model_version, market, selection, prob_model,
+          odds_decimal, prob_market_devig, edge_ev, edge_prob, bookmaker,
+          captured_utc, generated_utc
+        )
+        VALUES ('m3', ?, ?, '1X2', 'home', 0.35, 4.00, 0.25,
+                0.40, 0.10, 'Bet365', '2026-06-10T01:00:00+00:00',
+                '2026-06-10T02:00:00+00:00')
+        """,
+        (edge_run_id, MODEL_VERSION),
+    )
+
+    summary = generate_recommendations(conn)
+
+    assert summary.candidates_seen == 0
+    assert summary.recommendations == 0
+
+
 def test_compute_recommendation_clv_matches_closing_odds() -> None:
     conn = _conn()
     recommendation_run_id = _run(conn, "recommend")

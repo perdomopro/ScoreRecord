@@ -63,7 +63,7 @@ def test_compute_edges_persists_complete_market_rows() -> None:
             """,
             (selection, prob, 1.0 / prob, MODEL_VERSION),
         )
-    for selection, odds in [("home", 2.00), ("draw", 3.50), ("away", 4.00)]:
+    for selection, odds in [("home", 2.40), ("draw", 3.50), ("away", 4.00)]:
         conn.execute(
             """
             INSERT INTO odds (
@@ -83,3 +83,13 @@ def test_compute_edges_persists_complete_market_rows() -> None:
     ).fetchone()
     assert round(float(row["elo_diff"]), 8) == 60.0
     assert int(row["close_match"]) == 1
+    alert = conn.execute(
+        """
+        SELECT metric_value, details_json
+        FROM data_quality
+        WHERE check_name = 'edge_sanity'
+          AND metric_name = 'high_edge_alert'
+        """
+    ).fetchone()
+    assert alert["metric_value"] == 1.0
+    assert "severity" in alert["details_json"]

@@ -35,7 +35,7 @@ scorerecord settle-fixtures --dry-run
 scorerecord fetch-odds --dry-run
 scorerecord fetch-odds --closing --closing-window-minutes 60 --dry-run
 scorerecord compute-edge --dry-run
-scorerecord recommend --dry-run
+scorerecord recommend --max-edge 0.25 --dry-run
 scorerecord compute-clv --dry-run
 scorerecord calibrator-drift
 scorerecord db-summary
