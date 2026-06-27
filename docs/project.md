@@ -429,6 +429,8 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - `recommendation` rows now persist the source `edge_run_id`, `recommendation_score`, `odds_quality_flags`, and `high_edge_reason` for GUI audit surfaces.
 - Odds market-depth checks normalize bookmaker variants such as `Bet365` and `Bet365 (no latency)` into one bookmaker family, so duplicated feeds do not inflate `odds_books`.
 - Added regression tests for odds-quality exclusion, bookmaker-family depth, and anti-correlation by fixture.
+- Deployed the controls to the homeserver and recomputed edge in `run_id=55`: 59 rows analyzed, all with `odds_books=2` after bookmaker-family normalization, 8 rows flagged `stale_odds`, and 51 rows unflagged.
+- Verified `recommend --dry-run` with default policy: 14 candidates passed freshness/depth/max-edge filters, 3 recommendations remained after max 1 pick per fixture. No new recommendation rows were inserted.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
