@@ -8,12 +8,15 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 
 from scorerecord.models.manifest import MODEL_VERSION
 from scorerecord.runs import ingest_run, record_quality
 
 
 HIGH_EDGE_ALERT_THRESHOLD = 0.25
+ODDS_OUTLIER_RATIO = 1.20
+STALE_ODDS_MINUTES = 180.0
 
 
 @dataclass(frozen=True)
@@ -48,11 +51,20 @@ class EdgeRow:
     selection: str
     prob_model: float
     odds_decimal: float
+    raw_implied_prob: float
     prob_market_devig: float
+    market_overround: float
     edge_ev: float
     edge_prob: float
     elo_diff: float | None
     close_match: int | None
+    odds_books: int
+    median_odds: float
+    odds_ratio_to_median: float
+    odds_age_minutes: float | None
+    odds_quality_flags: str
+    high_edge_reason: str
+    recommendation_score: float
     bookmaker: str
     captured_utc: str
     prediction_generated_utc: str | None
@@ -99,11 +111,14 @@ def compute_edges(
                 """
                 INSERT OR REPLACE INTO edge_analysis (
                   fixture_id, run_id, prediction_run_id, model_version, market,
-                  selection, prob_model, odds_decimal, prob_market_devig,
-                  edge_ev, edge_prob, elo_diff, close_match, bookmaker, captured_utc,
+                  selection, prob_model, odds_decimal, raw_implied_prob,
+                  prob_market_devig, market_overround, edge_ev, edge_prob,
+                  elo_diff, close_match, odds_books, median_odds,
+                  odds_ratio_to_median, odds_age_minutes, odds_quality_flags,
+                  high_edge_reason, recommendation_score, bookmaker, captured_utc,
                   prediction_generated_utc, generated_utc
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row.fixture_id,
@@ -114,11 +129,20 @@ def compute_edges(
                     row.selection,
                     row.prob_model,
                     row.odds_decimal,
+                    row.raw_implied_prob,
                     row.prob_market_devig,
+                    row.market_overround,
                     row.edge_ev,
                     row.edge_prob,
                     row.elo_diff,
                     row.close_match,
+                    row.odds_books,
+                    row.median_odds,
+                    row.odds_ratio_to_median,
+                    row.odds_age_minutes,
+                    row.odds_quality_flags,
+                    row.high_edge_reason,
+                    row.recommendation_score,
                     row.bookmaker,
                     row.captured_utc,
                     row.prediction_generated_utc,
@@ -143,6 +167,8 @@ def _edge_rows(
     odds_rows = _latest_odds(conn, bookmaker=bookmaker)
     prediction_rows = _latest_predictions(conn, model_version=model_version)
     fixture_context = _fixture_context(conn)
+    market_stats = _selection_market_stats(odds_rows)
+    as_of = datetime.now(timezone.utc)
     rows: list[EdgeRow] = []
     for key, selections in odds_rows.items():
         fixture_id, book, market = key
@@ -153,6 +179,7 @@ def _edge_rows(
         devig_probs = _devig_market(selections)
         if not devig_probs:
             continue
+        overround = _market_overround(selections)
         for selection, odds_row in selections.items():
             pred = predictions.get(selection)
             market_prob = devig_probs.get(selection)
@@ -163,6 +190,39 @@ def _edge_rows(
                 continue
             edge_ev, edge_prob = compute_edge(float(pred["prob"]), market_prob, odds_decimal)
             elo_diff, close_match = fixture_context.get(str(fixture_id), (None, None))
+            raw_implied_prob = 1.0 / odds_decimal
+            stats = market_stats.get(
+                (str(fixture_id), str(market), str(selection)),
+                {
+                    "odds_books": 1,
+                    "median_odds": odds_decimal,
+                },
+            )
+            median_odds = float(stats["median_odds"])
+            odds_ratio_to_median = odds_decimal / median_odds if median_odds > 0 else 1.0
+            odds_age_minutes = _odds_age_minutes(str(odds_row["captured_utc"]), as_of)
+            odds_quality_flags = _odds_quality_flags(
+                odds_books=int(stats["odds_books"]),
+                odds_ratio_to_median=odds_ratio_to_median,
+                odds_age_minutes=odds_age_minutes,
+            )
+            high_edge_reason = _high_edge_reason(
+                market=str(market),
+                selection=str(selection),
+                odds_decimal=odds_decimal,
+                prob_model=float(pred["prob"]),
+                edge_ev=edge_ev,
+                edge_prob=edge_prob,
+                odds_quality_flags=odds_quality_flags,
+            )
+            recommendation_score = _recommendation_score(
+                edge_ev=edge_ev,
+                odds_decimal=odds_decimal,
+                market=str(market),
+                selection=str(selection),
+                odds_quality_flags=odds_quality_flags,
+                close_match=close_match,
+            )
             rows.append(
                 EdgeRow(
                     fixture_id=str(fixture_id),
@@ -172,11 +232,20 @@ def _edge_rows(
                     selection=str(selection),
                     prob_model=float(pred["prob"]),
                     odds_decimal=odds_decimal,
+                    raw_implied_prob=raw_implied_prob,
                     prob_market_devig=market_prob,
+                    market_overround=overround,
                     edge_ev=edge_ev,
                     edge_prob=edge_prob,
                     elo_diff=elo_diff,
                     close_match=close_match,
+                    odds_books=int(stats["odds_books"]),
+                    median_odds=median_odds,
+                    odds_ratio_to_median=odds_ratio_to_median,
+                    odds_age_minutes=odds_age_minutes,
+                    odds_quality_flags=odds_quality_flags,
+                    high_edge_reason=high_edge_reason,
+                    recommendation_score=recommendation_score,
                     bookmaker=str(book),
                     captured_utc=str(odds_row["captured_utc"]),
                     prediction_generated_utc=pred["generated_utc"],
@@ -225,6 +294,22 @@ def _latest_odds(
             {},
         )[str(row["selection"])] = row
     return grouped
+
+
+def _selection_market_stats(
+    odds_rows: dict[tuple[str, str, str], dict[str, sqlite3.Row]],
+) -> dict[tuple[str, str, str], dict[str, float | int]]:
+    values: dict[tuple[str, str, str], list[float]] = {}
+    for fixture_id, _bookmaker, market in odds_rows:
+        for selection, row in odds_rows[(fixture_id, _bookmaker, market)].items():
+            values.setdefault((fixture_id, market, selection), []).append(
+                float(row["decimal_odds"])
+            )
+    return {
+        key: {"odds_books": len(odds), "median_odds": float(median(odds))}
+        for key, odds in values.items()
+        if odds
+    }
 
 
 def _fixture_context(conn: sqlite3.Connection) -> dict[str, tuple[float | None, int | None]]:
@@ -322,12 +407,107 @@ def _devig_market(selections: dict[str, sqlite3.Row]) -> dict[str, float] | None
     return None
 
 
+def _market_overround(selections: dict[str, sqlite3.Row]) -> float:
+    return sum(1.0 / float(row["decimal_odds"]) for row in selections.values())
+
+
 def _normalize_implied(odds: list[float]) -> list[float]:
     implied = [1.0 / odd for odd in odds]
     overround = sum(implied)
     if overround <= 0 or not math.isfinite(overround):
         raise ValueError("Cannot de-vig odds with non-positive overround")
     return [prob / overround for prob in implied]
+
+
+def _odds_age_minutes(captured_utc: str, as_of: datetime) -> float | None:
+    captured = _parse_datetime(captured_utc)
+    if captured is None:
+        return None
+    return max((as_of - captured).total_seconds() / 60.0, 0.0)
+
+
+def _parse_datetime(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _odds_quality_flags(
+    *,
+    odds_books: int,
+    odds_ratio_to_median: float,
+    odds_age_minutes: float | None,
+) -> str:
+    flags = []
+    if odds_age_minutes is not None and odds_age_minutes > STALE_ODDS_MINUTES:
+        flags.append("stale_odds")
+    if odds_books < 2:
+        flags.append("low_market_depth")
+    if odds_books >= 3 and odds_ratio_to_median > ODDS_OUTLIER_RATIO:
+        flags.append("bookmaker_outlier")
+    return ",".join(flags)
+
+
+def _high_edge_reason(
+    *,
+    market: str,
+    selection: str,
+    odds_decimal: float,
+    prob_model: float,
+    edge_ev: float,
+    edge_prob: float,
+    odds_quality_flags: str,
+) -> str:
+    if edge_ev <= HIGH_EDGE_ALERT_THRESHOLD:
+        return ""
+    reasons = []
+    if odds_decimal >= 5.0:
+        reasons.append("long_odds_tail")
+    if abs(edge_prob) >= 0.08:
+        reasons.append("model_market_disagreement")
+    if prob_model <= 0.20 or odds_decimal >= 5.0:
+        reasons.append("calibration_tail_risk")
+    if market == "1X2" and selection == "draw":
+        reasons.append("draw_tail_risk")
+    for flag in odds_quality_flags.split(","):
+        if flag:
+            reasons.append(flag)
+    if not reasons:
+        reasons.append("unknown")
+    return ",".join(dict.fromkeys(reasons))
+
+
+def _recommendation_score(
+    *,
+    edge_ev: float,
+    odds_decimal: float,
+    market: str,
+    selection: str,
+    odds_quality_flags: str,
+    close_match: int | None,
+) -> float:
+    if edge_ev <= 0:
+        return 0.0
+    score = edge_ev
+    if odds_decimal >= 8.0:
+        score *= 0.45
+    elif odds_decimal >= 5.0:
+        score *= 0.60
+    elif odds_decimal >= 3.0:
+        score *= 0.85
+    if market == "1X2" and selection == "draw":
+        score *= 0.75
+    if edge_ev > 0.20:
+        score *= 0.70
+    if odds_quality_flags:
+        score *= 0.50
+    if close_match == 1:
+        score *= 1.05
+    return score
 
 
 def _summary(rows: list[EdgeRow], *, inserted: int, dry_run: bool) -> EdgeSummary:
@@ -405,10 +585,20 @@ def _record_edge_quality(
                 "bookmaker": row.bookmaker,
                 "prob_model": row.prob_model,
                 "odds_decimal": row.odds_decimal,
+                "raw_implied_prob": row.raw_implied_prob,
                 "prob_market_devig": row.prob_market_devig,
+                "market_overround": row.market_overround,
+                "model_minus_fair_market_prob": row.edge_prob,
                 "edge_ev": row.edge_ev,
                 "elo_diff": row.elo_diff,
                 "close_match": row.close_match,
+                "odds_books": row.odds_books,
+                "median_odds": row.median_odds,
+                "odds_ratio_to_median": row.odds_ratio_to_median,
+                "odds_age_minutes": row.odds_age_minutes,
+                "odds_quality_flags": row.odds_quality_flags,
+                "high_edge_reason": row.high_edge_reason,
+                "recommendation_score": row.recommendation_score,
                 "captured_utc": row.captured_utc,
             }
             for row in high_edges[:10]

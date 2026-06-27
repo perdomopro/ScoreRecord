@@ -79,10 +79,23 @@ def test_compute_edges_persists_complete_market_rows() -> None:
     assert summary.rows_analyzed == 3
     assert conn.execute("SELECT COUNT(*) FROM edge_analysis").fetchone()[0] == 3
     row = conn.execute(
-        "SELECT elo_diff, close_match FROM edge_analysis WHERE selection = 'home'"
+        """
+        SELECT elo_diff, close_match, raw_implied_prob, market_overround,
+               odds_books, odds_quality_flags, high_edge_reason,
+               recommendation_score
+        FROM edge_analysis
+        WHERE selection = 'home'
+        """
     ).fetchone()
     assert round(float(row["elo_diff"]), 8) == 60.0
     assert int(row["close_match"]) == 1
+    assert round(float(row["raw_implied_prob"]), 8) == round(1 / 2.4, 8)
+    assert float(row["market_overround"]) > 0
+    assert int(row["odds_books"]) == 1
+    assert "low_market_depth" in row["odds_quality_flags"]
+    assert "stale_odds" in row["odds_quality_flags"]
+    assert "model_market_disagreement" in row["high_edge_reason"]
+    assert float(row["recommendation_score"]) > 0
     alert = conn.execute(
         """
         SELECT metric_value, details_json

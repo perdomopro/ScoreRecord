@@ -76,9 +76,22 @@ def _run_lightweight_migrations(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "recommendation", "bookmaker", "TEXT")
     _add_column_if_missing(conn, "recommendation", "model_version", "TEXT NOT NULL DEFAULT 'dev'")
     _add_column_if_missing(conn, "recommendation", "odds_captured_utc", "TEXT")
+    _add_column_if_missing(conn, "recommendation", "edge_run_id", "INTEGER REFERENCES ingest_run(run_id)")
+    _add_column_if_missing(conn, "recommendation", "recommendation_score", "REAL")
+    _add_column_if_missing(conn, "recommendation", "odds_quality_flags", "TEXT")
+    _add_column_if_missing(conn, "recommendation", "high_edge_reason", "TEXT")
     _add_column_if_missing(conn, "recommendation", "paper", "INTEGER NOT NULL DEFAULT 1")
     _add_column_if_missing(conn, "edge_analysis", "elo_diff", "REAL")
     _add_column_if_missing(conn, "edge_analysis", "close_match", "INTEGER")
+    _add_column_if_missing(conn, "edge_analysis", "raw_implied_prob", "REAL")
+    _add_column_if_missing(conn, "edge_analysis", "market_overround", "REAL")
+    _add_column_if_missing(conn, "edge_analysis", "odds_books", "INTEGER")
+    _add_column_if_missing(conn, "edge_analysis", "median_odds", "REAL")
+    _add_column_if_missing(conn, "edge_analysis", "odds_ratio_to_median", "REAL")
+    _add_column_if_missing(conn, "edge_analysis", "odds_age_minutes", "REAL")
+    _add_column_if_missing(conn, "edge_analysis", "odds_quality_flags", "TEXT")
+    _add_column_if_missing(conn, "edge_analysis", "high_edge_reason", "TEXT")
+    _add_column_if_missing(conn, "edge_analysis", "recommendation_score", "REAL")
 
     for row in conn.execute("SELECT team_id, canonical FROM team WHERE canonical_key IS NULL"):
         conn.execute(

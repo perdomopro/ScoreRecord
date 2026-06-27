@@ -53,10 +53,14 @@ def test_generate_recommendations_uses_latest_edge_run() -> None:
     summary = generate_recommendations(conn)
 
     assert summary.recommendations == 1
-    row = conn.execute("SELECT edge, stake_units, confidence FROM recommendation").fetchone()
+    row = conn.execute(
+        "SELECT edge, stake_units, confidence, edge_run_id, recommendation_score FROM recommendation"
+    ).fetchone()
     assert round(row["edge"], 8) == 0.14
     assert round(row["stake_units"], 8) == 0.035
     assert row["confidence"] == "high"
+    assert row["edge_run_id"] == edge_run_id
+    assert round(row["recommendation_score"], 8) == 0.14
 
 
 def test_generate_recommendations_excludes_implausibly_high_edges_by_default() -> None:
@@ -83,6 +87,68 @@ def test_generate_recommendations_excludes_implausibly_high_edges_by_default() -
 
     assert summary.candidates_seen == 0
     assert summary.recommendations == 0
+
+
+def test_generate_recommendations_excludes_flagged_odds_quality() -> None:
+    conn = _conn()
+    edge_run_id = _run(conn, "compute-edge")
+    conn.execute(
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m4', '2026-06-11 13:00 UTC-6')"
+    )
+    conn.execute(
+        """
+        INSERT INTO edge_analysis (
+          fixture_id, run_id, model_version, market, selection, prob_model,
+          odds_decimal, prob_market_devig, edge_ev, edge_prob, bookmaker,
+          captured_utc, generated_utc, odds_books, odds_quality_flags,
+          recommendation_score
+        )
+        VALUES ('m4', ?, ?, 'BTTS', 'yes', 0.55, 2.00, 0.50,
+                0.10, 0.05, 'Bet365', '2026-06-10T01:00:00+00:00',
+                '2026-06-10T02:00:00+00:00', 1, 'low_market_depth',
+                0.05)
+        """,
+        (edge_run_id, MODEL_VERSION),
+    )
+
+    summary = generate_recommendations(conn)
+
+    assert summary.candidates_seen == 0
+    assert summary.recommendations == 0
+
+
+def test_generate_recommendations_limits_correlated_fixture_picks() -> None:
+    conn = _conn()
+    edge_run_id = _run(conn, "compute-edge")
+    conn.execute(
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m5', '2026-06-11 13:00 UTC-6')"
+    )
+    for market, selection, edge, score in [
+        ("1X2", "home", 0.10, 0.07),
+        ("BTTS", "yes", 0.08, 0.08),
+    ]:
+        conn.execute(
+            """
+            INSERT INTO edge_analysis (
+              fixture_id, run_id, model_version, market, selection, prob_model,
+              odds_decimal, prob_market_devig, edge_ev, edge_prob, bookmaker,
+              captured_utc, generated_utc, odds_books, odds_quality_flags,
+              recommendation_score
+            )
+            VALUES ('m5', ?, ?, ?, ?, 0.55, 2.00, 0.50,
+                    ?, 0.05, 'Bet365', '2026-06-10T01:00:00+00:00',
+                    '2026-06-10T02:00:00+00:00', 2, '',
+                    ?)
+            """,
+            (edge_run_id, MODEL_VERSION, market, selection, edge, score),
+        )
+
+    summary = generate_recommendations(conn)
+
+    assert summary.candidates_seen == 2
+    assert summary.recommendations == 1
+    row = conn.execute("SELECT market, selection FROM recommendation").fetchone()
+    assert (row["market"], row["selection"]) == ("BTTS", "yes")
 
 
 def test_compute_recommendation_clv_matches_closing_odds() -> None:

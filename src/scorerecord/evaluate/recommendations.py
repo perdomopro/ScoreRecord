@@ -58,8 +58,14 @@ class RecommendationCandidate:
     odds_decimal: float
     edge_ev: float
     edge_prob: float
+    recommendation_score: float
+    odds_quality_flags: str
+    high_edge_reason: str
     bookmaker: str
     odds_captured_utc: str
+
+
+DEFAULT_MAX_ODDS_AGE_MINUTES = 180.0
 
 
 def kelly_stake(
@@ -85,6 +91,10 @@ def generate_recommendations(
     min_edge: float = 0.05,
     max_edge: float = 0.25,
     min_prob: float = 0.15,
+    max_odds_age_minutes: float = DEFAULT_MAX_ODDS_AGE_MINUTES,
+    min_books: int = 2,
+    max_picks_per_fixture: int = 1,
+    exclude_odds_quality_flags: bool = True,
     kelly_fraction: float = 0.25,
     max_stake: float = 1.0,
     dry_run: bool = False,
@@ -97,8 +107,11 @@ def generate_recommendations(
         min_edge=min_edge,
         max_edge=max_edge,
         min_prob=min_prob,
+        max_odds_age_minutes=max_odds_age_minutes,
+        min_books=min_books,
+        exclude_odds_quality_flags=exclude_odds_quality_flags,
     )
-    best = _best_candidates(candidates)
+    best = _best_candidates(candidates, max_picks_per_fixture=max_picks_per_fixture)
     if dry_run:
         return RecommendationSummary(
             candidates_seen=len(candidates),
@@ -122,9 +135,11 @@ def generate_recommendations(
                 INSERT OR REPLACE INTO recommendation (
                   run_id, fixture_id, market, selection, model_prob, market_odds,
                   edge, edge_prob, kelly_fraction, stake_units, confidence,
-                  bookmaker, model_version, odds_captured_utc, paper, generated_utc
+                  bookmaker, model_version, odds_captured_utc, edge_run_id,
+                  recommendation_score, odds_quality_flags, high_edge_reason,
+                  paper, generated_utc
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 """,
                 (
                     run_id,
@@ -141,6 +156,10 @@ def generate_recommendations(
                     candidate.bookmaker,
                     candidate.model_version,
                     candidate.odds_captured_utc,
+                    candidate.edge_run_id,
+                    candidate.recommendation_score,
+                    candidate.odds_quality_flags,
+                    candidate.high_edge_reason,
                     generated_utc,
                 ),
             )
@@ -229,12 +248,18 @@ def _recommendation_candidates(
     min_edge: float,
     max_edge: float,
     min_prob: float,
+    max_odds_age_minutes: float,
+    min_books: int,
+    exclude_odds_quality_flags: bool,
 ) -> list[RecommendationCandidate]:
     run_id = edge_run_id or _latest_edge_run(conn)
     if run_id is None:
         return []
+    quality_filter = ""
+    if exclude_odds_quality_flags:
+        quality_filter = "AND (odds_quality_flags IS NULL OR odds_quality_flags = '')"
     rows = conn.execute(
-        """
+        f"""
         SELECT *
         FROM edge_analysis
         WHERE run_id = ?
@@ -242,9 +267,20 @@ def _recommendation_candidates(
           AND edge_ev >= ?
           AND edge_ev <= ?
           AND prob_model >= ?
-        ORDER BY edge_ev DESC
+          AND (odds_age_minutes IS NULL OR odds_age_minutes <= ?)
+          AND (odds_books IS NULL OR odds_books >= ?)
+          {quality_filter}
+        ORDER BY COALESCE(recommendation_score, edge_ev) DESC, edge_ev DESC
         """,
-        (run_id, model_version, min_edge, max_edge, min_prob),
+        (
+            run_id,
+            model_version,
+            min_edge,
+            max_edge,
+            min_prob,
+            max_odds_age_minutes,
+            min_books,
+        ),
     ).fetchall()
     return [
         RecommendationCandidate(
@@ -257,6 +293,9 @@ def _recommendation_candidates(
             odds_decimal=float(row["odds_decimal"]),
             edge_ev=float(row["edge_ev"]),
             edge_prob=float(row["edge_prob"]),
+            recommendation_score=float(row["recommendation_score"] or row["edge_ev"]),
+            odds_quality_flags=str(row["odds_quality_flags"] or ""),
+            high_edge_reason=str(row["high_edge_reason"] or ""),
             bookmaker=str(row["bookmaker"]),
             odds_captured_utc=str(row["captured_utc"]),
         )
@@ -266,14 +305,29 @@ def _recommendation_candidates(
 
 def _best_candidates(
     candidates: list[RecommendationCandidate],
+    *,
+    max_picks_per_fixture: int,
 ) -> list[RecommendationCandidate]:
-    best: dict[tuple[str, str, str], RecommendationCandidate] = {}
-    for candidate in candidates:
-        key = (candidate.fixture_id, candidate.market, candidate.selection)
-        incumbent = best.get(key)
-        if incumbent is None or candidate.edge_ev > incumbent.edge_ev:
-            best[key] = candidate
-    return sorted(best.values(), key=lambda row: row.edge_ev, reverse=True)
+    if max_picks_per_fixture < 1:
+        return []
+    selected: list[RecommendationCandidate] = []
+    fixture_counts: dict[str, int] = {}
+    ordered = sorted(
+        candidates,
+        key=lambda row: (row.recommendation_score, row.edge_ev),
+        reverse=True,
+    )
+    seen_pick_keys: set[tuple[str, str, str]] = set()
+    for candidate in ordered:
+        pick_key = (candidate.fixture_id, candidate.market, candidate.selection)
+        if pick_key in seen_pick_keys:
+            continue
+        if fixture_counts.get(candidate.fixture_id, 0) >= max_picks_per_fixture:
+            continue
+        selected.append(candidate)
+        seen_pick_keys.add(pick_key)
+        fixture_counts[candidate.fixture_id] = fixture_counts.get(candidate.fixture_id, 0) + 1
+    return selected
 
 
 def _latest_edge_run(conn: sqlite3.Connection) -> int | None:
@@ -313,6 +367,10 @@ def _record_recommendation_quality(
         "min_edge_policy": "paper recommendations only",
         "max_edge_policy": "edges above the cap require manual review before recommendation",
         "max_edge_ev": max((candidate.edge_ev for candidate in candidates), default=None),
+        "max_recommendation_score": max(
+            (candidate.recommendation_score for candidate in candidates),
+            default=None,
+        ),
     }
     for metric_name, value in [
         ("recommendation_candidates", summary.candidates_seen),

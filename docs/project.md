@@ -47,7 +47,7 @@ Important tables:
 - `team_rating`: current Elo snapshot per team.
 - `team_rating_history`: pre/post-match Elo history by team and historical match.
 - `odds`: raw bookmaker prices, stored before de-vig or recommendation logic.
-- `edge_analysis`: model probability versus de-vigged market probability, EV edge, fixture Elo difference, and close-match flag.
+- `edge_analysis`: model probability versus de-vigged market probability, raw implied probability, overround, odds quality diagnostics, EV edge, fixture Elo difference, close-match flag, high-edge reason, and conservative recommendation score.
 - `prediction`: future model outputs for tournament fixtures.
 - `prediction_result`: settled prediction labels and scoring metrics for finished fixtures.
 - `recommendation`: future value-bet recommendations.
@@ -226,7 +226,7 @@ Fase 4 is implemented as a paper pipeline, not a staking pipeline:
 
 - `fetch-odds`: maps local resolved fixtures to Odds-API.io events and stores raw odds in `odds`.
 - `compute-edge`: applies multiplicative de-vig and writes EV/probability edge to `edge_analysis`.
-- `recommend`: creates paper recommendations from the latest edge run, using a 5% default EV threshold, 25% max EV sanity cap, 15% minimum model probability, quarter Kelly, and 1-unit cap.
+- `recommend`: creates paper recommendations from the latest edge run, using a 5% default EV threshold, 25% max EV sanity cap, 15% minimum model probability, odds freshness/depth filters, max 1 pick per fixture, conservative recommendation score, quarter Kelly, and 1-unit cap.
 - `compute-clv`: compares paper recommendations to later `is_closing=1` odds and writes granular CLV to `recommendation_result`.
 - `calibrator-drift`: compares Platt coefficients between the two latest fixture-prediction runs and records drift alerts in `data_quality`.
 
@@ -419,6 +419,15 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Deployed the guardrail to the homeserver and recomputed edge in `run_id=52`: 59 rows analyzed, max EV edge 49.96%, 6 high-edge rows, `edge_sanity.high_edge_alert=1`.
 - Verified `recommend --dry-run` after the cap: default settings would emit 6 recommendations, while `--max-edge 1.0` would emit 8; the two extra picks are above the sanity cap.
 - The daily timer had already inserted `recommend` run `49` before this guardrail existed. Two rows in that pre-guardrail run exceed 25% EV (`Panama-England` draw and `Algeria-Austria` home); keep them for audit only and do not treat them as actionable without manual review.
+
+### 2026-06-27 - Odds quality and correlation controls
+
+- Extended `edge_analysis` with audit fields for `raw_implied_prob`, `market_overround`, `odds_books`, `median_odds`, `odds_ratio_to_median`, `odds_age_minutes`, `odds_quality_flags`, `high_edge_reason`, and `recommendation_score`.
+- `compute-edge` now classifies high-edge cases into reasons such as `long_odds_tail`, `model_market_disagreement`, `calibration_tail_risk`, `draw_tail_risk`, `stale_odds`, `low_market_depth`, and `bookmaker_outlier`.
+- `recommend` now filters stale, low-depth, and outlier odds by default through `--max-odds-age-minutes`, `--min-books`, and `--allow-odds-quality-flags`.
+- `recommend` now ranks by `recommendation_score` instead of raw EV and defaults to `--max-picks-per-fixture 1` to avoid treating correlated picks from the same match as independent.
+- `recommendation` rows now persist the source `edge_run_id`, `recommendation_score`, `odds_quality_flags`, and `high_edge_reason` for GUI audit surfaces.
+- Added regression tests for odds-quality exclusion and anti-correlation by fixture.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
