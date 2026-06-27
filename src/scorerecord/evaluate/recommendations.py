@@ -51,6 +51,7 @@ class ClvSummary:
 class RecommendationCandidate:
     edge_run_id: int
     fixture_id: str
+    fixture_date: str
     market: str
     selection: str
     model_version: str
@@ -120,6 +121,8 @@ def generate_recommendations(
     max_odds_age_minutes: float = DEFAULT_MAX_ODDS_AGE_MINUTES,
     min_books: int = 2,
     max_picks_per_fixture: int = 1,
+    max_picks_per_day: int | None = None,
+    min_score: float = 0.05,
     exclude_odds_quality_flags: bool = True,
     kelly_fraction: float = 0.25,
     max_stake: float = 1.0,
@@ -133,11 +136,16 @@ def generate_recommendations(
         min_edge=min_edge,
         max_edge=max_edge,
         min_prob=min_prob,
+        min_score=min_score,
         max_odds_age_minutes=max_odds_age_minutes,
         min_books=min_books,
         exclude_odds_quality_flags=exclude_odds_quality_flags,
     )
-    best = _best_candidates(candidates, max_picks_per_fixture=max_picks_per_fixture)
+    best = _best_candidates(
+        candidates,
+        max_picks_per_fixture=max_picks_per_fixture,
+        max_picks_per_day=max_picks_per_day,
+    )
     if dry_run:
         return RecommendationSummary(
             candidates_seen=len(candidates),
@@ -281,6 +289,7 @@ def _recommendation_candidates(
     min_edge: float,
     max_edge: float,
     min_prob: float,
+    min_score: float,
     max_odds_age_minutes: float,
     min_books: int,
     exclude_odds_quality_flags: bool,
@@ -294,15 +303,23 @@ def _recommendation_candidates(
     rows = conn.execute(
         f"""
         SELECT *
-        FROM edge_analysis
-        WHERE run_id = ?
-          AND model_version = ?
-          AND edge_ev >= ?
-          AND edge_ev <= ?
-          AND prob_model >= ?
-          AND (odds_age_minutes IS NULL OR odds_age_minutes <= ?)
-          AND (odds_books IS NULL OR odds_books >= ?)
+        FROM (
+          SELECT
+            e.*,
+            SUBSTR(COALESCE(f.kickoff_utc, f.kickoff_local, e.captured_utc), 1, 10)
+              AS fixture_date
+          FROM edge_analysis e
+          LEFT JOIN fixture f ON f.fixture_id = e.fixture_id
+          WHERE e.run_id = ?
+            AND e.model_version = ?
+            AND e.edge_ev >= ?
+            AND e.edge_ev <= ?
+            AND e.prob_model >= ?
+            AND COALESCE(e.recommendation_score, e.edge_ev) >= ?
+            AND (e.odds_age_minutes IS NULL OR e.odds_age_minutes <= ?)
+            AND (e.odds_books IS NULL OR e.odds_books >= ?)
           {quality_filter}
+        )
         ORDER BY COALESCE(recommendation_score, edge_ev) DESC, edge_ev DESC
         """,
         (
@@ -311,6 +328,7 @@ def _recommendation_candidates(
             min_edge,
             max_edge,
             min_prob,
+            min_score,
             max_odds_age_minutes,
             min_books,
         ),
@@ -326,6 +344,7 @@ def _recommendation_candidates(
             RecommendationCandidate(
                 edge_run_id=int(row["run_id"]),
                 fixture_id=str(row["fixture_id"]),
+                fixture_date=str(row["fixture_date"] or ""),
                 market=str(row["market"]),
                 selection=str(row["selection"]),
                 model_version=str(row["model_version"]),
@@ -347,6 +366,7 @@ def _best_candidates(
     candidates: list[RecommendationCandidate],
     *,
     max_picks_per_fixture: int,
+    max_picks_per_day: int | None = None,
 ) -> list[RecommendationCandidate]:
     if max_picks_per_fixture < 1:
         return []
@@ -358,15 +378,23 @@ def _best_candidates(
         reverse=True,
     )
     seen_pick_keys: set[tuple[str, str, str]] = set()
+    day_counts: dict[str, int] = {}
     for candidate in ordered:
         pick_key = (candidate.fixture_id, candidate.market, candidate.selection)
         if pick_key in seen_pick_keys:
             continue
         if fixture_counts.get(candidate.fixture_id, 0) >= max_picks_per_fixture:
             continue
+        if max_picks_per_day is not None and max_picks_per_day >= 0:
+            day = candidate.fixture_date or "unknown"
+            if day_counts.get(day, 0) >= max_picks_per_day:
+                continue
         selected.append(candidate)
         seen_pick_keys.add(pick_key)
         fixture_counts[candidate.fixture_id] = fixture_counts.get(candidate.fixture_id, 0) + 1
+        if max_picks_per_day is not None and max_picks_per_day >= 0:
+            day = candidate.fixture_date or "unknown"
+            day_counts[day] = day_counts.get(day, 0) + 1
     return selected
 
 
@@ -411,6 +439,7 @@ def _record_recommendation_quality(
         "rows_inserted": summary.rows_inserted,
         "min_edge_policy": "paper recommendations only",
         "max_edge_policy": "edges above the cap require manual review before recommendation",
+        "min_score_policy": "recommendation_score must clear the configured minimum score",
         "max_edge_ev": max((candidate.edge_ev for candidate in candidates), default=None),
         "max_recommendation_score": max(
             (candidate.recommendation_score for candidate in candidates),

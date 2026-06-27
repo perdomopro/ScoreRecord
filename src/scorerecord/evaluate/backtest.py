@@ -16,6 +16,7 @@ import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from itertools import product
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -199,6 +200,20 @@ class ReportSummary:
         )
 
 
+@dataclass(frozen=True)
+class PolicyGridSummary:
+    run_id: int
+    output_dir: Path
+    rows_written: int
+    prediction_rows: int
+
+    def as_row(self) -> str:
+        return (
+            f"run_id={self.run_id} output_dir={self.output_dir} "
+            f"rows_written={self.rows_written} prediction_rows={self.prediction_rows}"
+        )
+
+
 def run_historical_backtest(
     conn: sqlite3.Connection,
     *,
@@ -210,7 +225,9 @@ def run_historical_backtest(
     min_edge: float = 0.05,
     max_edge: float = 0.25,
     min_prob: float = 0.15,
+    min_score: float = 0.0,
     max_picks_per_fixture: int = 1,
+    max_picks_per_day: int | None = None,
     odds_mode: str = "proxy",
     historical_odds_source: str = "football-data",
     entry_odds: str = "avg_open",
@@ -231,7 +248,9 @@ def run_historical_backtest(
             min_edge=min_edge,
             max_edge=max_edge,
             min_prob=min_prob,
+            min_score=min_score,
             max_picks_per_fixture=max_picks_per_fixture,
+            max_picks_per_day=max_picks_per_day,
             historical_odds_source=historical_odds_source,
             entry_odds=entry_odds,
             closing_odds=closing_odds,
@@ -261,7 +280,9 @@ def run_historical_backtest(
             min_edge=min_edge,
             max_edge=max_edge,
             min_prob=min_prob,
+            min_score=min_score,
             max_picks_per_fixture=max_picks_per_fixture,
+            max_picks_per_day=max_picks_per_day,
         )
         out_dir.mkdir(parents=True, exist_ok=True)
         recommendations_path = out_dir / f"backtest_recommendations_{run_id}.csv"
@@ -284,7 +305,9 @@ def run_historical_backtest(
             "min_edge": min_edge,
             "max_edge": max_edge,
             "min_prob": min_prob,
+            "min_score": min_score,
             "max_picks_per_fixture": max_picks_per_fixture,
+            "max_picks_per_day": max_picks_per_day,
             "odds_source": "training_marginal_proxy",
             "odds_mode": "proxy",
             "is_real_historical_odds": False,
@@ -318,7 +341,9 @@ def run_real_odds_backtest(
     min_edge: float = 0.05,
     max_edge: float = 0.25,
     min_prob: float = 0.15,
+    min_score: float = 0.0,
     max_picks_per_fixture: int = 1,
+    max_picks_per_day: int | None = None,
     historical_odds_source: str = "football-data",
     entry_odds: str = "avg_open",
     closing_odds: str = "avg_close",
@@ -364,7 +389,9 @@ def run_real_odds_backtest(
             min_edge=min_edge,
             max_edge=max_edge,
             min_prob=min_prob,
+            min_score=min_score,
             max_picks_per_fixture=max_picks_per_fixture,
+            max_picks_per_day=max_picks_per_day,
         )
 
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -392,7 +419,9 @@ def run_real_odds_backtest(
             "min_edge": min_edge,
             "max_edge": max_edge,
             "min_prob": min_prob,
+            "min_score": min_score,
             "max_picks_per_fixture": max_picks_per_fixture,
+            "max_picks_per_day": max_picks_per_day,
             "odds_mode": "historical",
             "odds_source": historical_odds_source,
             "entry_odds_type": entry_odds,
@@ -443,6 +472,128 @@ def run_real_odds_backtest(
         rows_written=len(selected),
         summary_rows=len(summary_rows),
         calibration_rows=len(calibration_rows),
+    )
+
+
+def run_real_odds_policy_grid(
+    conn: sqlite3.Connection,
+    *,
+    from_date: date,
+    to_date: date,
+    out_dir: Path,
+    start_year: int = 2021,
+    min_train: int = 200,
+    min_scores: tuple[float, ...] = (0.0, 0.05, 0.075, 0.10, 0.125),
+    min_edges: tuple[float, ...] = (0.03, 0.05, 0.075),
+    max_picks_per_days: tuple[int | None, ...] = (None, 10, 5, 3),
+    max_edge: float = 0.25,
+    min_prob: float = 0.15,
+    max_picks_per_fixture: int = 1,
+    historical_odds_source: str = "football-data",
+    entry_odds: str = "avg_open",
+    closing_odds: str = "avg_close",
+    market: str = "1X2",
+    league: str | None = None,
+    season: str | None = None,
+    cwd: Path | None = None,
+) -> PolicyGridSummary:
+    if market != "1X2":
+        raise ValueError("Policy grid currently supports only market=1X2")
+    if historical_odds_source != "football-data":
+        raise ValueError("Only historical_odds_source=football-data is supported")
+
+    league_code = resolve_league_code(league) if league else None
+    normalized_season = normalize_season(season) if season else None
+    generated_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    with ingest_run(conn, "backtest-policy-grid", source=historical_odds_source, cwd=cwd) as run_id:
+        matches = _load_historical_odds_matches(
+            conn,
+            source=historical_odds_source,
+            league_code=league_code,
+            test_season=normalized_season,
+            to_date=to_date,
+        )
+        odds = _load_historical_odds_markets(
+            conn,
+            source=historical_odds_source,
+            entry_odds_type=entry_odds,
+            closing_odds_type=closing_odds,
+        )
+        predictions = _walk_forward_real_odds_predictions(
+            matches,
+            odds=odds,
+            from_date=from_date,
+            to_date=to_date,
+            start_year=start_year,
+            min_train=min_train,
+            test_season=normalized_season,
+        )
+        rows: list[dict[str, object]] = []
+        for min_score, min_edge, max_per_day in product(
+            min_scores,
+            min_edges,
+            max_picks_per_days,
+        ):
+            selected = _select_real_odds_bets(
+                predictions,
+                min_edge=min_edge,
+                max_edge=max_edge,
+                min_prob=min_prob,
+                min_score=min_score,
+                max_picks_per_fixture=max_picks_per_fixture,
+                max_picks_per_day=max_per_day,
+            )
+            rows.extend(
+                _policy_grid_rows(
+                    selected,
+                    min_score=min_score,
+                    min_edge=min_edge,
+                    max_picks_per_day=max_per_day,
+                )
+            )
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        grid_path = out_dir / f"policy_grid_real_odds_{run_id}.csv"
+        metadata_path = out_dir / f"policy_grid_metadata_{run_id}.json"
+        _write_dict_rows(grid_path, rows)
+        metadata = {
+            "run_id": run_id,
+            "generated_utc": generated_utc,
+            "from_date": from_date.isoformat(),
+            "to_date": to_date.isoformat(),
+            "start_year": start_year,
+            "min_train": min_train,
+            "min_scores": list(min_scores),
+            "min_edges": list(min_edges),
+            "max_picks_per_days": [
+                "none" if value is None else value for value in max_picks_per_days
+            ],
+            "max_edge": max_edge,
+            "min_prob": min_prob,
+            "max_picks_per_fixture": max_picks_per_fixture,
+            "odds_mode": "historical",
+            "odds_source": historical_odds_source,
+            "entry_odds_type": entry_odds,
+            "closing_odds_type": closing_odds,
+            "market": market,
+            "league_code": league_code,
+            "test_season": normalized_season,
+            "prediction_rows": len(predictions),
+            "grid_rows": len(rows),
+            "selection_note": (
+                "Use this grid to compare CLV/ROI/sample size; do not choose the "
+                "single best ROI row without bucket and robustness checks."
+            ),
+        }
+        metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+        _record_policy_grid_quality(conn, run_id, metadata, rows)
+        conn.commit()
+    return PolicyGridSummary(
+        run_id=run_id,
+        output_dir=out_dir,
+        rows_written=len(rows),
+        prediction_rows=len(predictions),
     )
 
 
@@ -744,7 +895,9 @@ def _select_real_odds_bets(
     min_edge: float,
     max_edge: float,
     min_prob: float,
+    min_score: float,
     max_picks_per_fixture: int,
+    max_picks_per_day: int | None,
 ) -> list[RealOddsBet]:
     eligible = [
         row
@@ -752,6 +905,7 @@ def _select_real_odds_bets(
         if row.edge_ev >= min_edge
         and row.edge_ev <= max_edge
         and row.model_prob >= min_prob
+        and row.recommendation_score >= min_score
         and row.is_real_historical_odds
         and not _has_disqualifying_recommendation_marker(
             row.odds_quality_flags,
@@ -766,23 +920,31 @@ def _select_real_odds_bets(
         by_fixture: dict[str, list[RealOddsPrediction]] = {}
         for row in eligible:
             by_fixture.setdefault(row.match.source_event_id, []).append(row)
+        strategy_rows: list[RealOddsPrediction] = []
         for rows in by_fixture.values():
             ordered = sorted(rows, key=ranker, reverse=True)
-            for row in ordered[:max_picks_per_fixture]:
-                model_stake = kelly_stake(row.model_prob, row.entry_odds)
-                selected.append(
-                    RealOddsBet(
-                        prediction=row,
-                        ranking_strategy=strategy,
-                        model_stake_fraction=model_stake,
-                        capped_stake_fraction=capped_real_stake(
-                            model_stake=model_stake,
-                            odds_decimal=row.entry_odds,
-                            market=row.market,
-                            selection=row.selection,
-                        ),
-                    )
+            strategy_rows.extend(ordered[:max_picks_per_fixture])
+        if max_picks_per_day is not None and max_picks_per_day >= 0:
+            strategy_rows = _limit_real_rows_per_day(
+                strategy_rows,
+                ranker=ranker,
+                max_picks_per_day=max_picks_per_day,
+            )
+        for row in strategy_rows:
+            model_stake = kelly_stake(row.model_prob, row.entry_odds)
+            selected.append(
+                RealOddsBet(
+                    prediction=row,
+                    ranking_strategy=strategy,
+                    model_stake_fraction=model_stake,
+                    capped_stake_fraction=capped_real_stake(
+                        model_stake=model_stake,
+                        odds_decimal=row.entry_odds,
+                        market=row.market,
+                        selection=row.selection,
+                    ),
                 )
+            )
     return sorted(
         selected,
         key=lambda bet: (
@@ -791,6 +953,21 @@ def _select_real_odds_bets(
             bet.ranking_strategy,
         ),
     )
+
+
+def _limit_real_rows_per_day(
+    rows: list[RealOddsPrediction],
+    *,
+    ranker: Callable[[RealOddsPrediction], tuple[float, float]],
+    max_picks_per_day: int,
+) -> list[RealOddsPrediction]:
+    by_day: dict[str, list[RealOddsPrediction]] = {}
+    for row in rows:
+        by_day.setdefault(row.match.match_date, []).append(row)
+    output: list[RealOddsPrediction] = []
+    for day_rows in by_day.values():
+        output.extend(sorted(day_rows, key=ranker, reverse=True)[:max_picks_per_day])
+    return output
 
 
 def _walk_forward_market_predictions(
@@ -958,7 +1135,9 @@ def _select_backtest_bets(
     min_edge: float,
     max_edge: float,
     min_prob: float,
+    min_score: float = 0.0,
     max_picks_per_fixture: int,
+    max_picks_per_day: int | None = None,
 ) -> list[BacktestBet]:
     eligible = [
         row
@@ -966,6 +1145,7 @@ def _select_backtest_bets(
         if row.edge_ev >= min_edge
         and row.edge_ev <= max_edge
         and row.model_prob >= min_prob
+        and row.recommendation_score >= min_score
         and not _has_disqualifying_recommendation_marker(
             row.odds_quality_flags,
             row.high_edge_reason,
@@ -982,6 +1162,7 @@ def _select_backtest_bets(
                 ranking_strategy=strategy,
                 ranker=ranker,
                 max_picks_per_fixture=max_picks_per_fixture,
+                max_picks_per_day=max_picks_per_day,
             )
         )
     return sorted(
@@ -1000,28 +1181,52 @@ def _top_by_fixture(
     ranking_strategy: str,
     ranker: Callable[[HistoricalPrediction], tuple[float, float]],
     max_picks_per_fixture: int,
+    max_picks_per_day: int | None,
 ) -> list[BacktestBet]:
     output: list[BacktestBet] = []
     by_fixture: dict[str, list[HistoricalPrediction]] = {}
     for row in rows:
         by_fixture.setdefault(row.match.source_match_id, []).append(row)
+    strategy_rows: list[HistoricalPrediction] = []
     for fixture_rows in by_fixture.values():
         ordered = sorted(fixture_rows, key=ranker, reverse=True)
-        for row in ordered[:max_picks_per_fixture]:
-            model_stake = kelly_stake(row.model_prob, row.odds)
-            output.append(
-                BacktestBet(
-                    prediction=row,
-                    ranking_strategy=ranking_strategy,
-                    model_stake_fraction=model_stake,
-                    capped_stake_fraction=capped_real_stake(
-                        model_stake=model_stake,
-                        odds_decimal=row.odds,
-                        market=row.market,
-                        selection=row.selection,
-                    ),
-                )
+        strategy_rows.extend(ordered[:max_picks_per_fixture])
+    if max_picks_per_day is not None and max_picks_per_day >= 0:
+        strategy_rows = _limit_proxy_rows_per_day(
+            strategy_rows,
+            ranker=ranker,
+            max_picks_per_day=max_picks_per_day,
+        )
+    for row in strategy_rows:
+        model_stake = kelly_stake(row.model_prob, row.odds)
+        output.append(
+            BacktestBet(
+                prediction=row,
+                ranking_strategy=ranking_strategy,
+                model_stake_fraction=model_stake,
+                capped_stake_fraction=capped_real_stake(
+                    model_stake=model_stake,
+                    odds_decimal=row.odds,
+                    market=row.market,
+                    selection=row.selection,
+                ),
             )
+        )
+    return output
+
+
+def _limit_proxy_rows_per_day(
+    rows: list[HistoricalPrediction],
+    *,
+    ranker: Callable[[HistoricalPrediction], tuple[float, float]],
+    max_picks_per_day: int,
+) -> list[HistoricalPrediction]:
+    by_day: dict[str, list[HistoricalPrediction]] = {}
+    for row in rows:
+        by_day.setdefault(row.match.match_date, []).append(row)
+    output: list[HistoricalPrediction] = []
+    for day_rows in by_day.values():
+        output.extend(sorted(day_rows, key=ranker, reverse=True)[:max_picks_per_day])
     return output
 
 
@@ -1178,6 +1383,74 @@ def _real_summary_rows(bets: list[RealOddsBet]) -> list[dict[str, object]]:
             grouped.setdefault(key_fn(bet), []).append(bet)
         for group, rows in sorted(grouped.items()):
             output.append(_real_metric_row(group_type, group, rows))
+    return output
+
+
+def _policy_grid_rows(
+    bets: list[RealOddsBet],
+    *,
+    min_score: float,
+    min_edge: float,
+    max_picks_per_day: int | None,
+) -> list[dict[str, object]]:
+    grouped: dict[str, list[RealOddsBet]] = {}
+    for bet in bets:
+        grouped.setdefault(bet.ranking_strategy, []).append(bet)
+    output: list[dict[str, object]] = []
+    for ranking_strategy, rows in sorted(grouped.items()):
+        metrics = _real_metric_row("ranking_strategy", ranking_strategy, rows)
+        output.append(
+            {
+                "min_score": min_score,
+                "min_edge": min_edge,
+                "max_picks_per_day": (
+                    "none" if max_picks_per_day is None else max_picks_per_day
+                ),
+                "ranking_strategy": ranking_strategy,
+                "num_bets": metrics["num_bets"],
+                "sample_size_tier": metrics["sample_size_tier"],
+                "decision_gate": metrics["decision_gate"],
+                "hit_rate": metrics["hit_rate"],
+                "avg_entry_odds": metrics["avg_entry_odds"],
+                "avg_edge_ev": metrics["avg_edge_ev"],
+                "avg_recommendation_score": metrics["avg_recommendation_score"],
+                "roi_flat_real": metrics["roi_flat_real"],
+                "roi_capped_real": metrics["roi_capped_real"],
+                "max_drawdown_flat": metrics["max_drawdown_flat"],
+                "mean_clv_real": metrics["mean_clv_real"],
+                "positive_clv_rate": metrics["positive_clv_rate"],
+                "clv_rows": metrics["clv_rows"],
+                "brier_score": metrics["brier_score"],
+                "log_loss": metrics["log_loss"],
+            }
+        )
+    if not output:
+        for ranking_strategy in ("edge_ev", "recommendation_score"):
+            output.append(
+                {
+                    "min_score": min_score,
+                    "min_edge": min_edge,
+                    "max_picks_per_day": (
+                        "none" if max_picks_per_day is None else max_picks_per_day
+                    ),
+                    "ranking_strategy": ranking_strategy,
+                    "num_bets": 0,
+                    "sample_size_tier": sample_size_tier(0),
+                    "decision_gate": decision_gate(0),
+                    "hit_rate": 0.0,
+                    "avg_entry_odds": 0.0,
+                    "avg_edge_ev": 0.0,
+                    "avg_recommendation_score": 0.0,
+                    "roi_flat_real": 0.0,
+                    "roi_capped_real": 0.0,
+                    "max_drawdown_flat": 0.0,
+                    "mean_clv_real": 0.0,
+                    "positive_clv_rate": 0.0,
+                    "clv_rows": 0,
+                    "brier_score": 0.0,
+                    "log_loss": 0.0,
+                }
+            )
     return output
 
 
@@ -1647,6 +1920,57 @@ def _record_real_backtest_quality(
             conn,
             run_id,
             "historical_real_odds_backtest",
+            metric_name,
+            float(value),
+            json.dumps(details, sort_keys=True),
+        )
+
+
+def _record_policy_grid_quality(
+    conn: sqlite3.Connection,
+    run_id: int,
+    metadata: dict[str, object],
+    rows: list[dict[str, object]],
+) -> None:
+    useful_rows = [
+        row
+        for row in rows
+        if str(row["decision_gate"]) in {
+            "cautious_adjustments_allowed",
+            "adjustments_supported_with_bucket_checks",
+        }
+    ]
+    best_clv = max(
+        useful_rows or rows,
+        key=lambda row: (
+            float(row["mean_clv_real"]),
+            float(row["positive_clv_rate"]),
+            float(row["roi_capped_real"]),
+        ),
+        default=None,
+    )
+    details = {
+        **metadata,
+        "best_clv_row": best_clv,
+        "warning": (
+            "Policy grid rows are for robustness screening. Avoid selecting a policy "
+            "from one league without bucket checks and cross-league validation."
+        ),
+    }
+    for metric_name, value in [
+        ("prediction_rows", metadata["prediction_rows"]),
+        ("grid_rows", len(rows)),
+        ("useful_grid_rows", len(useful_rows)),
+        ("best_mean_clv", float(best_clv["mean_clv_real"]) if best_clv else 0.0),
+        (
+            "best_positive_clv_rate",
+            float(best_clv["positive_clv_rate"]) if best_clv else 0.0,
+        ),
+    ]:
+        record_quality(
+            conn,
+            run_id,
+            "historical_policy_grid",
             metric_name,
             float(value),
             json.dumps(details, sort_keys=True),

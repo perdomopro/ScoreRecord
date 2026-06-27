@@ -8,11 +8,18 @@ from pathlib import Path
 
 from scorerecord.aliases import seed_team_aliases
 from scorerecord.db import connect, init_db, table_count
-from scorerecord.evaluate.backtest import run_calibration_report, run_historical_backtest
+from scorerecord.evaluate.backtest import (
+    run_calibration_report,
+    run_historical_backtest,
+    run_real_odds_policy_grid,
+)
 from scorerecord.evaluate.calibrator_drift import monitor_calibrator_drift
 from scorerecord.evaluate.edge import compute_edges
 from scorerecord.evaluate.goal_markets import run_goal_market_walk_forward
-from scorerecord.evaluate.recommendations import compute_recommendation_clv, generate_recommendations
+from scorerecord.evaluate.recommendations import (
+    compute_recommendation_clv,
+    generate_recommendations,
+)
 from scorerecord.evaluate.settlement import settle_fixtures
 from scorerecord.evaluate.tune_decay import run_decay_sweep
 from scorerecord.evaluate.walk_forward import run_walk_forward
@@ -132,9 +139,11 @@ def main(argv: list[str] | None = None) -> int:
     recommend.add_argument("--min-edge", type=float, default=0.05)
     recommend.add_argument("--max-edge", type=float, default=0.25)
     recommend.add_argument("--min-prob", type=float, default=0.15)
+    recommend.add_argument("--min-score", type=float, default=0.05)
     recommend.add_argument("--max-odds-age-minutes", type=float, default=180.0)
     recommend.add_argument("--min-books", type=int, default=2)
     recommend.add_argument("--max-picks-per-fixture", type=int, default=1)
+    recommend.add_argument("--max-picks-per-day", type=int)
     recommend.add_argument(
         "--allow-odds-quality-flags",
         action="store_true",
@@ -159,7 +168,9 @@ def main(argv: list[str] | None = None) -> int:
     backtest.add_argument("--min-edge", type=float, default=0.05)
     backtest.add_argument("--max-edge", type=float, default=0.25)
     backtest.add_argument("--min-prob", type=float, default=0.15)
+    backtest.add_argument("--min-score", type=float, default=0.0)
     backtest.add_argument("--max-picks-per-fixture", type=int, default=1)
+    backtest.add_argument("--max-picks-per-day", type=int)
     backtest.add_argument("--odds-mode", choices=("proxy", "historical"), default="proxy")
     backtest.add_argument("--historical-odds-source", default="football-data")
     backtest.add_argument("--entry-odds", default="avg_open")
@@ -167,6 +178,27 @@ def main(argv: list[str] | None = None) -> int:
     backtest.add_argument("--market", default="1X2")
     backtest.add_argument("--league", help="Historical odds league alias/code filter.")
     backtest.add_argument("--season", help="Historical odds season filter, e.g. 2023-2024.")
+    policy_grid = subparsers.add_parser(
+        "backtest-policy-grid",
+        help="Compare historical real-odds selection policy gates without refitting per config.",
+    )
+    policy_grid.add_argument("--from", dest="from_date", required=True, help="YYYY-MM-DD")
+    policy_grid.add_argument("--to", dest="to_date", required=True, help="YYYY-MM-DD")
+    policy_grid.add_argument("--out-dir", default="outputs/backtests")
+    policy_grid.add_argument("--start-year", type=int, default=2021)
+    policy_grid.add_argument("--min-train", type=int, default=200)
+    policy_grid.add_argument("--min-scores", default="0,0.05,0.075,0.10,0.125")
+    policy_grid.add_argument("--min-edges", default="0.03,0.05,0.075")
+    policy_grid.add_argument("--max-picks-per-days", default="none,10,5,3")
+    policy_grid.add_argument("--max-edge", type=float, default=0.25)
+    policy_grid.add_argument("--min-prob", type=float, default=0.15)
+    policy_grid.add_argument("--max-picks-per-fixture", type=int, default=1)
+    policy_grid.add_argument("--historical-odds-source", default="football-data")
+    policy_grid.add_argument("--entry-odds", default="avg_open")
+    policy_grid.add_argument("--closing-odds", default="avg_close")
+    policy_grid.add_argument("--market", default="1X2")
+    policy_grid.add_argument("--league", help="Historical odds league alias/code filter.")
+    policy_grid.add_argument("--season", help="Historical odds season filter, e.g. 2023-2024.")
     calibration = subparsers.add_parser(
         "calibration-report",
         help="Historical walk-forward calibration report by market and probability bucket.",
@@ -422,9 +454,11 @@ def main(argv: list[str] | None = None) -> int:
                 min_edge=args.min_edge,
                 max_edge=args.max_edge,
                 min_prob=args.min_prob,
+                min_score=args.min_score,
                 max_odds_age_minutes=args.max_odds_age_minutes,
                 min_books=args.min_books,
                 max_picks_per_fixture=args.max_picks_per_fixture,
+                max_picks_per_day=args.max_picks_per_day,
                 exclude_odds_quality_flags=not args.allow_odds_quality_flags,
                 kelly_fraction=args.kelly_fraction,
                 max_stake=args.max_stake,
@@ -463,8 +497,35 @@ def main(argv: list[str] | None = None) -> int:
                 min_edge=args.min_edge,
                 max_edge=args.max_edge,
                 min_prob=args.min_prob,
+                min_score=args.min_score,
                 max_picks_per_fixture=args.max_picks_per_fixture,
+                max_picks_per_day=args.max_picks_per_day,
                 odds_mode=args.odds_mode,
+                historical_odds_source=args.historical_odds_source,
+                entry_odds=args.entry_odds,
+                closing_odds=args.closing_odds,
+                market=args.market,
+                league=args.league,
+                season=args.season,
+                cwd=Path.cwd(),
+            )
+            print(summary.as_row())
+            return 0
+
+        if args.command == "backtest-policy-grid":
+            summary = run_real_odds_policy_grid(
+                conn,
+                from_date=date.fromisoformat(args.from_date),
+                to_date=date.fromisoformat(args.to_date),
+                out_dir=Path(args.out_dir),
+                start_year=args.start_year,
+                min_train=args.min_train,
+                min_scores=_parse_float_tuple(args.min_scores),
+                min_edges=_parse_float_tuple(args.min_edges),
+                max_picks_per_days=_parse_optional_int_tuple(args.max_picks_per_days),
+                max_edge=args.max_edge,
+                min_prob=args.min_prob,
+                max_picks_per_fixture=args.max_picks_per_fixture,
                 historical_odds_source=args.historical_odds_source,
                 entry_odds=args.entry_odds,
                 closing_odds=args.closing_odds,
@@ -515,6 +576,20 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
     return 1
+
+
+def _parse_float_tuple(value: str) -> tuple[float, ...]:
+    return tuple(float(item.strip()) for item in value.split(",") if item.strip())
+
+
+def _parse_optional_int_tuple(value: str) -> tuple[int | None, ...]:
+    output: list[int | None] = []
+    for item in value.split(","):
+        stripped = item.strip().casefold()
+        if not stripped:
+            continue
+        output.append(None if stripped in {"none", "null", "off"} else int(stripped))
+    return tuple(output)
 
 
 if __name__ == "__main__":

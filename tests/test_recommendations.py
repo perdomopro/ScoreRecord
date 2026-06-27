@@ -234,6 +234,67 @@ def test_generate_recommendations_limits_correlated_fixture_picks() -> None:
     assert (row["market"], row["selection"]) == ("BTTS", "yes")
 
 
+def test_generate_recommendations_excludes_low_recommendation_score() -> None:
+    conn = _conn()
+    edge_run_id = _run(conn, "compute-edge")
+    conn.execute(
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m8', '2026-06-11 13:00 UTC-6')"
+    )
+    conn.execute(
+        """
+        INSERT INTO edge_analysis (
+          fixture_id, run_id, model_version, market, selection, prob_model,
+          odds_decimal, prob_market_devig, edge_ev, edge_prob, bookmaker,
+          captured_utc, generated_utc, odds_books, odds_quality_flags,
+          recommendation_score
+        )
+        VALUES ('m8', ?, ?, '1X2', 'home', 0.45, 2.00, 0.10,
+                0.05, 'Bet365', '2026-06-10T01:00:00+00:00',
+                '2026-06-10T02:00:00+00:00', 2, '', 0.04)
+        """,
+        (edge_run_id, MODEL_VERSION),
+    )
+
+    summary = generate_recommendations(conn, min_score=0.05)
+
+    assert summary.candidates_seen == 0
+    assert summary.recommendations == 0
+
+
+def test_generate_recommendations_limits_daily_volume() -> None:
+    conn = _conn()
+    edge_run_id = _run(conn, "compute-edge")
+    for fixture_id, score in [("d1", 0.09), ("d2", 0.12)]:
+        conn.execute(
+            """
+            INSERT INTO fixture (fixture_id, kickoff_utc)
+            VALUES (?, '2026-06-11T18:00:00+00:00')
+            """,
+            (fixture_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO edge_analysis (
+              fixture_id, run_id, model_version, market, selection, prob_model,
+              odds_decimal, prob_market_devig, edge_ev, edge_prob, bookmaker,
+              captured_utc, generated_utc, odds_books, odds_quality_flags,
+              recommendation_score
+            )
+            VALUES (?, ?, ?, '1X2', 'home', 0.45, 2.00, 0.10,
+                    0.05, 'Bet365', '2026-06-10T01:00:00+00:00',
+                    '2026-06-10T02:00:00+00:00', 2, '', ?)
+            """,
+            (fixture_id, edge_run_id, MODEL_VERSION, score),
+        )
+
+    summary = generate_recommendations(conn, max_picks_per_day=1)
+
+    assert summary.candidates_seen == 2
+    assert summary.recommendations == 1
+    row = conn.execute("SELECT fixture_id FROM recommendation").fetchone()
+    assert row["fixture_id"] == "d2"
+
+
 def test_compute_recommendation_clv_matches_closing_odds() -> None:
     conn = _conn()
     recommendation_run_id = _run(conn, "recommend")

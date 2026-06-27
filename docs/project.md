@@ -481,6 +481,16 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Ran EPL historical real-odds backtest `run_id=75` for 2021-08-01 through 2025-05-31: 4560 predictions, 1444 selected policy rows, global tier `more_stable_signal`.
 - Initial EPL read from `run_id=75`: capped ROI -8.46%, mean CLV -0.56%, positive CLV 43.56%; this is enough to review score/edge buckets, but not enough to blindly retune without per-bucket checks.
 
+### 2026-06-27 - Historical policy selectivity gates
+
+- Added `--min-score` to `recommend` and `backtest`; production recommendations now default to `min_score=0.05`, while backtests default to `0.0` for backward-compatible baselines unless specified.
+- Added `--max-picks-per-day` to `recommend` and `backtest` so the policy can explicitly say "no more value today" instead of selecting almost one pick per fixture.
+- Added `backtest-policy-grid` for Football-Data 1X2 historical odds. It fits/predicts once, then sweeps `min_score`, `min_edge`, and `max_picks_per_day` combinations without refitting per config.
+- Policy-grid CSVs report compact rows by ranking strategy with sample tier, decision gate, capped ROI, mean CLV, positive CLV rate, drawdown, average edge, and average recommendation score.
+- Policy-grid metadata and `data_quality` records warn against choosing the single best ROI row without bucket checks and cross-league validation.
+- Added tests/smokes for min-score filtering, daily volume caps, and policy-grid output.
+- Critical interpretation: the EPL result justifies adding selectivity controls; it does not yet justify hardcoding draw-specific or long-odds-specific penalties without grid and bucket evidence.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.
