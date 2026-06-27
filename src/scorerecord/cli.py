@@ -9,6 +9,7 @@ from pathlib import Path
 from scorerecord.aliases import seed_team_aliases
 from scorerecord.db import connect, init_db, table_count
 from scorerecord.evaluate.backtest import (
+    run_market_benchmark_report,
     run_calibration_report,
     run_historical_backtest,
     run_real_odds_policy_grid,
@@ -16,6 +17,7 @@ from scorerecord.evaluate.backtest import (
 from scorerecord.evaluate.calibrator_drift import monitor_calibrator_drift
 from scorerecord.evaluate.edge import compute_edges
 from scorerecord.evaluate.goal_markets import run_goal_market_walk_forward
+from scorerecord.evaluate.policy_analysis import analyze_policy_grids
 from scorerecord.evaluate.recommendations import (
     compute_recommendation_clv,
     generate_recommendations,
@@ -190,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     policy_grid.add_argument("--min-scores", default="0,0.05,0.075,0.10,0.125")
     policy_grid.add_argument("--min-edges", default="0.03,0.05,0.075")
     policy_grid.add_argument("--max-picks-per-days", default="none,10,5,3")
+    policy_grid.add_argument("--market-shrink-alphas", default="1.0")
     policy_grid.add_argument("--max-edge", type=float, default=0.25)
     policy_grid.add_argument("--min-prob", type=float, default=0.15)
     policy_grid.add_argument("--max-picks-per-fixture", type=int, default=1)
@@ -199,6 +202,30 @@ def main(argv: list[str] | None = None) -> int:
     policy_grid.add_argument("--market", default="1X2")
     policy_grid.add_argument("--league", help="Historical odds league alias/code filter.")
     policy_grid.add_argument("--season", help="Historical odds season filter, e.g. 2023-2024.")
+    benchmark = subparsers.add_parser(
+        "market-benchmark-report",
+        help=(
+            "Compare walk-forward model probabilities against fair historical "
+            "market probabilities."
+        ),
+    )
+    benchmark.add_argument("--from", dest="from_date", required=True, help="YYYY-MM-DD")
+    benchmark.add_argument("--to", dest="to_date", required=True, help="YYYY-MM-DD")
+    benchmark.add_argument("--out-dir", default="outputs/backtests")
+    benchmark.add_argument("--start-year", type=int, default=2021)
+    benchmark.add_argument("--min-train", type=int, default=200)
+    benchmark.add_argument("--historical-odds-source", default="football-data")
+    benchmark.add_argument("--entry-odds", default="avg_open")
+    benchmark.add_argument("--closing-odds", default="avg_close")
+    benchmark.add_argument("--market", default="1X2")
+    benchmark.add_argument("--league", help="Historical odds league alias/code filter.")
+    benchmark.add_argument("--season", help="Historical odds season filter, e.g. 2023-2024.")
+    analyze_grids = subparsers.add_parser(
+        "analyze-policy-grids",
+        help="Aggregate policy-grid CSVs across leagues and flag candidate/review/reject configs.",
+    )
+    analyze_grids.add_argument("inputs", nargs="+", help="CSV files, globs, or comma lists.")
+    analyze_grids.add_argument("--out", default="outputs/backtests/policy_grid_summary.csv")
     calibration = subparsers.add_parser(
         "calibration-report",
         help="Historical walk-forward calibration report by market and probability bucket.",
@@ -523,6 +550,7 @@ def main(argv: list[str] | None = None) -> int:
                 min_scores=_parse_float_tuple(args.min_scores),
                 min_edges=_parse_float_tuple(args.min_edges),
                 max_picks_per_days=_parse_optional_int_tuple(args.max_picks_per_days),
+                market_shrink_alphas=_parse_float_tuple(args.market_shrink_alphas),
                 max_edge=args.max_edge,
                 min_prob=args.min_prob,
                 max_picks_per_fixture=args.max_picks_per_fixture,
@@ -532,6 +560,35 @@ def main(argv: list[str] | None = None) -> int:
                 market=args.market,
                 league=args.league,
                 season=args.season,
+                cwd=Path.cwd(),
+            )
+            print(summary.as_row())
+            return 0
+
+        if args.command == "market-benchmark-report":
+            summary = run_market_benchmark_report(
+                conn,
+                from_date=date.fromisoformat(args.from_date),
+                to_date=date.fromisoformat(args.to_date),
+                out_dir=Path(args.out_dir),
+                start_year=args.start_year,
+                min_train=args.min_train,
+                historical_odds_source=args.historical_odds_source,
+                entry_odds=args.entry_odds,
+                closing_odds=args.closing_odds,
+                market=args.market,
+                league=args.league,
+                season=args.season,
+                cwd=Path.cwd(),
+            )
+            print(summary.as_row())
+            return 0
+
+        if args.command == "analyze-policy-grids":
+            summary = analyze_policy_grids(
+                conn,
+                inputs=args.inputs,
+                out_path=Path(args.out),
                 cwd=Path.cwd(),
             )
             print(summary.as_row())
@@ -568,6 +625,7 @@ def main(argv: list[str] | None = None) -> int:
                 "recommendation_result",
                 "historical_match",
                 "historical_odds",
+                "odds_snapshots",
                 "eval_metric",
                 "ingest_run",
                 "data_quality",

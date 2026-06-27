@@ -495,6 +495,19 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Best useful capped-ROI row in `run_id=77` was `min_edge=0.075`, `max_picks_per_day=3`, `ranking=recommendation_score`: 555 bets, capped ROI -4.56%, mean CLV -0.58%, positive CLV 43.06%.
 - Interpretation: selectivity improves the EPL historical result relative to the original -8.46% capped ROI, but the grid still does not show positive CLV; do not promote these gates as a profitable production policy without more evidence.
 
+### 2026-06-27 - Market benchmark, shrink grid, and live odds snapshots
+
+- Added `backtest-policy-grid --market-shrink-alphas` to test blends of model probability and fair market probability: `p_final = alpha * model_prob + (1 - alpha) * market_prob_fair`.
+- The shrink grid recomputes EV, probability edge, high-edge reasons, and `recommendation_score` for each alpha before applying selection gates.
+- Added `market-benchmark-report` for Football-Data 1X2 historical odds. It writes row-level and grouped CSVs comparing model log-loss/Brier/calibration against fair market probabilities.
+- Benchmark groups include overall, selection, model probability bucket, market probability bucket, selection-plus-probability bucket, and odds bucket.
+- Added `analyze-policy-grids` to aggregate `policy_grid_real_odds_*.csv` files across leagues by config, including `market_shrink_alpha`, and classify each policy as `candidate`, `review`, or `reject`.
+- The policy-grid analyzer is intentionally conservative: `candidate` requires at least three leagues, at least 1000 bets, nonnegative weighted capped ROI, positive weighted CLV, positive CLV rate above 50%, and positive CLV in at least 60% of leagues.
+- Added `odds_snapshots` as an append-only live price table populated during `fetch-odds`. The current edge layer still uses `odds`, while snapshots preserve event id, fixture id, bookmaker, market, selection, line, odds, timestamp, and commence time for future live CLV/drift analysis.
+- Added tests/smokes for market shrink, model-vs-market benchmark rows, cross-league grid aggregation, and live odds snapshots.
+- Updated README command examples with the benchmark, shrink grid, and grid aggregation workflow.
+- Critical interpretation: these tools decide whether the model needs market shrink or policy rejection; they do not prove future World Cup profitability and should not loosen paper-only staking gates without multi-league and live CLV evidence.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.

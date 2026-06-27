@@ -14,7 +14,7 @@ import csv
 import json
 import math
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from itertools import product
 from pathlib import Path
@@ -211,6 +211,22 @@ class PolicyGridSummary:
         return (
             f"run_id={self.run_id} output_dir={self.output_dir} "
             f"rows_written={self.rows_written} prediction_rows={self.prediction_rows}"
+        )
+
+
+@dataclass(frozen=True)
+class MarketBenchmarkSummary:
+    run_id: int
+    output_dir: Path
+    rows_written: int
+    summary_rows: int
+    model_minus_market_logloss: float
+
+    def as_row(self) -> str:
+        return (
+            f"run_id={self.run_id} output_dir={self.output_dir} "
+            f"rows_written={self.rows_written} summary_rows={self.summary_rows} "
+            f"model_minus_market_logloss={self.model_minus_market_logloss:.6f}"
         )
 
 
@@ -486,6 +502,7 @@ def run_real_odds_policy_grid(
     min_scores: tuple[float, ...] = (0.0, 0.05, 0.075, 0.10, 0.125),
     min_edges: tuple[float, ...] = (0.03, 0.05, 0.075),
     max_picks_per_days: tuple[int | None, ...] = (None, 10, 5, 3),
+    market_shrink_alphas: tuple[float, ...] = (1.0,),
     max_edge: float = 0.25,
     min_prob: float = 0.15,
     max_picks_per_fixture: int = 1,
@@ -530,28 +547,31 @@ def run_real_odds_policy_grid(
             test_season=normalized_season,
         )
         rows: list[dict[str, object]] = []
-        for min_score, min_edge, max_per_day in product(
-            min_scores,
-            min_edges,
-            max_picks_per_days,
-        ):
-            selected = _select_real_odds_bets(
-                predictions,
-                min_edge=min_edge,
-                max_edge=max_edge,
-                min_prob=min_prob,
-                min_score=min_score,
-                max_picks_per_fixture=max_picks_per_fixture,
-                max_picks_per_day=max_per_day,
-            )
-            rows.extend(
-                _policy_grid_rows(
-                    selected,
-                    min_score=min_score,
+        for alpha in market_shrink_alphas:
+            alpha_predictions = _shrink_real_odds_predictions(predictions, alpha=alpha)
+            for min_score, min_edge, max_per_day in product(
+                min_scores,
+                min_edges,
+                max_picks_per_days,
+            ):
+                selected = _select_real_odds_bets(
+                    alpha_predictions,
                     min_edge=min_edge,
+                    max_edge=max_edge,
+                    min_prob=min_prob,
+                    min_score=min_score,
+                    max_picks_per_fixture=max_picks_per_fixture,
                     max_picks_per_day=max_per_day,
                 )
-            )
+                rows.extend(
+                    _policy_grid_rows(
+                        selected,
+                        min_score=min_score,
+                        min_edge=min_edge,
+                        max_picks_per_day=max_per_day,
+                        market_shrink_alpha=alpha,
+                    )
+                )
 
         out_dir.mkdir(parents=True, exist_ok=True)
         grid_path = out_dir / f"policy_grid_real_odds_{run_id}.csv"
@@ -569,6 +589,7 @@ def run_real_odds_policy_grid(
             "max_picks_per_days": [
                 "none" if value is None else value for value in max_picks_per_days
             ],
+            "market_shrink_alphas": list(market_shrink_alphas),
             "max_edge": max_edge,
             "min_prob": min_prob,
             "max_picks_per_fixture": max_picks_per_fixture,
@@ -594,6 +615,103 @@ def run_real_odds_policy_grid(
         output_dir=out_dir,
         rows_written=len(rows),
         prediction_rows=len(predictions),
+    )
+
+
+def run_market_benchmark_report(
+    conn: sqlite3.Connection,
+    *,
+    from_date: date,
+    to_date: date,
+    out_dir: Path,
+    start_year: int = 2021,
+    min_train: int = 200,
+    historical_odds_source: str = "football-data",
+    entry_odds: str = "avg_open",
+    closing_odds: str = "avg_close",
+    market: str = "1X2",
+    league: str | None = None,
+    season: str | None = None,
+    cwd: Path | None = None,
+) -> MarketBenchmarkSummary:
+    if market != "1X2":
+        raise ValueError("Market benchmark currently supports only market=1X2")
+    if historical_odds_source != "football-data":
+        raise ValueError("Only historical_odds_source=football-data is supported")
+
+    league_code = resolve_league_code(league) if league else None
+    normalized_season = normalize_season(season) if season else None
+    generated_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    with ingest_run(conn, "market-benchmark", source=historical_odds_source, cwd=cwd) as run_id:
+        matches = _load_historical_odds_matches(
+            conn,
+            source=historical_odds_source,
+            league_code=league_code,
+            test_season=normalized_season,
+            to_date=to_date,
+        )
+        odds = _load_historical_odds_markets(
+            conn,
+            source=historical_odds_source,
+            entry_odds_type=entry_odds,
+            closing_odds_type=closing_odds,
+        )
+        predictions = _walk_forward_real_odds_predictions(
+            matches,
+            odds=odds,
+            from_date=from_date,
+            to_date=to_date,
+            start_year=start_year,
+            min_train=min_train,
+            test_season=normalized_season,
+        )
+        row_details = _market_benchmark_detail_rows(predictions)
+        summary_rows = _market_benchmark_summary_rows(predictions)
+        overall = next(
+            row
+            for row in summary_rows
+            if row["group_type"] == "overall" and row["group"] == "all"
+        )
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        detail_path = out_dir / f"market_benchmark_rows_{run_id}.csv"
+        summary_path = out_dir / f"market_benchmark_summary_{run_id}.csv"
+        metadata_path = out_dir / f"market_benchmark_metadata_{run_id}.json"
+        _write_dict_rows(detail_path, row_details)
+        _write_dict_rows(summary_path, summary_rows)
+        metadata = {
+            "run_id": run_id,
+            "generated_utc": generated_utc,
+            "from_date": from_date.isoformat(),
+            "to_date": to_date.isoformat(),
+            "start_year": start_year,
+            "min_train": min_train,
+            "odds_source": historical_odds_source,
+            "entry_odds_type": entry_odds,
+            "closing_odds_type": closing_odds,
+            "market": market,
+            "league_code": league_code,
+            "test_season": normalized_season,
+            "prediction_rows": len(predictions),
+            "summary_rows": len(summary_rows),
+            "overall": overall,
+            "interpretation": (
+                "Negative model_minus_market_logloss means the model beat fair market "
+                "probabilities for this historical sample. Positive means shrink or "
+                "market-following deserves serious review."
+            ),
+        }
+        metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+        _record_market_benchmark_quality(conn, run_id, metadata, summary_rows)
+        conn.commit()
+
+    return MarketBenchmarkSummary(
+        run_id=run_id,
+        output_dir=out_dir,
+        rows_written=len(row_details),
+        summary_rows=len(summary_rows),
+        model_minus_market_logloss=float(overall["model_minus_market_logloss"]),
     )
 
 
@@ -886,6 +1004,51 @@ def _walk_forward_real_odds_predictions(
                 )
     if not output:
         raise ValueError("Real-odds backtest produced no predictions; check min_train/date range")
+    return output
+
+
+def _shrink_real_odds_predictions(
+    predictions: list[RealOddsPrediction],
+    *,
+    alpha: float,
+) -> list[RealOddsPrediction]:
+    if alpha < 0.0 or alpha > 1.0:
+        raise ValueError("market_shrink_alpha must be between 0 and 1")
+    if abs(alpha - 1.0) < _EPS:
+        return predictions
+
+    output: list[RealOddsPrediction] = []
+    for row in predictions:
+        model_prob = alpha * row.model_prob + (1.0 - alpha) * row.market_prob
+        edge_ev = model_prob * row.entry_odds - 1.0
+        edge_prob = model_prob - row.market_prob
+        high_edge_reason = _high_edge_reason(
+            market=row.market,
+            selection=row.selection,
+            odds_decimal=row.entry_odds,
+            prob_model=model_prob,
+            edge_ev=edge_ev,
+            edge_prob=edge_prob,
+            odds_quality_flags=row.odds_quality_flags,
+        )
+        recommendation_score = _recommendation_score(
+            edge_ev=edge_ev,
+            odds_decimal=row.entry_odds,
+            market=row.market,
+            selection=row.selection,
+            odds_quality_flags=row.odds_quality_flags,
+            close_match=None,
+        )
+        output.append(
+            replace(
+                row,
+                model_prob=model_prob,
+                edge_ev=edge_ev,
+                edge_prob=edge_prob,
+                recommendation_score=recommendation_score,
+                high_edge_reason=high_edge_reason,
+            )
+        )
     return output
 
 
@@ -1392,6 +1555,7 @@ def _policy_grid_rows(
     min_score: float,
     min_edge: float,
     max_picks_per_day: int | None,
+    market_shrink_alpha: float,
 ) -> list[dict[str, object]]:
     grouped: dict[str, list[RealOddsBet]] = {}
     for bet in bets:
@@ -1406,6 +1570,7 @@ def _policy_grid_rows(
                 "max_picks_per_day": (
                     "none" if max_picks_per_day is None else max_picks_per_day
                 ),
+                "market_shrink_alpha": market_shrink_alpha,
                 "ranking_strategy": ranking_strategy,
                 "num_bets": metrics["num_bets"],
                 "sample_size_tier": metrics["sample_size_tier"],
@@ -1433,6 +1598,7 @@ def _policy_grid_rows(
                     "max_picks_per_day": (
                         "none" if max_picks_per_day is None else max_picks_per_day
                     ),
+                    "market_shrink_alpha": market_shrink_alpha,
                     "ranking_strategy": ranking_strategy,
                     "num_bets": 0,
                     "sample_size_tier": sample_size_tier(0),
@@ -1655,6 +1821,114 @@ def _real_clv_rows(bets: list[RealOddsBet]) -> list[dict[str, object]]:
     return output
 
 
+def _market_benchmark_detail_rows(predictions: list[RealOddsPrediction]) -> list[dict[str, object]]:
+    output: list[dict[str, object]] = []
+    for row in predictions:
+        model_logloss = _binary_logloss(row.model_prob, row.won)
+        market_logloss = _binary_logloss(row.market_prob, row.won)
+        model_brier = (row.model_prob - row.won) ** 2
+        market_brier = (row.market_prob - row.won) ** 2
+        output.append(
+            {
+                "match_date": row.match.match_date,
+                "league_code": row.match.league_code,
+                "season": row.match.season,
+                "source_event_id": row.match.source_event_id,
+                "home_team": row.match.home_team,
+                "away_team": row.match.away_team,
+                "market": row.market,
+                "selection": row.selection,
+                "won": row.won,
+                "model_prob": row.model_prob,
+                "fair_market_prob": row.market_prob,
+                "entry_odds": row.entry_odds,
+                "closing_odds": "" if row.closing_odds is None else row.closing_odds,
+                "market_overround": row.market_overround,
+                "edge_ev": row.edge_ev,
+                "edge_prob": row.edge_prob,
+                "recommendation_score": row.recommendation_score,
+                "model_logloss": model_logloss,
+                "market_logloss": market_logloss,
+                "model_minus_market_logloss": model_logloss - market_logloss,
+                "model_brier": model_brier,
+                "market_brier": market_brier,
+                "model_minus_market_brier": model_brier - market_brier,
+                "model_prob_bucket": prob_bucket(row.model_prob),
+                "market_prob_bucket": prob_bucket(row.market_prob),
+                "odds_bucket": row.odds_bucket,
+                "edge_bucket": row.edge_bucket,
+            }
+        )
+    return output
+
+
+def _market_benchmark_summary_rows(
+    predictions: list[RealOddsPrediction],
+) -> list[dict[str, object]]:
+    groupers: list[tuple[str, Callable[[RealOddsPrediction], str]]] = [
+        ("overall", lambda row: "all"),
+        ("selection", lambda row: row.selection),
+        ("model_prob_bucket", lambda row: row.prob_bucket),
+        ("market_prob_bucket", lambda row: prob_bucket(row.market_prob)),
+        ("selection_model_prob_bucket", lambda row: f"{row.selection}:{row.prob_bucket}"),
+        ("odds_bucket", lambda row: row.odds_bucket),
+    ]
+    output: list[dict[str, object]] = []
+    for group_type, key_fn in groupers:
+        grouped: dict[str, list[RealOddsPrediction]] = {}
+        for row in predictions:
+            grouped.setdefault(key_fn(row), []).append(row)
+        for group, rows in sorted(grouped.items()):
+            output.append(_market_benchmark_metric_row(group_type, group, rows))
+    return output
+
+
+def _market_benchmark_metric_row(
+    group_type: str,
+    group: str,
+    rows: list[RealOddsPrediction],
+) -> dict[str, object]:
+    model_logloss = _mean([_binary_logloss(row.model_prob, row.won) for row in rows])
+    market_logloss = _mean([_binary_logloss(row.market_prob, row.won) for row in rows])
+    model_brier = _mean([(row.model_prob - row.won) ** 2 for row in rows])
+    market_brier = _mean([(row.market_prob - row.won) ** 2 for row in rows])
+    hit_rate = _mean([row.won for row in rows])
+    avg_model_prob = _mean([row.model_prob for row in rows])
+    avg_market_prob = _mean([row.market_prob for row in rows])
+    return {
+        "group_type": group_type,
+        "group": group,
+        "num_rows": len(rows),
+        "sample_size_tier": sample_size_tier(len(rows)),
+        "decision_gate": decision_gate(len(rows)),
+        "hit_rate": hit_rate,
+        "avg_model_prob": avg_model_prob,
+        "avg_market_prob": avg_market_prob,
+        "avg_entry_odds": _mean([row.entry_odds for row in rows]),
+        "avg_market_overround": _mean([row.market_overround for row in rows]),
+        "model_logloss": model_logloss,
+        "market_logloss": market_logloss,
+        "model_minus_market_logloss": model_logloss - market_logloss,
+        "model_brier": model_brier,
+        "market_brier": market_brier,
+        "model_minus_market_brier": model_brier - market_brier,
+        "model_calibration_error": hit_rate - avg_model_prob,
+        "market_calibration_error": hit_rate - avg_market_prob,
+        "model_abs_calibration_error": abs(hit_rate - avg_model_prob),
+        "market_abs_calibration_error": abs(hit_rate - avg_market_prob),
+        "model_ece": _expected_calibration_error_for_probs(
+            rows,
+            lambda row: row.model_prob,
+        ),
+        "market_ece": _expected_calibration_error_for_probs(
+            rows,
+            lambda row: row.market_prob,
+        ),
+        "model_better_logloss": int(model_logloss < market_logloss),
+        "model_better_brier": int(model_brier < market_brier),
+    }
+
+
 def _calibration_market_rows(predictions: list[HistoricalPrediction]) -> list[dict[str, object]]:
     grouped: dict[tuple[str, str], list[HistoricalPrediction]] = {}
     for row in predictions:
@@ -1679,6 +1953,15 @@ def _calibration_market_rows(predictions: list[HistoricalPrediction]) -> list[di
 
 
 def expected_calibration_error(rows: list[HistoricalPrediction], *, n_bins: int = 10) -> float:
+    return _expected_calibration_error_for_probs(rows, lambda row: row.model_prob, n_bins=n_bins)
+
+
+def _expected_calibration_error_for_probs(
+    rows: list[HistoricalPrediction] | list[RealOddsPrediction],
+    prob_getter: Callable[[HistoricalPrediction | RealOddsPrediction], float],
+    *,
+    n_bins: int = 10,
+) -> float:
     if not rows:
         return 0.0
     total = len(rows)
@@ -1689,12 +1972,13 @@ def expected_calibration_error(rows: list[HistoricalPrediction], *, n_bins: int 
         selected = [
             row
             for row in rows
-            if row.model_prob >= lower and (row.model_prob < upper or index == n_bins - 1)
+            if prob_getter(row) >= lower
+            and (prob_getter(row) < upper or index == n_bins - 1)
         ]
         if not selected:
             continue
         ece += (len(selected) / total) * abs(
-            _mean([row.model_prob for row in selected]) - _mean([row.won for row in selected])
+            _mean([prob_getter(row) for row in selected]) - _mean([row.won for row in selected])
         )
     return ece
 
@@ -1971,6 +2255,58 @@ def _record_policy_grid_quality(
             conn,
             run_id,
             "historical_policy_grid",
+            metric_name,
+            float(value),
+            json.dumps(details, sort_keys=True),
+        )
+
+
+def _record_market_benchmark_quality(
+    conn: sqlite3.Connection,
+    run_id: int,
+    metadata: dict[str, object],
+    summary_rows: list[dict[str, object]],
+) -> None:
+    overall = next(
+        (
+            row
+            for row in summary_rows
+            if row["group_type"] == "overall" and row["group"] == "all"
+        ),
+        None,
+    )
+    details = {
+        **metadata,
+        "selection_rows": [
+            row for row in summary_rows if row["group_type"] == "selection"
+        ],
+        "warning": (
+            "This benchmark compares model probabilities to historical fair market "
+            "probabilities. It does not prove future betting edge by itself."
+        ),
+    }
+    for metric_name, value in [
+        ("prediction_rows", metadata["prediction_rows"]),
+        ("summary_rows", len(summary_rows)),
+        (
+            "overall_model_logloss",
+            float(overall["model_logloss"]) if overall else 0.0,
+        ),
+        (
+            "overall_market_logloss",
+            float(overall["market_logloss"]) if overall else 0.0,
+        ),
+        (
+            "overall_model_minus_market_logloss",
+            float(overall["model_minus_market_logloss"]) if overall else 0.0,
+        ),
+        ("overall_model_ece", float(overall["model_ece"]) if overall else 0.0),
+        ("overall_market_ece", float(overall["market_ece"]) if overall else 0.0),
+    ]:
+        record_quality(
+            conn,
+            run_id,
+            "market_benchmark",
             metric_name,
             float(value),
             json.dumps(details, sort_keys=True),

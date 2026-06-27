@@ -103,6 +103,28 @@ CREATE TABLE IF NOT EXISTS odds (
   PRIMARY KEY (fixture_id, market, selection, bookmaker, captured_utc)
 );
 
+CREATE TABLE IF NOT EXISTS odds_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL,
+  fixture_id TEXT REFERENCES fixture(fixture_id),
+  bookmaker TEXT NOT NULL,
+  market TEXT NOT NULL,
+  selection TEXT NOT NULL,
+  line REAL,
+  decimal_odds REAL NOT NULL,
+  snapshot_at TEXT NOT NULL,
+  commence_time TEXT,
+  source TEXT NOT NULL,
+  raw_json TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_odds_snapshots_lookup
+  ON odds_snapshots(fixture_id, market, selection, bookmaker, snapshot_at);
+
+CREATE INDEX IF NOT EXISTS idx_odds_snapshots_event
+  ON odds_snapshots(source, event_id, snapshot_at);
+
 CREATE TABLE IF NOT EXISTS edge_analysis (
   fixture_id TEXT NOT NULL REFERENCES fixture(fixture_id),
   run_id INTEGER NOT NULL REFERENCES ingest_run(run_id),

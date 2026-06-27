@@ -44,6 +44,7 @@ def table_count(conn: sqlite3.Connection, table_name: str) -> int:
         "fixture",
         "fixture_stats",
         "odds",
+        "odds_snapshots",
         "edge_analysis",
         "player_prop",
         "prediction",

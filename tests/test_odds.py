@@ -2,7 +2,12 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from scorerecord.db import init_db
-from scorerecord.ingest.odds import _candidate_fixtures, parse_odds_payload
+from scorerecord.ingest.odds import (
+    OddsRow,
+    _candidate_fixtures,
+    _insert_odds_snapshot,
+    parse_odds_payload,
+)
 
 
 def _conn() -> sqlite3.Connection:
@@ -55,6 +60,7 @@ def test_parse_odds_api_io_documented_shape() -> None:
     assert keyed[("OU2.5", "under")] == 1.90
     assert keyed[("BTTS", "yes")] == 1.83
     assert keyed[("BTTS", "no")] == 1.95
+    assert all(row.source_event_id == "123456" for row in rows)
 
 
 def test_closing_candidate_fixtures_limit_to_upcoming_window() -> None:
@@ -85,3 +91,36 @@ def test_closing_candidate_fixtures_limit_to_upcoming_window() -> None:
     rows = _candidate_fixtures(conn, fixture_id=None, closing_window_minutes=60)
 
     assert [row["fixture_id"] for row in rows] == ["near"]
+
+
+def test_insert_odds_snapshot_keeps_append_only_live_price_trace() -> None:
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (1, 'Home', 'home')"
+    )
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (2, 'Away', 'away')"
+    )
+    conn.execute(
+        """
+        INSERT INTO fixture (fixture_id, kickoff_utc, home_id, away_id)
+        VALUES ('fx1', '2026-06-11T19:00:00+00:00', 1, 2)
+        """
+    )
+    row = OddsRow(
+        fixture_id="fx1",
+        bookmaker="Bet365",
+        market="OU2.5",
+        selection="over",
+        decimal_odds=1.91,
+        captured_utc="2026-06-10T10:30:00+00:00",
+        is_closing=0,
+        source_event_id="event-1",
+        commence_time="2026-06-11T19:00:00Z",
+    )
+
+    assert _insert_odds_snapshot(conn, row) == 1
+    stored = conn.execute("SELECT * FROM odds_snapshots").fetchone()
+    assert stored["event_id"] == "event-1"
+    assert stored["line"] == 2.5
+    assert stored["snapshot_at"] == "2026-06-10T10:30:00+00:00"

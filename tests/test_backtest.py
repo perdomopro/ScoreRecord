@@ -6,8 +6,12 @@ from scorerecord.db import init_db
 from scorerecord.evaluate.backtest import (
     BacktestBet,
     HistoricalPrediction,
+    HistoricalOddsMatch,
+    RealOddsPrediction,
     _calibration_rows,
+    _market_benchmark_summary_rows,
     _select_backtest_bets,
+    _shrink_real_odds_predictions,
     edge_bucket,
     max_drawdown,
     odds_bucket,
@@ -59,6 +63,50 @@ def _prediction(
         high_edge_reason=reason,
         odds_quality_flags="",
         won=won,
+    )
+
+
+def _real_prediction(
+    *,
+    selection: str = "home",
+    model_prob: float = 0.60,
+    market_prob: float = 0.50,
+    entry_odds: float = 2.0,
+    won: int = 1,
+) -> RealOddsPrediction:
+    return RealOddsPrediction(
+        match=HistoricalOddsMatch(
+            source="football-data",
+            source_event_id="e1",
+            league_code="E0",
+            season="2023-2024",
+            match_date="2024-01-01",
+            home_team="A",
+            away_team="B",
+            home_goals=1,
+            away_goals=0,
+            result_1x2="home",
+            home_id=1,
+            away_id=2,
+        ),
+        market="1X2",
+        selection=selection,
+        bookmaker="Avg",
+        entry_odds=entry_odds,
+        entry_odds_type="avg_open",
+        closing_odds=1.90,
+        closing_odds_type="avg_close",
+        model_prob=model_prob,
+        market_prob=market_prob,
+        market_overround=1.05,
+        edge_ev=model_prob * entry_odds - 1.0,
+        edge_prob=model_prob - market_prob,
+        recommendation_score=model_prob * entry_odds - 1.0,
+        high_edge_reason="",
+        odds_quality_flags="",
+        won=won,
+        is_real_historical_odds=True,
+        is_timestamp_exact=False,
     )
 
 
@@ -137,6 +185,35 @@ def test_calibration_rows_flag_large_supported_errors() -> None:
 
     assert len(calibration) == 1
     assert calibration[0]["problem"] == 1
+
+
+def test_market_shrink_recomputes_edge_and_score_from_fair_market_prob() -> None:
+    row = _real_prediction(model_prob=0.70, market_prob=0.50, entry_odds=2.0)
+
+    shrunk = _shrink_real_odds_predictions([row], alpha=0.50)[0]
+
+    assert shrunk.model_prob == 0.60
+    assert round(shrunk.edge_ev, 6) == 0.20
+    assert round(shrunk.edge_prob, 6) == 0.10
+    assert shrunk.recommendation_score > 0
+
+
+def test_market_benchmark_reports_model_minus_market_metrics() -> None:
+    rows = [
+        _real_prediction(model_prob=0.80, market_prob=0.50, won=1),
+        _real_prediction(selection="away", model_prob=0.20, market_prob=0.50, won=0),
+    ]
+
+    overall = [
+        row
+        for row in _market_benchmark_summary_rows(rows)
+        if row["group_type"] == "overall"
+    ][0]
+
+    assert overall["model_logloss"] < overall["market_logloss"]
+    assert overall["model_better_logloss"] == 1
+    assert "model_ece" in overall
+    assert "market_ece" in overall
 
 
 def test_real_odds_backtest_writes_real_profit_and_clv_outputs(tmp_path) -> None:
@@ -265,6 +342,7 @@ def test_real_odds_policy_grid_reuses_predictions_and_writes_compact_rows(tmp_pa
         min_scores=(0.0, 0.10),
         min_edges=(0.03,),
         max_picks_per_days=(None, 1),
+        market_shrink_alphas=(1.0, 0.5),
         min_prob=0.0,
         league="EPL",
     )
@@ -275,4 +353,5 @@ def test_real_odds_policy_grid_reuses_predictions_and_writes_compact_rows(tmp_pa
 
     assert "min_score" in grid
     assert "max_picks_per_day" in grid
+    assert "market_shrink_alpha" in grid
     assert "positive_clv_rate" in grid

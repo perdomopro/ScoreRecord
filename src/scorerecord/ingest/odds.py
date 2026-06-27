@@ -44,6 +44,7 @@ class OddsFetchSummary:
     matched_events: int
     missing_fixture: int
     rows_inserted: int
+    snapshot_rows_inserted: int
     api_requests_used: int
     bookmakers_seen: int
     markets_seen: int
@@ -55,6 +56,7 @@ class OddsFetchSummary:
             f"matched_events={self.matched_events} "
             f"missing_fixture={self.missing_fixture} "
             f"rows_inserted={self.rows_inserted} "
+            f"snapshot_rows_inserted={self.snapshot_rows_inserted} "
             f"api_requests_used={self.api_requests_used} "
             f"bookmakers_seen={self.bookmakers_seen} "
             f"markets_seen={self.markets_seen} "
@@ -71,6 +73,9 @@ class OddsRow:
     decimal_odds: float
     captured_utc: str
     is_closing: int
+    source_event_id: str | None = None
+    commence_time: str | None = None
+    raw_json: str | None = None
 
 
 def fetch_live_odds(
@@ -103,6 +108,7 @@ def fetch_live_odds(
             matched_events=0,
             missing_fixture=0,
             rows_inserted=0,
+            snapshot_rows_inserted=0,
             api_requests_used=planned_requests,
             bookmakers_seen=0,
             markets_seen=0,
@@ -121,6 +127,7 @@ def fetch_live_odds(
             fixtures=fixtures,
         )
         rows_inserted = 0
+        snapshot_rows_inserted = 0
         api_requests_used = event_requests
         missing_fixture = 0
         matched_events = 0
@@ -168,6 +175,7 @@ def fetch_live_odds(
                     ),
                 )
                 rows_inserted += cursor.rowcount
+                snapshot_rows_inserted += _insert_odds_snapshot(conn, row)
                 bookmakers_seen.add(row.bookmaker)
                 markets_seen.add(row.market)
             conn.commit()
@@ -179,6 +187,7 @@ def fetch_live_odds(
             matched_events=matched_events,
             missing_fixture=missing_fixture,
             rows_inserted=rows_inserted,
+            snapshot_rows_inserted=snapshot_rows_inserted,
             api_requests_used=api_requests_used,
             bookmakers_seen=len(bookmakers_seen),
             markets_seen=len(markets_seen),
@@ -187,6 +196,32 @@ def fetch_live_odds(
         _record_odds_quality(conn, run_id, summary, bookmakers_seen, markets_seen)
         conn.commit()
     return summary
+
+
+def _insert_odds_snapshot(conn: sqlite3.Connection, row: OddsRow) -> int:
+    cursor = conn.execute(
+        """
+        INSERT INTO odds_snapshots (
+          event_id, fixture_id, bookmaker, market, selection, line,
+          decimal_odds, snapshot_at, commence_time, source, raw_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            row.source_event_id or row.fixture_id,
+            row.fixture_id,
+            row.bookmaker,
+            row.market,
+            row.selection,
+            _market_line(row.market),
+            row.decimal_odds,
+            row.captured_utc,
+            row.commence_time,
+            "odds-api.io",
+            row.raw_json,
+        ),
+    )
+    return cursor.rowcount
 
 
 def parse_odds_payload(
@@ -203,6 +238,15 @@ def parse_odds_payload(
     for event in events:
         if not isinstance(event, dict):
             continue
+        source_event_id = str(
+            event.get("id") or event.get("eventId") or event.get("event_id") or ""
+        )
+        commence_time = str(
+            event.get("date")
+            or event.get("startTime")
+            or event.get("commence_time")
+            or ""
+        )
         home_name = str(event.get("home") or event.get("home_team") or "home")
         away_name = str(event.get("away") or event.get("away_team") or "away")
         bookmakers = event.get("bookmakers") or {}
@@ -210,7 +254,10 @@ def parse_odds_payload(
             bookmaker_items = bookmakers.items()
         elif isinstance(bookmakers, list):
             bookmaker_items = (
-                (book.get("key") or book.get("name") or book.get("title"), book.get("markets") or book)
+                (
+                    book.get("key") or book.get("name") or book.get("title"),
+                    book.get("markets") or book,
+                )
                 for book in bookmakers
                 if isinstance(book, dict)
             )
@@ -255,6 +302,9 @@ def parse_odds_payload(
                             away_name=away_name,
                             captured_utc=updated_at,
                             is_closing=is_closing,
+                            source_event_id=source_event_id or None,
+                            commence_time=commence_time or None,
+                            raw_json=json.dumps(odds_entry, sort_keys=True),
                         )
                     )
     return rows
@@ -270,6 +320,9 @@ def _parse_market_entry(
     away_name: str,
     captured_utc: str,
     is_closing: bool,
+    source_event_id: str | None = None,
+    commence_time: str | None = None,
+    raw_json: str | None = None,
 ) -> list[OddsRow]:
     rows: list[OddsRow] = []
     if market_key == "1X2":
@@ -292,6 +345,9 @@ def _parse_market_entry(
                         price,
                         captured_utc,
                         int(is_closing),
+                        source_event_id,
+                        commence_time,
+                        raw_json,
                     )
                 )
         return rows
@@ -318,6 +374,9 @@ def _parse_market_entry(
                         price,
                         captured_utc,
                         int(is_closing),
+                        source_event_id,
+                        commence_time,
+                        raw_json,
                     )
                 )
         return rows
@@ -343,6 +402,9 @@ def _parse_market_entry(
                         price,
                         captured_utc,
                         int(is_closing),
+                        source_event_id,
+                        commence_time,
+                        raw_json,
                     )
                 )
         return rows
@@ -428,9 +490,9 @@ def _fetch_event_index(
             continue
         home = normalize_key(str(event.get("home") or event.get("home_team") or ""))
         away = normalize_key(str(event.get("away") or event.get("away_team") or ""))
-        event_date = str(event.get("date") or event.get("startTime") or event.get("commence_time") or "")[
-            :10
-        ]
+        event_date = str(
+            event.get("date") or event.get("startTime") or event.get("commence_time") or ""
+        )[:10]
         event_id = event.get("id") or event.get("eventId") or event.get("event_id")
         if home and away and event_date and event_id:
             index[(event_date, home, away)] = str(event_id)
@@ -520,6 +582,7 @@ def _record_odds_quality(
         "matched_events": summary.matched_events,
         "missing_fixture": summary.missing_fixture,
         "rows_inserted": summary.rows_inserted,
+        "snapshot_rows_inserted": summary.snapshot_rows_inserted,
         "api_requests_used": summary.api_requests_used,
         "bookmakers_seen": sorted(bookmakers_seen),
         "markets_seen": sorted(markets_seen),
@@ -529,6 +592,7 @@ def _record_odds_quality(
         ("odds_matched_events", summary.matched_events),
         ("odds_missing_fixture", summary.missing_fixture),
         ("odds_rows_inserted", summary.rows_inserted),
+        ("odds_snapshot_rows_inserted", summary.snapshot_rows_inserted),
         ("api_requests_used", summary.api_requests_used),
         ("bookmakers_seen", summary.bookmakers_seen),
         ("markets_seen", summary.markets_seen),
@@ -603,6 +667,15 @@ def _decimal(value: Any) -> float | None:
     if price <= 1.0:
         return None
     return price
+
+
+def _market_line(market: str) -> float | None:
+    if not market.startswith("OU"):
+        return None
+    try:
+        return float(market[2:])
+    except ValueError:
+        return None
 
 
 def _as_list(value: Any) -> list[Any]:
