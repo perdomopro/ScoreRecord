@@ -390,6 +390,9 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Updated the model manifest payload with `run_id_scope='sqlite_database_local'` to make local-vs-remote run IDs explicit.
 - Verified homeserver `validated_run_id=5` is honest: BTTS, OU1.5, OU2.5, OU3.5, and `all_markets_passed` are all `1.0`.
 - Documented that `neutral=1` is an intentional World Cup simplification, not a general soccer assumption.
+- Re-published homeserver fixture predictions in `run_id=18`: 72 resolved fixtures, 32 unresolved placeholders, 1368 prediction rows.
+- Verified homeserver `fixture_elo` quality for `run_id=18`: 144 team slots, 0 missing team-rating slots, min Elo diff -271.133, max Elo diff 317.310.
+- Recomputed homeserver edge in `run_id=19`: 10 odds rows analyzed, all tied to `prediction_run_id=18`, 2 picks above 5% EV, 1 recommendation in dry-run, no CLV rows yet because closing odds are not available.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
