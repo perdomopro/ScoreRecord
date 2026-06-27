@@ -85,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     settle.add_argument("--allow-backfill", action="store_true")
     odds = subparsers.add_parser("fetch-odds", help="Fetch raw odds from Odds-API.io.")
     odds.add_argument("--sport", default="soccer")
+    odds.add_argument("--league", help="Odds-API.io league slug.")
     odds.add_argument("--markets", default="h2h,totals,btts")
     odds.add_argument("--bookmakers", help="Comma-separated Odds-API.io bookmaker names.")
     odds.add_argument("--fixture-id")
@@ -250,6 +251,7 @@ def main(argv: list[str] | None = None) -> int:
                 api_key=settings.odds_api_io_key,
                 base_url=settings.odds_api_io_base_url,
                 sport=args.sport,
+                league=args.league or settings.odds_api_io_league,
                 markets=args.markets,
                 bookmakers=args.bookmakers or settings.odds_api_io_bookmakers,
                 fixture_id=args.fixture_id,

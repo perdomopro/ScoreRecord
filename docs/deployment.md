@@ -40,6 +40,8 @@ Set the odds API key without writing it to git or shell history:
 .\deploy\Set-RemoteOddsApiKey.ps1 -HostName homeserver
 ```
 
+The default Odds-API.io league is `international-fifa-world-cup`; override with `ODDS_API_IO_LEAGUE` only if the provider changes the slug.
+
 The deploy script:
 
 - archives `HEAD` with `git archive`;

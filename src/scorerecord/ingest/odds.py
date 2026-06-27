@@ -78,6 +78,7 @@ def fetch_live_odds(
     api_key: str | None,
     base_url: str = "https://api.odds-api.io/v3",
     sport: str = "soccer",
+    league: str | None = "international-fifa-world-cup",
     markets: str = "h2h,totals,btts",
     bookmakers: str = "Bet365,Unibet",
     fixture_id: str | None = None,
@@ -110,6 +111,7 @@ def fetch_live_odds(
             api_key=api_key,
             base_url=base_url,
             sport=sport,
+            league=league,
             fixtures=fixtures,
         )
         rows_inserted = 0
@@ -372,6 +374,7 @@ def _fetch_event_index(
     api_key: str,
     base_url: str,
     sport: str,
+    league: str | None,
     fixtures: list[sqlite3.Row],
 ) -> tuple[dict[tuple[str, str, str], str], int]:
     if not fixtures:
@@ -388,6 +391,8 @@ def _fetch_event_index(
         params["from"] = f"{earliest}T00:00:00Z"
     if latest:
         params["to"] = f"{latest}T23:59:59Z"
+    if league:
+        params["league"] = league
     payload = _get_json(f"{base_url.rstrip('/')}/events", params)
     events = payload.get("data") if isinstance(payload, dict) else payload
     index: dict[tuple[str, str, str], str] = {}

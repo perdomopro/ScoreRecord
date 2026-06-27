@@ -230,6 +230,7 @@ Odds-API.io integration notes:
 
 - Official base URL: `https://api.odds-api.io/v3`.
 - Event mapping uses `/events?sport=football`; odds fetch uses `/odds?eventId=...`.
+- Default league filter: `international-fifa-world-cup`.
 - Event lookup is narrowed to the pending fixture date window and retried to avoid wasting time on broad event queries.
 - API key is read from `ODDS_API_IO_KEY` in environment or local `.env`.
 - Default selected bookmakers are read from `ODDS_API_IO_BOOKMAKERS` and currently default to `Bet365,Unibet`.
@@ -351,6 +352,7 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Verified dry-run state: 38 pending resolved fixtures ready for odds fetch, no edge/recommendation/CLV rows until real odds are stored.
 - Refined `fetch-odds` to target only pending resolved fixtures, avoiding wasted requests on fixtures already carrying final scores.
 - Narrowed Odds-API.io event lookup to the pending fixture date window and added network retries for event/odds fetches.
+- Added `ODDS_API_IO_LEAGUE` and defaulted real odds lookup to `international-fifa-world-cup`, avoiding broad all-football event scans.
 
 ### 2026-06-24 - Homeserver deployment packaging
 

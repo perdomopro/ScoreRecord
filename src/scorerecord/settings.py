@@ -12,6 +12,7 @@ class Settings:
     odds_api_io_key: str | None = None
     odds_api_io_base_url: str = "https://api.odds-api.io/v3"
     odds_api_io_bookmakers: str = "Bet365,Unibet"
+    odds_api_io_league: str = "international-fifa-world-cup"
 
 
 def load_settings() -> Settings:
@@ -24,6 +25,7 @@ def load_settings() -> Settings:
         odds_api_io_key=os.getenv("ODDS_API_IO_KEY") or None,
         odds_api_io_base_url=os.getenv("ODDS_API_IO_BASE_URL", "https://api.odds-api.io/v3"),
         odds_api_io_bookmakers=os.getenv("ODDS_API_IO_BOOKMAKERS", "Bet365,Unibet"),
+        odds_api_io_league=os.getenv("ODDS_API_IO_LEAGUE", "international-fifa-world-cup"),
     )
 
 
