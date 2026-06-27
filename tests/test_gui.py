@@ -100,7 +100,8 @@ def test_dashboard_uses_latest_post_guardrail_recommendation_run() -> None:
     assert data.kpis["candidates"] == 1
     assert data.kpis["recommendations"] == 1
     assert data.legacy_warning_count == 1
-    assert "Pipeline status:" in html
+    assert "Service status:" in html
+    assert "Data quality:" in html
     assert "Actionable Recommendations" in html
     assert "Audit-only / Not Actionable" in html
     assert "Colombia" in html
@@ -187,3 +188,67 @@ def test_dashboard_filters_by_date_and_market() -> None:
     assert "Ghana" in html
     assert "Algeria" not in html
     assert "market=1X2" in html
+
+
+def test_dashboard_deduplicates_audit_rows_by_logical_pick() -> None:
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (1, 'Algeria', 'algeria')"
+    )
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (2, 'Austria', 'austria')"
+    )
+    conn.execute(
+        """
+        INSERT INTO fixture (fixture_id, kickoff_local, home_id, away_id)
+        VALUES ('m3', '2026-06-21 13:00 UTC-6', 1, 2)
+        """
+    )
+    edge_run_id = _run(conn, "compute-edge")
+    recommend_run_id = _run(conn, "recommend")
+    for bookmaker, edge, score in [
+        ("Bet365", 0.3191, 0.1899),
+        ("Unibet", 0.3364, 0.2002),
+    ]:
+        conn.execute(
+            """
+            INSERT INTO edge_analysis (
+              fixture_id, run_id, model_version, market, selection, prob_model,
+              odds_decimal, raw_implied_prob, prob_market_devig, market_overround,
+              edge_ev, edge_prob, bookmaker, captured_utc, generated_utc,
+              odds_books, median_odds, odds_ratio_to_median, odds_age_minutes,
+              odds_quality_flags, high_edge_reason, recommendation_score
+            )
+            VALUES (
+              'm3', ?, ?, '1X2', 'home', 0.45, 3.00, 0.33, 0.34, 0.05,
+              ?, 0.11, ?, '2026-06-10T01:00:00+00:00',
+              '2026-06-10T02:00:00+00:00', 2, 3.00, 1.00, 30.0,
+              '', 'model_market_disagreement,long_odds_tail', ?
+            )
+            """,
+            (edge_run_id, MODEL_VERSION, edge, bookmaker, score),
+        )
+    conn.execute(
+        """
+        INSERT INTO recommendation (
+          run_id, fixture_id, market, selection, model_prob, market_odds,
+          edge, edge_prob, kelly_fraction, stake_units, confidence, bookmaker,
+          model_version, odds_captured_utc, edge_run_id, recommendation_score,
+          odds_quality_flags, high_edge_reason, paper, generated_utc
+        )
+        VALUES (
+          ?, 'm3', '1X2', 'away', 0.40, 2.40, 0.08, 0.04, 0.25,
+          0.02, 'medium', 'Bet365', ?, '2026-06-10T01:00:00+00:00',
+          ?, 0.08, '', '', 1, '2026-06-10T02:05:00+00:00'
+        )
+        """,
+        (recommend_run_id, MODEL_VERSION, edge_run_id),
+    )
+
+    data = load_dashboard_data(conn, selected_run_id=None)
+    html = render_dashboard(data, refresh_seconds=60)
+
+    assert len(data.audit_rows) == 1
+    assert data.audit_rows[0]["duplicate_rows"] == 2
+    assert data.audit_rows[0]["bookmaker"] == "Unibet"
+    assert "Raw Rows" in html

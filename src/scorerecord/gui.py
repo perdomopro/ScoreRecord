@@ -336,6 +336,7 @@ def _audit_rows(
     filter_sql, filter_params = _filter_sql("ea", date_filter, market_filter)
     return conn.execute(
         f"""
+        WITH ranked_audit AS (
         SELECT
           ea.fixture_id,
           f.kickoff_local,
@@ -358,7 +359,19 @@ def _audit_rows(
           ea.odds_quality_flags,
           ea.high_edge_reason,
           ea.close_match,
-          ea.elo_diff
+          ea.elo_diff,
+          COUNT(1) OVER (
+            PARTITION BY ea.fixture_id, ea.market, ea.selection
+          ) AS duplicate_rows,
+          ROW_NUMBER() OVER (
+            PARTITION BY ea.fixture_id, ea.market, ea.selection
+            ORDER BY
+              COALESCE(ea.recommendation_score, ea.edge_ev) DESC,
+              ea.edge_ev DESC,
+              COALESCE(ea.odds_age_minutes, 999999.0) ASC,
+              ea.captured_utc DESC,
+              ea.bookmaker ASC
+          ) AS logical_rank
         FROM edge_analysis ea
         JOIN fixture f ON f.fixture_id = ea.fixture_id
         LEFT JOIN team ht ON ht.team_id = f.home_id
@@ -370,7 +383,11 @@ def _audit_rows(
             OR COALESCE(ea.high_edge_reason, '') <> ''
           )
           {filter_sql}
-        ORDER BY ea.edge_ev DESC, ea.recommendation_score DESC
+        )
+        SELECT *
+        FROM ranked_audit
+        WHERE logical_rank = 1
+        ORDER BY edge_ev DESC, recommendation_score DESC
         LIMIT 80
         """,
         (edge_run_id, DEFAULT_MAX_EDGE, *filter_params),
@@ -525,12 +542,13 @@ def _market_options(selected_market: str | None) -> str:
 
 
 def _status_band(data: DashboardData) -> str:
-    status_label, status_message, status_class = _pipeline_status(data)
+    status_label, status_message, status_class = _data_quality_status(data)
     high_rows = int(data.edge_sanity.get("high_edge_rows") or 0)
     return f"""
     <section class="status {status_class}">
       <div>
-        <strong>Pipeline status: <span class="status-label">{_e(status_label)}</span></strong>
+        <strong>Service status: <span class="status-label">OK</span></strong>
+        <strong>Data quality: <span class="status-label">{_e(status_label)}</span></strong>
         <span>{_e(status_message)}</span>
         <span>Edge run: {_v(data.edge_run_id)}</span>
         <span>Recommendation run: {_v(data.selected_run_id)}</span>
@@ -567,7 +585,7 @@ def _kpi_grid(data: DashboardData) -> str:
     return f'<section class="kpis">{cells}</section>'
 
 
-def _pipeline_status(data: DashboardData) -> tuple[str, str, str]:
+def _data_quality_status(data: DashboardData) -> tuple[str, str, str]:
     if data.selected_run_id is None or data.edge_run_id is None:
         return ("NO DATA", "No post-guardrail recommendation run found.", "nodata")
     if not _is_today(data.kpis.get("last_data_update")):
@@ -633,6 +651,8 @@ def _audit_table(rows: list[sqlite3.Row]) -> str:
         "Flags",
         "Age",
         "Books",
+        "Raw Rows",
+        "Best Book",
         "Ratio",
         "EV",
         "Score",
@@ -652,6 +672,8 @@ def _audit_table(rows: list[sqlite3.Row]) -> str:
             f"<td>{_pill(row['odds_quality_flags'])}</td>"
             f"<td>{_minutes(row['odds_age_minutes'])}</td>"
             f"<td>{_v(row['odds_books'])}</td>"
+            f"<td>{_v(row['duplicate_rows'])}</td>"
+            f"<td>{_e(row['bookmaker'])}</td>"
             f"<td>{_num(row['odds_ratio_to_median'])}</td>"
             f"<td class='{_edge_class(row['edge_ev'])}'>{_pct(row['edge_ev'])}</td>"
             f"<td>{_pct(row['recommendation_score'])}</td>"

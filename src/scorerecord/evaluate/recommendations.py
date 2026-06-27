@@ -66,6 +66,14 @@ class RecommendationCandidate:
 
 
 DEFAULT_MAX_ODDS_AGE_MINUTES = 180.0
+DISQUALIFYING_RECOMMENDATION_MARKERS = (
+    "bookmaker_outlier",
+    "calibration_tail_risk",
+    "draw_tail_risk",
+    "long_odds_tail",
+    "low_market_depth",
+    "stale_odds",
+)
 
 
 def kelly_stake(
@@ -282,25 +290,32 @@ def _recommendation_candidates(
             min_books,
         ),
     ).fetchall()
-    return [
-        RecommendationCandidate(
-            edge_run_id=int(row["run_id"]),
-            fixture_id=str(row["fixture_id"]),
-            market=str(row["market"]),
-            selection=str(row["selection"]),
-            model_version=str(row["model_version"]),
-            prob_model=float(row["prob_model"]),
-            odds_decimal=float(row["odds_decimal"]),
-            edge_ev=float(row["edge_ev"]),
-            edge_prob=float(row["edge_prob"]),
-            recommendation_score=float(row["recommendation_score"] or row["edge_ev"]),
-            odds_quality_flags=str(row["odds_quality_flags"] or ""),
-            high_edge_reason=str(row["high_edge_reason"] or ""),
-            bookmaker=str(row["bookmaker"]),
-            odds_captured_utc=str(row["captured_utc"]),
+    candidates = []
+    for row in rows:
+        if _has_disqualifying_recommendation_marker(
+            str(row["odds_quality_flags"] or ""),
+            str(row["high_edge_reason"] or ""),
+        ):
+            continue
+        candidates.append(
+            RecommendationCandidate(
+                edge_run_id=int(row["run_id"]),
+                fixture_id=str(row["fixture_id"]),
+                market=str(row["market"]),
+                selection=str(row["selection"]),
+                model_version=str(row["model_version"]),
+                prob_model=float(row["prob_model"]),
+                odds_decimal=float(row["odds_decimal"]),
+                edge_ev=float(row["edge_ev"]),
+                edge_prob=float(row["edge_prob"]),
+                recommendation_score=float(row["recommendation_score"] or row["edge_ev"]),
+                odds_quality_flags=str(row["odds_quality_flags"] or ""),
+                high_edge_reason=str(row["high_edge_reason"] or ""),
+                bookmaker=str(row["bookmaker"]),
+                odds_captured_utc=str(row["captured_utc"]),
+            )
         )
-        for row in rows
-    ]
+    return candidates
 
 
 def _best_candidates(
@@ -328,6 +343,11 @@ def _best_candidates(
         seen_pick_keys.add(pick_key)
         fixture_counts[candidate.fixture_id] = fixture_counts.get(candidate.fixture_id, 0) + 1
     return selected
+
+
+def _has_disqualifying_recommendation_marker(*values: str) -> bool:
+    text = ",".join(values)
+    return any(marker in text for marker in DISQUALIFYING_RECOMMENDATION_MARKERS)
 
 
 def _latest_edge_run(conn: sqlite3.Connection) -> int | None:

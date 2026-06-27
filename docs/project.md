@@ -442,6 +442,10 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added `scorerecord-gui.service` for the homeserver with conservative memory/thread limits.
 - Verified the homeserver GUI service manually: `active (running)`, 21.5 MB RSS, and `/healthz` returned HTTP 200.
 - Added lightweight dashboard refinements: `OK/WARNING/STALE/NO DATA` status badge, last edge/recommendation update timestamps, explicit audit-only warning text, risk-colored rows, percentage formatting for stake fraction, and querystring filters for `date=YYYY-MM-DD` and `market=1X2|OU|BTTS`.
+- Diagnosed audit-only duplicate-looking rows: `edge_analysis` intentionally stores bookmaker-level rows, so repeated logical picks can appear when several bookmakers quote the same selection.
+- Deduplicated audit-only display by logical pick (`fixture_id`, `market`, `selection`) while preserving bookmaker-level data for recommendation selection and future CLV.
+- Split GUI status wording into `Service status: OK` and `Data quality: ...` so odds/model warnings are not confused with service failure.
+- Made paper recommendation filtering explicitly reject critical audit markers such as `stale_odds`, `low_market_depth`, `bookmaker_outlier`, `long_odds_tail`, `draw_tail_risk`, and `calibration_tail_risk`; plain `model_market_disagreement` remains allowed.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 

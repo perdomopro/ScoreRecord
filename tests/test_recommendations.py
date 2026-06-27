@@ -117,6 +117,62 @@ def test_generate_recommendations_excludes_flagged_odds_quality() -> None:
     assert summary.recommendations == 0
 
 
+def test_generate_recommendations_excludes_critical_high_edge_reasons() -> None:
+    conn = _conn()
+    edge_run_id = _run(conn, "compute-edge")
+    conn.execute(
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m6', '2026-06-11 13:00 UTC-6')"
+    )
+    conn.execute(
+        """
+        INSERT INTO edge_analysis (
+          fixture_id, run_id, model_version, market, selection, prob_model,
+          odds_decimal, prob_market_devig, edge_ev, edge_prob, bookmaker,
+          captured_utc, generated_utc, odds_books, odds_quality_flags,
+          high_edge_reason, recommendation_score
+        )
+        VALUES ('m6', ?, ?, '1X2', 'draw', 0.28, 4.00, 0.20,
+                0.12, 0.08, 'Bet365', '2026-06-10T01:00:00+00:00',
+                '2026-06-10T02:00:00+00:00', 2, '',
+                'model_market_disagreement,long_odds_tail', 0.07)
+        """,
+        (edge_run_id, MODEL_VERSION),
+    )
+
+    summary = generate_recommendations(conn)
+
+    assert summary.candidates_seen == 0
+    assert summary.recommendations == 0
+
+
+def test_generate_recommendations_allows_model_market_disagreement_alone() -> None:
+    conn = _conn()
+    edge_run_id = _run(conn, "compute-edge")
+    conn.execute(
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m7', '2026-06-11 13:00 UTC-6')"
+    )
+    conn.execute(
+        """
+        INSERT INTO edge_analysis (
+          fixture_id, run_id, model_version, market, selection, prob_model,
+          odds_decimal, prob_market_devig, edge_ev, edge_prob, bookmaker,
+          captured_utc, generated_utc, odds_books, odds_quality_flags,
+          high_edge_reason, recommendation_score
+        )
+        VALUES ('m7', ?, ?, '1X2', 'home', 0.40, 2.80, 0.32,
+                0.12, 0.08, 'Bet365', '2026-06-10T01:00:00+00:00',
+                '2026-06-10T02:00:00+00:00', 2, '',
+                'model_market_disagreement', 0.08)
+        """,
+        (edge_run_id, MODEL_VERSION),
+    )
+
+    summary = generate_recommendations(conn)
+
+    assert summary.candidates_seen == 1
+    assert summary.recommendations == 1
+
+
 def test_generate_recommendations_limits_correlated_fixture_picks() -> None:
     conn = _conn()
     edge_run_id = _run(conn, "compute-edge")
