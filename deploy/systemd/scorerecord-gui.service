@@ -1,0 +1,16 @@
+[Unit]
+Description=ScoreRecord read-only paper/audit dashboard
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/adrian/scorerecord
+EnvironmentFile=/home/adrian/scorerecord/.env
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+MemoryMax=350M
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/home/adrian/scorerecord/.venv/bin/scorerecord gui --host 0.0.0.0 --port 8765
+Restart=on-failure
+RestartSec=10

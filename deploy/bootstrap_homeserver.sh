@@ -28,6 +28,7 @@ mkdir -p "$HOME/.config/systemd/user"
 cp deploy/systemd/*.service deploy/systemd/*.timer "$HOME/.config/systemd/user/"
 
 systemctl --user daemon-reload
+systemctl --user enable scorerecord-gui.service
 systemctl --user enable scorerecord-odds.timer
 systemctl --user enable scorerecord-preplay-odds.timer
 systemctl --user enable scorerecord-daily.timer
@@ -42,6 +43,8 @@ Next server-side steps:
 1. Edit /home/adrian/scorerecord/.env and set ODDS_API_IO_KEY.
 2. Run: systemctl --user start scorerecord-daily.service
 3. Inspect: journalctl --user -u scorerecord-daily.service -n 100 --no-pager
-4. Start timers when ready:
+4. Start the dashboard when ready:
+   systemctl --user start scorerecord-gui.service
+5. Start timers when ready:
    systemctl --user start scorerecord-odds.timer scorerecord-preplay-odds.timer scorerecord-daily.timer scorerecord-postmatch.timer scorerecord-weekly.timer
 MSG

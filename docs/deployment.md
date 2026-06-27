@@ -96,6 +96,7 @@ The bootstrap copies user units to `~/.config/systemd/user` and enables timers w
 Start timers when `.env` is ready:
 
 ```bash
+systemctl --user start scorerecord-gui.service
 systemctl --user start scorerecord-odds.timer
 systemctl --user start scorerecord-preplay-odds.timer
 systemctl --user start scorerecord-daily.timer
@@ -105,6 +106,7 @@ systemctl --user start scorerecord-weekly.timer
 
 Recommended schedule:
 
+- Read-only dashboard: `scorerecord-gui.service` on port `8765`
 - Hourly odds: `scorerecord-odds.timer`
 - Pre-play closing odds, hourly at minute 25 for fixtures inside the next 60 minutes: `scorerecord-preplay-odds.timer`
 - Daily 08:00 predictions + paper recommendations: `scorerecord-daily.timer`
@@ -114,6 +116,7 @@ Recommended schedule:
 Resource limits are deliberately conservative:
 
 - `MemoryMax=700M` for odds/postmatch jobs.
+- `MemoryMax=350M` for the read-only GUI.
 - `MemoryMax=900M` for modeling/monitoring jobs.
 - `OMP_NUM_THREADS=2`, `OPENBLAS_NUM_THREADS=2`.
 - `Nice=10`, `IOSchedulingClass=idle`.
@@ -123,6 +126,13 @@ Inspect logs:
 ```bash
 journalctl --user -u scorerecord-daily.service -n 100 --no-pager
 journalctl --user -u scorerecord-odds.service -n 100 --no-pager
+journalctl --user -u scorerecord-gui.service -n 100 --no-pager
+```
+
+Open the dashboard from the Tailscale network:
+
+```text
+http://100.104.72.97:8765/
 ```
 
 ## Important Operational Gate

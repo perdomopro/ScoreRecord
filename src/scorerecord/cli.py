@@ -16,6 +16,7 @@ from scorerecord.evaluate.settlement import settle_fixtures
 from scorerecord.evaluate.tune_decay import run_decay_sweep
 from scorerecord.evaluate.walk_forward import run_walk_forward
 from scorerecord.features.elo import rebuild_elo
+from scorerecord.gui import serve_dashboard
 from scorerecord.ingest.history import ingest_history
 from scorerecord.ingest.odds import fetch_live_odds
 from scorerecord.ingest.worldcup import ingest_worldcup_2026
@@ -125,6 +126,10 @@ def main(argv: list[str] | None = None) -> int:
     clv.add_argument("--dry-run", action="store_true")
     drift = subparsers.add_parser("calibrator-drift", help="Monitor Platt coefficient drift.")
     drift.add_argument("--threshold", type=float, default=0.10)
+    gui = subparsers.add_parser("gui", help="Serve the read-only paper/audit dashboard.")
+    gui.add_argument("--host", default="127.0.0.1")
+    gui.add_argument("--port", type=int, default=8765)
+    gui.add_argument("--refresh-seconds", type=int, default=60)
     subparsers.add_parser("db-summary", help="Print useful database counts.")
 
     args = parser.parse_args(argv)
@@ -133,6 +138,15 @@ def main(argv: list[str] | None = None) -> int:
         settings = replace(settings, db_path=Path(args.db_path))
     if args.raw_dir:
         settings = replace(settings, raw_dir=Path(args.raw_dir))
+
+    if args.command == "gui":
+        serve_dashboard(
+            settings.db_path,
+            host=args.host,
+            port=args.port,
+            refresh_seconds=args.refresh_seconds,
+        )
+        return 0
 
     with connect(settings.db_path) as conn:
         if args.command == "init-db":

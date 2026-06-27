@@ -38,6 +38,7 @@ scorerecord compute-edge --dry-run
 scorerecord recommend --max-edge 0.25 --max-odds-age-minutes 180 --min-books 2 --dry-run
 scorerecord compute-clv --dry-run
 scorerecord calibrator-drift
+scorerecord gui --host 127.0.0.1 --port 8765
 scorerecord db-summary
 ```
 
@@ -60,8 +61,9 @@ The strongest early path is:
 4. Frozen model manifests and settlement metrics for finished fixtures.
 5. Raw odds ingestion, de-vig, and edge analysis.
 6. Paper-only recommendations with small capped Kelly.
-7. CLV tracking before any real-money staking.
-8. Props, corners, cards, and player shots only after confidence badges and coverage checks exist.
+7. Read-only GUI for post-guardrail paper picks, audit-only high-edge rows, and operational KPIs.
+8. CLV tracking before any real-money staking.
+9. Props, corners, cards, and player shots only after confidence badges and coverage checks exist.
 
 ## Safety
 

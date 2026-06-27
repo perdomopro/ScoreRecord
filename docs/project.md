@@ -432,6 +432,15 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Deployed the controls to the homeserver and recomputed edge in `run_id=55`: 59 rows analyzed, all with `odds_books=2` after bookmaker-family normalization, 8 rows flagged `stale_odds`, and 51 rows unflagged.
 - Verified `recommend --dry-run` with default policy: 14 candidates passed freshness/depth/max-edge filters, 3 recommendations remained after max 1 pick per fixture. No new recommendation rows were inserted.
 
+### 2026-06-27 - Read-only paper/audit GUI
+
+- Added a dependency-light `scorerecord gui` command using the Python standard library HTTP server so the homeserver can serve the dashboard without Streamlit/FastAPI overhead.
+- The GUI selects the latest recommendation run that has both `edge_run_id` and `recommendation_score`, preventing pre-guardrail or legacy rows from being treated as actionable just because they are newer.
+- Added an actionable paper-picks table with kickoff, teams, market, selection, odds, model probability, market probability, EV edge, recommendation score, stake fraction, market depth, odds age, quality flags, and edge reasons.
+- Added an audit-only table for rows with EV above 25%, odds-quality flags, or high-edge reasons.
+- Added KPI cards for edge run, recommendation run, rows analyzed, candidates, final recommendations, clean/flagged rows, high-edge rows, max EV, max recommendation score, and max odds age.
+- Added `scorerecord-gui.service` for the homeserver with conservative memory/thread limits.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.
