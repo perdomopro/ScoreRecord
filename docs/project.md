@@ -47,7 +47,7 @@ Important tables:
 - `team_rating`: current Elo snapshot per team.
 - `team_rating_history`: pre/post-match Elo history by team and historical match.
 - `odds`: raw bookmaker prices, stored before de-vig or recommendation logic.
-- `edge_analysis`: model probability versus de-vigged market probability and EV edge.
+- `edge_analysis`: model probability versus de-vigged market probability, EV edge, fixture Elo difference, and close-match flag.
 - `prediction`: future model outputs for tournament fixtures.
 - `prediction_result`: settled prediction labels and scoring metrics for finished fixtures.
 - `recommendation`: future value-bet recommendations.
@@ -228,6 +228,7 @@ Fase 4 is implemented as a paper pipeline, not a staking pipeline:
 - `compute-edge`: applies multiplicative de-vig and writes EV/probability edge to `edge_analysis`.
 - `recommend`: creates paper recommendations from the latest edge run, using a 5% default EV threshold, 15% minimum model probability, quarter Kelly, and 1-unit cap.
 - `compute-clv`: compares paper recommendations to later `is_closing=1` odds and writes granular CLV to `recommendation_result`.
+- `calibrator-drift`: compares Platt coefficients between the two latest fixture-prediction runs and records drift alerts in `data_quality`.
 
 Odds-API.io integration notes:
 
@@ -393,6 +394,16 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Re-published homeserver fixture predictions in `run_id=18`: 72 resolved fixtures, 32 unresolved placeholders, 1368 prediction rows.
 - Verified homeserver `fixture_elo` quality for `run_id=18`: 144 team slots, 0 missing team-rating slots, min Elo diff -271.133, max Elo diff 317.310.
 - Recomputed homeserver edge in `run_id=19`: 10 odds rows analyzed, all tied to `prediction_run_id=18`, 2 picks above 5% EV, 1 recommendation in dry-run, no CLV rows yet because closing odds are not available.
+
+### 2026-06-27 - Production validation and monitoring hardening
+
+- Ran production `walk-forward --start-year 2021` on the homeserver DB. Dixon-Coles 1X2 remained valid: n=5730, Brier=0.5085, log-loss=0.8669, ECE=0.0195, close log-loss=1.0224.
+- Ran production `goal-markets --start-year 2021`; calibrated BTTS, OU1.5, OU2.5, and OU3.5 all beat their same-window marginal baselines with ECE below 0.03.
+- Production manifest now resolves `validated_run_id=22` in the homeserver SQLite database; run IDs remain DB-local.
+- Added `elo_diff` and `close_match` to `edge_analysis`, with lightweight migration support and edge-distribution quality metrics for close matches.
+- Added `fetch-odds --closing-window-minutes`; when used with `--closing`, it captures only fixtures inside the upcoming window unless a specific fixture is requested.
+- Added `scorerecord-preplay-odds.timer` to collect closing odds hourly at minute 25 for fixtures within the next 60 minutes.
+- Added `calibrator-drift` and wired it into weekly monitoring so Platt coefficient changes above the configured threshold are persisted to `data_quality`.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 

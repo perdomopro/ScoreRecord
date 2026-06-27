@@ -115,6 +115,8 @@ CREATE TABLE IF NOT EXISTS edge_analysis (
   prob_market_devig REAL NOT NULL,
   edge_ev REAL NOT NULL,
   edge_prob REAL NOT NULL,
+  elo_diff REAL,
+  close_match INTEGER,
   bookmaker TEXT NOT NULL,
   captured_utc TEXT NOT NULL,
   prediction_generated_utc TEXT,

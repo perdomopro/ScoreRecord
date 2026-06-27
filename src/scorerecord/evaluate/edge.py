@@ -48,6 +48,8 @@ class EdgeRow:
     prob_market_devig: float
     edge_ev: float
     edge_prob: float
+    elo_diff: float | None
+    close_match: int | None
     bookmaker: str
     captured_utc: str
     prediction_generated_utc: str | None
@@ -95,10 +97,10 @@ def compute_edges(
                 INSERT OR REPLACE INTO edge_analysis (
                   fixture_id, run_id, prediction_run_id, model_version, market,
                   selection, prob_model, odds_decimal, prob_market_devig,
-                  edge_ev, edge_prob, bookmaker, captured_utc,
+                  edge_ev, edge_prob, elo_diff, close_match, bookmaker, captured_utc,
                   prediction_generated_utc, generated_utc
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row.fixture_id,
@@ -112,6 +114,8 @@ def compute_edges(
                     row.prob_market_devig,
                     row.edge_ev,
                     row.edge_prob,
+                    row.elo_diff,
+                    row.close_match,
                     row.bookmaker,
                     row.captured_utc,
                     row.prediction_generated_utc,
@@ -135,6 +139,7 @@ def _edge_rows(
 ) -> list[EdgeRow]:
     odds_rows = _latest_odds(conn, bookmaker=bookmaker)
     prediction_rows = _latest_predictions(conn, model_version=model_version)
+    fixture_context = _fixture_context(conn)
     rows: list[EdgeRow] = []
     for key, selections in odds_rows.items():
         fixture_id, book, market = key
@@ -154,6 +159,7 @@ def _edge_rows(
             if odds_decimal < min_odds or odds_decimal > max_odds:
                 continue
             edge_ev, edge_prob = compute_edge(float(pred["prob"]), market_prob, odds_decimal)
+            elo_diff, close_match = fixture_context.get(str(fixture_id), (None, None))
             rows.append(
                 EdgeRow(
                     fixture_id=str(fixture_id),
@@ -166,6 +172,8 @@ def _edge_rows(
                     prob_market_devig=market_prob,
                     edge_ev=edge_ev,
                     edge_prob=edge_prob,
+                    elo_diff=elo_diff,
+                    close_match=close_match,
                     bookmaker=str(book),
                     captured_utc=str(odds_row["captured_utc"]),
                     prediction_generated_utc=pred["generated_utc"],
@@ -214,6 +222,44 @@ def _latest_odds(
             {},
         )[str(row["selection"])] = row
     return grouped
+
+
+def _fixture_context(conn: sqlite3.Connection) -> dict[str, tuple[float | None, int | None]]:
+    rows = conn.execute(
+        """
+        WITH latest_rating AS (
+          SELECT team_id, MAX(as_of) AS as_of
+          FROM team_rating
+          WHERE rating_system = 'elo'
+          GROUP BY team_id
+        ),
+        rating AS (
+          SELECT tr.team_id, tr.rating
+          FROM team_rating tr
+          JOIN latest_rating lr
+            ON lr.team_id = tr.team_id
+           AND lr.as_of = tr.as_of
+          WHERE tr.rating_system = 'elo'
+        )
+        SELECT
+          f.fixture_id,
+          hr.rating AS home_elo,
+          ar.rating AS away_elo
+        FROM fixture f
+        LEFT JOIN rating hr ON hr.team_id = f.home_id
+        LEFT JOIN rating ar ON ar.team_id = f.away_id
+        """
+    ).fetchall()
+    context: dict[str, tuple[float | None, int | None]] = {}
+    for row in rows:
+        home_elo = row["home_elo"]
+        away_elo = row["away_elo"]
+        if home_elo is None or away_elo is None:
+            context[str(row["fixture_id"])] = (None, None)
+            continue
+        elo_diff = float(home_elo) - float(away_elo)
+        context[str(row["fixture_id"])] = (elo_diff, int(abs(elo_diff) < 75.0))
+    return context
 
 
 def _latest_predictions(
@@ -300,6 +346,7 @@ def _record_edge_quality(
     summary: EdgeSummary,
 ) -> None:
     by_market: dict[str, list[float]] = {}
+    close_edges = [row.edge_ev for row in rows if row.close_match == 1]
     for row in rows:
         by_market.setdefault(row.market, []).append(row.edge_ev)
     details = {
@@ -312,6 +359,11 @@ def _record_edge_quality(
             market: sum(values) / len(values) for market, values in by_market.items()
         },
         "max_edge_by_market": {market: max(values) for market, values in by_market.items()},
+        "close_match_rows": len(close_edges),
+        "mean_close_match_edge": (
+            sum(close_edges) / len(close_edges) if close_edges else None
+        ),
+        "max_close_match_edge": max(close_edges) if close_edges else None,
         "warning": "mean edge above 5% can indicate optimistic de-vig with few bookmakers",
     }
     for metric_name, value in [
@@ -320,6 +372,8 @@ def _record_edge_quality(
         ("edge_picks_gt_3pct", summary.picks_gt_3pct),
         ("edge_picks_gt_5pct", summary.picks_gt_5pct),
         ("edge_max_ev", summary.max_edge_ev or 0.0),
+        ("edge_close_match_rows", len(close_edges)),
+        ("edge_max_close_match_ev", max(close_edges) if close_edges else 0.0),
     ]:
         record_quality(
             conn,

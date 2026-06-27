@@ -97,6 +97,7 @@ Start timers when `.env` is ready:
 
 ```bash
 systemctl --user start scorerecord-odds.timer
+systemctl --user start scorerecord-preplay-odds.timer
 systemctl --user start scorerecord-daily.timer
 systemctl --user start scorerecord-postmatch.timer
 systemctl --user start scorerecord-weekly.timer
@@ -105,9 +106,10 @@ systemctl --user start scorerecord-weekly.timer
 Recommended schedule:
 
 - Hourly odds: `scorerecord-odds.timer`
+- Pre-play closing odds, hourly at minute 25 for fixtures inside the next 60 minutes: `scorerecord-preplay-odds.timer`
 - Daily 08:00 predictions + paper recommendations: `scorerecord-daily.timer`
 - Nightly 23:30 settlement + CLV: `scorerecord-postmatch.timer`
-- Weekly monitoring: `scorerecord-weekly.timer`
+- Weekly monitoring, including goal-market gates and Platt coefficient drift: `scorerecord-weekly.timer`
 
 Resource limits are deliberately conservative:
 

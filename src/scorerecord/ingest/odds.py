@@ -86,10 +86,15 @@ def fetch_live_odds(
     max_requests: int = DEFAULT_MAX_REQUESTS,
     dry_run: bool = False,
     is_closing: bool = False,
+    closing_window_minutes: int | None = 60,
     min_interval_seconds: float = DEFAULT_MIN_INTERVAL_SECONDS,
     cwd: Path | None = None,
 ) -> OddsFetchSummary:
-    fixtures = _candidate_fixtures(conn, fixture_id=fixture_id)
+    fixtures = _candidate_fixtures(
+        conn,
+        fixture_id=fixture_id,
+        closing_window_minutes=closing_window_minutes if is_closing else None,
+    )
     if dry_run:
         planned_odds_requests = min(len(fixtures), max_requests)
         planned_requests = planned_odds_requests + (1 if fixtures else 0)
@@ -345,7 +350,12 @@ def _parse_market_entry(
     return rows
 
 
-def _candidate_fixtures(conn: sqlite3.Connection, *, fixture_id: str | None) -> list[sqlite3.Row]:
+def _candidate_fixtures(
+    conn: sqlite3.Connection,
+    *,
+    fixture_id: str | None,
+    closing_window_minutes: int | None,
+) -> list[sqlite3.Row]:
     filter_sql = ""
     params: tuple[object, ...] = ()
     if fixture_id:
@@ -369,11 +379,21 @@ def _candidate_fixtures(conn: sqlite3.Connection, *, fixture_id: str | None) -> 
         params,
     ).fetchall()
     now_utc = datetime.now(timezone.utc)
-    return [
-        row
-        for row in rows
-        if (_row_kickoff_utc(row) is None or _row_kickoff_utc(row) > now_utc)
-    ]
+    closing_deadline = (
+        now_utc + timedelta(minutes=closing_window_minutes)
+        if closing_window_minutes is not None and fixture_id is None
+        else None
+    )
+    candidates = []
+    for row in rows:
+        kickoff_utc = _row_kickoff_utc(row)
+        if kickoff_utc is not None and kickoff_utc <= now_utc:
+            continue
+        if closing_deadline is not None:
+            if kickoff_utc is None or kickoff_utc > closing_deadline:
+                continue
+        candidates.append(row)
+    return candidates
 
 
 def _fetch_event_index(

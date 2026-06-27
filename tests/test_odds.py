@@ -1,4 +1,15 @@
-from scorerecord.ingest.odds import parse_odds_payload
+import sqlite3
+from datetime import datetime, timedelta, timezone
+
+from scorerecord.db import init_db
+from scorerecord.ingest.odds import _candidate_fixtures, parse_odds_payload
+
+
+def _conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_db(conn)
+    return conn
 
 
 def test_parse_odds_api_io_documented_shape() -> None:
@@ -44,3 +55,33 @@ def test_parse_odds_api_io_documented_shape() -> None:
     assert keyed[("OU2.5", "under")] == 1.90
     assert keyed[("BTTS", "yes")] == 1.83
     assert keyed[("BTTS", "no")] == 1.95
+
+
+def test_closing_candidate_fixtures_limit_to_upcoming_window() -> None:
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (1, 'Home', 'home')"
+    )
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (2, 'Away', 'away')"
+    )
+    near = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+    far = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+    conn.execute(
+        """
+        INSERT INTO fixture (fixture_id, kickoff_utc, home_id, away_id)
+        VALUES ('near', ?, 1, 2)
+        """,
+        (near,),
+    )
+    conn.execute(
+        """
+        INSERT INTO fixture (fixture_id, kickoff_utc, home_id, away_id)
+        VALUES ('far', ?, 1, 2)
+        """,
+        (far,),
+    )
+
+    rows = _candidate_fixtures(conn, fixture_id=None, closing_window_minutes=60)
+
+    assert [row["fixture_id"] for row in rows] == ["near"]

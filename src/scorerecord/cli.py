@@ -8,6 +8,7 @@ from pathlib import Path
 
 from scorerecord.aliases import seed_team_aliases
 from scorerecord.db import connect, init_db, table_count
+from scorerecord.evaluate.calibrator_drift import monitor_calibrator_drift
 from scorerecord.evaluate.edge import compute_edges
 from scorerecord.evaluate.goal_markets import run_goal_market_walk_forward
 from scorerecord.evaluate.recommendations import compute_recommendation_clv, generate_recommendations
@@ -92,6 +93,12 @@ def main(argv: list[str] | None = None) -> int:
     odds.add_argument("--max-requests", type=int, default=90)
     odds.add_argument("--min-interval-seconds", type=float, default=36.0)
     odds.add_argument("--closing", action="store_true", help="Store odds as closing prices.")
+    odds.add_argument(
+        "--closing-window-minutes",
+        type=int,
+        default=60,
+        help="When --closing is set, only fetch fixtures starting within this many minutes.",
+    )
     odds.add_argument("--dry-run", action="store_true")
     edge = subparsers.add_parser("compute-edge", help="De-vig odds and compute model edge.")
     edge.add_argument("--bookmaker")
@@ -107,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     recommend.add_argument("--dry-run", action="store_true")
     clv = subparsers.add_parser("compute-clv", help="Compute CLV for paper recommendations.")
     clv.add_argument("--dry-run", action="store_true")
+    drift = subparsers.add_parser("calibrator-drift", help="Monitor Platt coefficient drift.")
+    drift.add_argument("--threshold", type=float, default=0.10)
     subparsers.add_parser("db-summary", help="Print useful database counts.")
 
     args = parser.parse_args(argv)
@@ -258,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_requests=args.max_requests,
                 dry_run=args.dry_run,
                 is_closing=args.closing,
+                closing_window_minutes=args.closing_window_minutes,
                 min_interval_seconds=args.min_interval_seconds,
                 cwd=Path.cwd(),
             )
@@ -294,6 +304,15 @@ def main(argv: list[str] | None = None) -> int:
             summary = compute_recommendation_clv(
                 conn,
                 dry_run=args.dry_run,
+                cwd=Path.cwd(),
+            )
+            print(summary.as_row())
+            return 0
+
+        if args.command == "calibrator-drift":
+            summary = monitor_calibrator_drift(
+                conn,
+                threshold=args.threshold,
                 cwd=Path.cwd(),
             )
             print(summary.as_row())

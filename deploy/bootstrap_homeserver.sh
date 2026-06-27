@@ -29,6 +29,7 @@ cp deploy/systemd/*.service deploy/systemd/*.timer "$HOME/.config/systemd/user/"
 
 systemctl --user daemon-reload
 systemctl --user enable scorerecord-odds.timer
+systemctl --user enable scorerecord-preplay-odds.timer
 systemctl --user enable scorerecord-daily.timer
 systemctl --user enable scorerecord-postmatch.timer
 systemctl --user enable scorerecord-weekly.timer
@@ -42,5 +43,5 @@ Next server-side steps:
 2. Run: systemctl --user start scorerecord-daily.service
 3. Inspect: journalctl --user -u scorerecord-daily.service -n 100 --no-pager
 4. Start timers when ready:
-   systemctl --user start scorerecord-odds.timer scorerecord-daily.timer scorerecord-postmatch.timer scorerecord-weekly.timer
+   systemctl --user start scorerecord-odds.timer scorerecord-preplay-odds.timer scorerecord-daily.timer scorerecord-postmatch.timer scorerecord-weekly.timer
 MSG

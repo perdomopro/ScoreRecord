@@ -77,6 +77,8 @@ def _run_lightweight_migrations(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "recommendation", "model_version", "TEXT NOT NULL DEFAULT 'dev'")
     _add_column_if_missing(conn, "recommendation", "odds_captured_utc", "TEXT")
     _add_column_if_missing(conn, "recommendation", "paper", "INTEGER NOT NULL DEFAULT 1")
+    _add_column_if_missing(conn, "edge_analysis", "elo_diff", "REAL")
+    _add_column_if_missing(conn, "edge_analysis", "close_match", "INTEGER")
 
     for row in conn.execute("SELECT team_id, canonical FROM team WHERE canonical_key IS NULL"):
         conn.execute(

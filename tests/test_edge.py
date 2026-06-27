@@ -28,7 +28,28 @@ def test_compute_edge_returns_ev_and_probability_gap() -> None:
 def test_compute_edges_persists_complete_market_rows() -> None:
     conn = _conn()
     conn.execute(
-        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m1', '2026-06-11 13:00 UTC-6')"
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (1, 'Home', 'home')"
+    )
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (2, 'Away', 'away')"
+    )
+    conn.execute(
+        """
+        INSERT INTO fixture (fixture_id, kickoff_local, home_id, away_id)
+        VALUES ('m1', '2026-06-11 13:00 UTC-6', 1, 2)
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO team_rating (team_id, rating_system, rating, as_of)
+        VALUES (1, 'elo', 1600.0, '2026-01-01')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO team_rating (team_id, rating_system, rating, as_of)
+        VALUES (2, 'elo', 1540.0, '2026-01-01')
+        """
     )
     for selection, prob in [("home", 0.60), ("draw", 0.25), ("away", 0.15)]:
         conn.execute(
@@ -57,3 +78,8 @@ def test_compute_edges_persists_complete_market_rows() -> None:
 
     assert summary.rows_analyzed == 3
     assert conn.execute("SELECT COUNT(*) FROM edge_analysis").fetchone()[0] == 3
+    row = conn.execute(
+        "SELECT elo_diff, close_match FROM edge_analysis WHERE selection = 'home'"
+    ).fetchone()
+    assert round(float(row["elo_diff"]), 8) == 60.0
+    assert int(row["close_match"]) == 1
