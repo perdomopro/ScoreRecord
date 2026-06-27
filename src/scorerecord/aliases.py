@@ -72,19 +72,15 @@ def get_or_create_team(conn: sqlite3.Connection, name: str) -> int:
     canonical = normalize_name(name)
     if canonical is None:
         raise ValueError("Team name cannot be empty")
-    canonical_key = normalize_key(canonical)
 
-    row = conn.execute(
-        """
-        SELECT t.team_id
-        FROM team t
-        LEFT JOIN team_alias a ON a.team_id = t.team_id
-        WHERE t.canonical = ? OR a.alias = ? OR t.canonical_key = ? OR a.alias_key = ?
-        """,
-        (canonical, canonical, canonical_key, canonical_key),
-    ).fetchone()
-    if row:
-        return int(row["team_id"])
+    alias_key = normalize_key(canonical)
+    seeded_team_id = _seed_alias_team_id(conn, alias_key)
+    if seeded_team_id is not None:
+        return seeded_team_id
+
+    team_id = _best_existing_team_id(conn, {canonical})
+    if team_id is not None:
+        return team_id
 
     return _create_team(conn, canonical)
 
@@ -92,7 +88,7 @@ def get_or_create_team(conn: sqlite3.Connection, name: str) -> int:
 def seed_team_aliases(conn: sqlite3.Connection) -> None:
     for canonical, aliases in SEED_ALIASES.items():
         alias_set = {canonical, *aliases}
-        team_id = _best_existing_team_id(conn, alias_set)
+        team_id = _best_existing_team_id(conn, alias_set, preferred_names={canonical})
         if team_id is None:
             team_id = _create_team(conn, canonical)
 
@@ -153,18 +149,45 @@ def _create_team(conn: sqlite3.Connection, canonical: str) -> int:
     return team_id
 
 
-def _best_existing_team_id(conn: sqlite3.Connection, names: set[str]) -> int | None:
+def _seed_alias_team_id(conn: sqlite3.Connection, alias_key: str | None) -> int | None:
+    if not alias_key:
+        return None
+    row = conn.execute(
+        """
+        SELECT team_id
+        FROM team_alias
+        WHERE alias_key = ? AND source = 'seed'
+        """,
+        (alias_key,),
+    ).fetchone()
+    if row is None:
+        return None
+    return int(row["team_id"])
+
+
+def _best_existing_team_id(
+    conn: sqlite3.Connection,
+    names: set[str],
+    *,
+    preferred_names: set[str] | None = None,
+) -> int | None:
     keys = [key for key in (normalize_key(name) for name in names) if key]
     if not keys:
         return None
+    preferred_keys = {
+        key for key in (normalize_key(name) for name in (preferred_names or set())) if key
+    }
     placeholders = ",".join("?" for _ in keys)
     rows = conn.execute(
         f"""
-        SELECT DISTINCT team_id
+        SELECT DISTINCT team_id, canonical_key
         FROM (
-          SELECT team_id FROM team WHERE canonical_key IN ({placeholders})
+          SELECT team_id, canonical_key FROM team WHERE canonical_key IN ({placeholders})
           UNION
-          SELECT team_id FROM team_alias WHERE alias_key IN ({placeholders})
+          SELECT t.team_id, t.canonical_key
+          FROM team_alias ta
+          JOIN team t ON t.team_id = ta.team_id
+          WHERE ta.alias_key IN ({placeholders})
         )
         """,
         (*keys, *keys),
@@ -172,8 +195,16 @@ def _best_existing_team_id(conn: sqlite3.Connection, names: set[str]) -> int | N
     if not rows:
         return None
 
-    candidates = [int(row["team_id"]) for row in rows]
-    return max(candidates, key=lambda team_id: (_team_reference_count(conn, team_id), -team_id))
+    candidate_keys = {int(row["team_id"]): str(row["canonical_key"]) for row in rows}
+    candidates = list(candidate_keys)
+    return max(
+        candidates,
+        key=lambda team_id: (
+            _team_reference_count(conn, team_id),
+            int(candidate_keys[team_id] in preferred_keys),
+            -team_id,
+        ),
+    )
 
 
 def _team_reference_count(conn: sqlite3.Connection, team_id: int) -> int:

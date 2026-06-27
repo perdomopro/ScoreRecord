@@ -144,7 +144,7 @@ Current expected state:
 
 Latest local quality report:
 
-- Fixture resolution: 88/104 fully resolved.
+- Fixture resolution: 72/104 fully resolved after excluding unresolved group-position and knockout placeholders.
 - Unresolved fixtures are knockout placeholders (`W73`, `L101`, `1B`, `2C`, `3A/B/C/D/F`, etc.).
 - Historical aliases: 43/284 historical teams seed-backed, 241 auto-created.
 - Duplicate canonical keys: 0.
@@ -385,6 +385,7 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Fixed `predict-fixtures` so future fixture `MatchFeature` objects use latest Elo from `team_rating` instead of hardcoded `0.0`.
 - Fixed World Cup ingestion so bracket placeholders such as `1B`, `2L`, and `3A/B/C/D/F` are not created as teams.
 - Added Bosnia/Herzegovina aliases so fixture names resolve to the historical team with Elo.
+- Seeded aliases now prefer the best referenced team and seeded alias mappings take precedence over stale exact-name duplicates, preventing fixture-only duplicates such as `Bosnia & Herzegovina`.
 - Added fixture Elo quality logging with resolved fixture count, team-rating fallback count, and min/max fixture Elo difference.
 - Updated the model manifest payload with `run_id_scope='sqlite_database_local'` to make local-vs-remote run IDs explicit.
 - Verified homeserver `validated_run_id=5` is honest: BTTS, OU1.5, OU2.5, OU3.5, and `all_markets_passed` are all `1.0`.
