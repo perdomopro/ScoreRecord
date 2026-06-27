@@ -42,6 +42,12 @@ scorerecord gui --host 127.0.0.1 --port 8765
 scorerecord db-summary
 ```
 
+The read-only dashboard also supports lightweight filters:
+
+```text
+http://127.0.0.1:8765/?date=2026-06-27&market=1X2
+```
+
 If you do not install the package, the same commands work with:
 
 ```powershell

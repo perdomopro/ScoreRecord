@@ -440,6 +440,8 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added an audit-only table for rows with EV above 25%, odds-quality flags, or high-edge reasons.
 - Added KPI cards for edge run, recommendation run, rows analyzed, candidates, final recommendations, clean/flagged rows, high-edge rows, max EV, max recommendation score, and max odds age.
 - Added `scorerecord-gui.service` for the homeserver with conservative memory/thread limits.
+- Verified the homeserver GUI service manually: `active (running)`, 21.5 MB RSS, and `/healthz` returned HTTP 200.
+- Added lightweight dashboard refinements: `OK/WARNING/STALE/NO DATA` status badge, last edge/recommendation update timestamps, explicit audit-only warning text, risk-colored rows, percentage formatting for stake fraction, and querystring filters for `date=YYYY-MM-DD` and `market=1X2|OU|BTTS`.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
