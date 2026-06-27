@@ -416,6 +416,9 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added `edge_sanity` records in `data_quality`; every real `compute-edge` run now logs `high_edge_alert` and `high_edge_rows` with severity and top-edge details when any EV edge exceeds 25%.
 - Added `recommend --max-edge`, defaulting to `0.25`, so paper recommendations exclude implausibly high edges unless explicitly overridden for manual investigation.
 - Added regression tests for both the high-edge alert and the recommendation cap.
+- Deployed the guardrail to the homeserver and recomputed edge in `run_id=52`: 59 rows analyzed, max EV edge 49.96%, 6 high-edge rows, `edge_sanity.high_edge_alert=1`.
+- Verified `recommend --dry-run` after the cap: default settings would emit 6 recommendations, while `--max-edge 1.0` would emit 8; the two extra picks are above the sanity cap.
+- The daily timer had already inserted `recommend` run `49` before this guardrail existed. Two rows in that pre-guardrail run exceed 25% EV (`Panama-England` draw and `Algeria-Austria` home); keep them for audit only and do not treat them as actionable without manual review.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
