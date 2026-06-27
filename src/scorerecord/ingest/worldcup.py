@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
 from scorerecord.aliases import get_or_create_team, normalize_name, seed_team_aliases
 from scorerecord.sources import OPENFOOTBALL_2026_URL, fetch_text
+
+
+_PLACEHOLDER_RE = re.compile(r"^(?:[WL]\d+|[12][A-L]|3[A-L](?:/(?:3?[A-L]))+)$")
 
 
 def ingest_worldcup_2026(
@@ -84,7 +88,7 @@ def _team_id_or_none(conn: sqlite3.Connection, name: str | None) -> int | None:
 
 
 def _is_placeholder(name: str) -> bool:
-    return name.startswith(("W", "L")) and name[1:].isdigit()
+    return bool(_PLACEHOLDER_RE.match(name))
 
 
 def _fixture_id(match: dict[str, object], index: int) -> str:

@@ -138,14 +138,14 @@ Current checks:
 Current expected state:
 
 - 104 World Cup fixtures.
-- 16 unresolved fixtures are knockout placeholders.
+- Unresolved fixtures are expected knockout placeholders until the bracket is known.
 - Historical auto-created teams are expected because the historical dataset contains many non-World-Cup nations.
 - Duplicate canonical keys should be zero.
 
 Latest local quality report:
 
 - Fixture resolution: 88/104 fully resolved.
-- Unresolved fixtures: 16 knockout placeholders (`W73`, `L101`, etc.).
+- Unresolved fixtures are knockout placeholders (`W73`, `L101`, `1B`, `2C`, `3A/B/C/D/F`, etc.).
 - Historical aliases: 43/284 historical teams seed-backed, 241 auto-created.
 - Duplicate canonical keys: 0.
 
@@ -198,7 +198,7 @@ Latest local calibrated goal-market walk-forward result, `run_id=19`:
 Latest local fixture prediction publish, `run_id=21`:
 
 - Predicted fixtures: 88 resolved fixtures.
-- Skipped fixtures: 16 knockout placeholders.
+- Skipped fixtures: unresolved knockout placeholders.
 - Inserted predictions: 1672 rows across 1X2, OU1.5, OU2.5, OU3.5, BTTS, double chance, and top exact scores.
 - Model version: `dixon_coles:hl3y:platt-goals-v1`.
 - `data_quality` records the model manifest plus Platt `a`, `b`, `n`, raw mean, calibrated mean, observed rate, and delta mean per calibrated market.
@@ -383,6 +383,8 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 ### 2026-06-27 - Production-quality fixes from operational review
 
 - Fixed `predict-fixtures` so future fixture `MatchFeature` objects use latest Elo from `team_rating` instead of hardcoded `0.0`.
+- Fixed World Cup ingestion so bracket placeholders such as `1B`, `2L`, and `3A/B/C/D/F` are not created as teams.
+- Added Bosnia/Herzegovina aliases so fixture names resolve to the historical team with Elo.
 - Added fixture Elo quality logging with resolved fixture count, team-rating fallback count, and min/max fixture Elo difference.
 - Updated the model manifest payload with `run_id_scope='sqlite_database_local'` to make local-vs-remote run IDs explicit.
 - Verified homeserver `validated_run_id=5` is honest: BTTS, OU1.5, OU2.5, OU3.5, and `all_markets_passed` are all `1.0`.

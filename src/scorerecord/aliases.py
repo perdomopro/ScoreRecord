@@ -9,6 +9,7 @@ SEED_ALIASES: dict[str, list[str]] = {
     "Australia": ["AUS"],
     "Austria": ["AUT"],
     "Belgium": ["BEL"],
+    "Bosnia and Herzegovina": ["Bosnia & Herzegovina", "Bosnia-Herzegovina", "BIH"],
     "Brazil": ["BRA", "Brasil"],
     "Canada": ["CAN"],
     "Chile": ["CHI"],
