@@ -404,6 +404,10 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added `fetch-odds --closing-window-minutes`; when used with `--closing`, it captures only fixtures inside the upcoming window unless a specific fixture is requested.
 - Added `scorerecord-preplay-odds.timer` to collect closing odds hourly at minute 25 for fixtures within the next 60 minutes.
 - Added `calibrator-drift` and wired it into weekly monitoring so Platt coefficient changes above the configured threshold are persisted to `data_quality`.
+- Deployed the monitoring update to the homeserver and started `scorerecord-preplay-odds.timer`; no fixtures were inside the 60-minute closing window at verification time.
+- Recomputed homeserver edge in `run_id=23`: 48 odds rows analyzed, 10 close-match rows, 12 positive edges above 3%, 9 above 5%, max EV edge 42.32%.
+- Verified `calibrator-drift` on the homeserver: previous prediction run `16`, current prediction run `18`, 4 markets compared, max relative change 0.0000, 0 alerts.
+- Kept recommendations in dry-run after the larger odds sample: default 5% threshold would emit 5 recommendations from 9 candidates; 3% discovery threshold would emit 7 from 12 candidates. No new paper recommendation rows were inserted pending manual review of the high-edge 1X2 prices.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
