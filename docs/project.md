@@ -427,7 +427,8 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - `recommend` now filters stale, low-depth, and outlier odds by default through `--max-odds-age-minutes`, `--min-books`, and `--allow-odds-quality-flags`.
 - `recommend` now ranks by `recommendation_score` instead of raw EV and defaults to `--max-picks-per-fixture 1` to avoid treating correlated picks from the same match as independent.
 - `recommendation` rows now persist the source `edge_run_id`, `recommendation_score`, `odds_quality_flags`, and `high_edge_reason` for GUI audit surfaces.
-- Added regression tests for odds-quality exclusion and anti-correlation by fixture.
+- Odds market-depth checks normalize bookmaker variants such as `Bet365` and `Bet365 (no latency)` into one bookmaker family, so duplicated feeds do not inflate `odds_books`.
+- Added regression tests for odds-quality exclusion, bookmaker-family depth, and anti-correlation by fixture.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 

@@ -106,3 +106,50 @@ def test_compute_edges_persists_complete_market_rows() -> None:
     ).fetchone()
     assert alert["metric_value"] == 1.0
     assert "severity" in alert["details_json"]
+
+
+def test_compute_edges_groups_bookmaker_variants_for_market_depth() -> None:
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m2', '2026-06-11 13:00 UTC-6')"
+    )
+    for selection, prob in [("home", 0.50), ("draw", 0.30), ("away", 0.20)]:
+        conn.execute(
+            """
+            INSERT INTO prediction (
+              fixture_id, model, market, selection, prob,
+              fair_odds, generated_utc, model_version
+            )
+            VALUES ('m2', 'dixon_coles', '1X2', ?, ?, ?,
+                    '2026-06-10T00:00:00+00:00', ?)
+            """,
+            (selection, prob, 1.0 / prob, MODEL_VERSION),
+        )
+    for bookmaker, home_odds in [
+        ("Bet365", 2.00),
+        ("Bet365 (no latency)", 2.02),
+        ("Unibet", 2.05),
+    ]:
+        for selection, odds in [("home", home_odds), ("draw", 3.50), ("away", 4.00)]:
+            conn.execute(
+                """
+                INSERT INTO odds (
+                  fixture_id, market, selection, decimal_odds, bookmaker, captured_utc
+                )
+                VALUES ('m2', '1X2', ?, ?, ?, '2026-06-10T01:00:00+00:00')
+                """,
+                (selection, odds, bookmaker),
+            )
+
+    compute_edges(conn)
+
+    row = conn.execute(
+        """
+        SELECT odds_books
+        FROM edge_analysis
+        WHERE fixture_id = 'm2'
+          AND selection = 'home'
+          AND bookmaker = 'Unibet'
+        """
+    ).fetchone()
+    assert int(row["odds_books"]) == 2

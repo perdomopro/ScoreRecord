@@ -299,17 +299,26 @@ def _latest_odds(
 def _selection_market_stats(
     odds_rows: dict[tuple[str, str, str], dict[str, sqlite3.Row]],
 ) -> dict[tuple[str, str, str], dict[str, float | int]]:
-    values: dict[tuple[str, str, str], list[float]] = {}
-    for fixture_id, _bookmaker, market in odds_rows:
-        for selection, row in odds_rows[(fixture_id, _bookmaker, market)].items():
-            values.setdefault((fixture_id, market, selection), []).append(
-                float(row["decimal_odds"])
-            )
+    book_values: dict[tuple[str, str, str], dict[str, tuple[str, float]]] = {}
+    for fixture_id, bookmaker, market in odds_rows:
+        book_family = _bookmaker_family(bookmaker)
+        for selection, row in odds_rows[(fixture_id, bookmaker, market)].items():
+            key = (fixture_id, market, selection)
+            captured_utc = str(row["captured_utc"])
+            price = float(row["decimal_odds"])
+            incumbent = book_values.setdefault(key, {}).get(book_family)
+            if incumbent is None or captured_utc > incumbent[0]:
+                book_values[key][book_family] = (captured_utc, price)
     return {
-        key: {"odds_books": len(odds), "median_odds": float(median(odds))}
-        for key, odds in values.items()
+        key: {"odds_books": len(book_odds), "median_odds": float(median(odds))}
+        for key, book_odds in book_values.items()
+        for odds in ([price for _captured, price in book_odds.values()],)
         if odds
     }
+
+
+def _bookmaker_family(bookmaker: str) -> str:
+    return bookmaker.split("(", 1)[0].strip().casefold()
 
 
 def _fixture_context(conn: sqlite3.Connection) -> dict[str, tuple[float | None, int | None]]:
