@@ -490,6 +490,10 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Policy-grid metadata and `data_quality` records warn against choosing the single best ROI row without bucket checks and cross-league validation.
 - Added tests/smokes for min-score filtering, daily volume caps, and policy-grid output.
 - Critical interpretation: the EPL result justifies adding selectivity controls; it does not yet justify hardcoding draw-specific or long-odds-specific penalties without grid and bucket evidence.
+- Deployed the policy-gate update and ran EPL policy grid `run_id=77` over 2021-08-01 through 2025-05-31: 4560 prediction rows and 120 policy rows.
+- Best useful CLV row in `run_id=77` was `min_edge=0.075`, `max_picks_per_day=3`, `ranking=edge_ev`: 555 bets, capped ROI -6.33%, mean CLV -0.45%, positive CLV 44.32%.
+- Best useful capped-ROI row in `run_id=77` was `min_edge=0.075`, `max_picks_per_day=3`, `ranking=recommendation_score`: 555 bets, capped ROI -4.56%, mean CLV -0.58%, positive CLV 43.06%.
+- Interpretation: selectivity improves the EPL historical result relative to the original -8.46% capped ROI, but the grid still does not show positive CLV; do not promote these gates as a profitable production policy without more evidence.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
