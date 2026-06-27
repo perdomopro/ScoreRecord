@@ -376,12 +376,16 @@ def _fetch_event_index(
 ) -> tuple[dict[tuple[str, str, str], str], int]:
     if not fixtures:
         return {}, 0
-    latest = max(str(row["kickoff_local"] or row["kickoff_utc"] or "")[:10] for row in fixtures)
+    dates = [str(row["kickoff_local"] or row["kickoff_utc"] or "")[:10] for row in fixtures]
+    earliest = min(date for date in dates if date)
+    latest = max(date for date in dates if date)
     params = {
         "apiKey": api_key,
         "sport": _sport_slug(sport),
-        "limit": "5000",
+        "limit": str(max(100, min(5000, len(fixtures) * 8))),
     }
+    if earliest:
+        params["from"] = f"{earliest}T00:00:00Z"
     if latest:
         params["to"] = f"{latest}T23:59:59Z"
     payload = _get_json(f"{base_url.rstrip('/')}/events", params)
@@ -426,8 +430,15 @@ def _fetch_odds_payload(
 def _get_json(url: str, params: dict[str, str]) -> Any:
     full_url = f"{url}?{urllib.parse.urlencode(params)}"
     request = urllib.request.Request(full_url, headers={"User-Agent": "ScoreRecord/0.1"})
-    with urllib.request.urlopen(request, timeout=30) as response:  # pragma: no cover - network
-        return json.loads(response.read().decode("utf-8"))
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:  # pragma: no cover
+                return json.loads(response.read().decode("utf-8"))
+        except Exception as exc:  # pragma: no cover - network dependent
+            last_error = exc
+            time.sleep(2**attempt)
+    raise RuntimeError(f"Could not fetch Odds-API.io endpoint {url}: {last_error}")
 
 
 def _record_odds_quality(
