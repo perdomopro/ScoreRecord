@@ -358,6 +358,8 @@ def _candidate_fixtures(conn: sqlite3.Connection, *, fixture_id: str | None) -> 
         JOIN team at ON at.team_id = f.away_id
         WHERE f.home_id IS NOT NULL
           AND f.away_id IS NOT NULL
+          AND f.home_score IS NULL
+          AND f.away_score IS NULL
           {filter_sql}
         ORDER BY f.kickoff_local, f.fixture_id
         """,

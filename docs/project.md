@@ -237,7 +237,7 @@ Odds-API.io integration notes:
 
 Latest local Fase 4 dry-runs:
 
-- `fetch-odds --dry-run --min-interval-seconds 0`: 88 resolved fixtures planned, 0 rows inserted, 89 planned API requests including the event-index request.
+- `fetch-odds --dry-run --min-interval-seconds 0`: 38 pending resolved fixtures planned, 0 rows inserted, 39 planned API requests including the event-index request.
 - `compute-edge --dry-run`: 0 rows analyzed because no real odds are stored yet.
 - `recommend --dry-run`: 0 recommendations because no edge run exists yet.
 - `compute-clv --dry-run`: 0 CLV rows because no paper recommendations and closing odds exist yet.
@@ -347,16 +347,18 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added `recommend` for paper-only recommendations with conservative defaults: 5% min EV, 15% min probability, quarter Kelly, and 1-unit cap.
 - Added `compute-clv` to compare paper recommendations against later closing odds and aggregate CLV into `eval_metric`.
 - Added Fase 4 tests for odds parsing, de-vig, edge persistence, Kelly sizing, recommendation generation, and CLV.
-- Verified dry-run state: 88 resolved fixtures ready for odds fetch, no edge/recommendation/CLV rows until real odds are stored.
+- Verified dry-run state: 38 pending resolved fixtures ready for odds fetch, no edge/recommendation/CLV rows until real odds are stored.
+- Refined `fetch-odds` to target only pending resolved fixtures, avoiding wasted requests on fixtures already carrying final scores.
 
 ### 2026-06-24 - Homeserver deployment packaging
 
 - Added `deploy/bootstrap_homeserver.sh` to create the server virtualenv, install ScoreRecord, initialize SQLite, create `.env` when missing, and install user systemd units.
 - Added `deploy/Deploy-ScoreRecord.ps1` to archive the current committed tree, copy it to `/home/adrian/scorerecord`, bootstrap, and run smoke checks over SSH.
+- Added `deploy/Set-RemoteOddsApiKey.ps1` to set `ODDS_API_IO_KEY` on the homeserver via stdin without committing or logging the secret.
 - Added user systemd units/timers for hourly odds, daily predictions/recommendations, nightly settlement/CLV, and weekly monitoring.
 - Set conservative homeserver resource limits: 2 BLAS/OpenMP threads, `MemoryMax` 700M-900M, `Nice=10`, and idle IO scheduling.
 - Updated `docs/deployment.md` with the SSH-key flow and operational gates.
-- Current deployment blocker: `adrian@homeserver` is reachable, but no SSH key is authorized yet; password automation is intentionally avoided so secrets do not land in commands, logs, or files.
+- Homeserver deployment was verified with an SSH key; public data pipeline ran successfully on the server and published 1672 fixture predictions.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 

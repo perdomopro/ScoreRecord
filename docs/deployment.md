@@ -34,6 +34,12 @@ Then deploy the current committed tree:
 .\deploy\Deploy-ScoreRecord.ps1 -HostName homeserver
 ```
 
+Set the odds API key without writing it to git or shell history:
+
+```powershell
+.\deploy\Set-RemoteOddsApiKey.ps1 -HostName homeserver
+```
+
 The deploy script:
 
 - archives `HEAD` with `git archive`;
