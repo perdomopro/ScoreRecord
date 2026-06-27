@@ -38,6 +38,8 @@ scorerecord compute-edge --dry-run
 scorerecord recommend --max-edge 0.25 --max-odds-age-minutes 180 --min-books 2 --dry-run
 scorerecord compute-clv --dry-run
 scorerecord calibrator-drift
+scorerecord backtest --from 2024-01-01 --to 2024-12-31
+scorerecord calibration-report --from 2024-01-01 --to 2024-12-31
 scorerecord gui --host 127.0.0.1 --port 8765
 scorerecord db-summary
 ```
@@ -47,6 +49,10 @@ The read-only dashboard also supports lightweight filters:
 ```text
 http://127.0.0.1:8765/?date=2026-06-27&market=1X2
 ```
+
+Backtest CSVs are written to `outputs/backtests/`. Until historical bookmaker odds are
+available, those reports use a training-window marginal probability as a market proxy, so
+they are for calibration and ranking diagnostics rather than real ROI claims.
 
 If you do not install the package, the same commands work with:
 

@@ -2,6 +2,7 @@ import sqlite3
 
 from scorerecord.db import init_db
 from scorerecord.evaluate.recommendations import (
+    capped_real_stake,
     compute_clv,
     compute_recommendation_clv,
     generate_recommendations,
@@ -30,6 +31,27 @@ def test_kelly_stake_is_fractional_and_capped() -> None:
     assert kelly_stake(0.90, 10.0, fraction=1.0, max_stake=0.5) == 0.5
 
 
+def test_capped_real_stake_is_more_conservative_than_model_stake() -> None:
+    assert capped_real_stake(
+        model_stake=0.041,
+        odds_decimal=1.91,
+        market="1X2",
+        selection="home",
+    ) == 0.01
+    assert capped_real_stake(
+        model_stake=0.02,
+        odds_decimal=3.50,
+        market="1X2",
+        selection="home",
+    ) == 0.0075
+    assert capped_real_stake(
+        model_stake=0.02,
+        odds_decimal=5.50,
+        market="1X2",
+        selection="draw",
+    ) == 0.0025
+
+
 def test_generate_recommendations_uses_latest_edge_run() -> None:
     conn = _conn()
     edge_run_id = _run(conn, "compute-edge")
@@ -54,10 +76,15 @@ def test_generate_recommendations_uses_latest_edge_run() -> None:
 
     assert summary.recommendations == 1
     row = conn.execute(
-        "SELECT edge, stake_units, confidence, edge_run_id, recommendation_score FROM recommendation"
+        """
+        SELECT edge, stake_units, capped_stake_units, confidence, edge_run_id,
+               recommendation_score
+        FROM recommendation
+        """
     ).fetchone()
     assert round(row["edge"], 8) == 0.14
     assert round(row["stake_units"], 8) == 0.035
+    assert round(row["capped_stake_units"], 8) == 0.01
     assert row["confidence"] == "high"
     assert row["edge_run_id"] == edge_run_id
     assert round(row["recommendation_score"], 8) == 0.14

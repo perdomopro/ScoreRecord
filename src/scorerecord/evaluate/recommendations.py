@@ -91,6 +91,24 @@ def kelly_stake(
     return min(fraction * kelly_full, max_stake)
 
 
+def capped_real_stake(
+    *,
+    model_stake: float,
+    odds_decimal: float,
+    market: str,
+    selection: str,
+    max_stake_per_pick: float = 0.01,
+) -> float:
+    stake = min(model_stake, max_stake_per_pick)
+    if odds_decimal >= 5.0:
+        stake *= 0.50
+    elif odds_decimal >= 3.0:
+        stake *= 0.75
+    if market == "1X2" and selection == "draw":
+        stake *= 0.50
+    return stake
+
+
 def generate_recommendations(
     conn: sqlite3.Connection,
     *,
@@ -138,16 +156,22 @@ def generate_recommendations(
                 fraction=kelly_fraction,
                 max_stake=max_stake,
             )
+            capped_stake = capped_real_stake(
+                model_stake=stake,
+                odds_decimal=candidate.odds_decimal,
+                market=candidate.market,
+                selection=candidate.selection,
+            )
             cursor = conn.execute(
                 """
                 INSERT OR REPLACE INTO recommendation (
                   run_id, fixture_id, market, selection, model_prob, market_odds,
-                  edge, edge_prob, kelly_fraction, stake_units, confidence,
+                  edge, edge_prob, kelly_fraction, stake_units, capped_stake_units, confidence,
                   bookmaker, model_version, odds_captured_utc, edge_run_id,
                   recommendation_score, odds_quality_flags, high_edge_reason,
                   paper, generated_utc
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 """,
                 (
                     run_id,
@@ -160,6 +184,7 @@ def generate_recommendations(
                     candidate.edge_prob,
                     kelly_fraction,
                     stake,
+                    capped_stake,
                     _confidence(candidate.edge_ev, candidate.prob_model),
                     candidate.bookmaker,
                     candidate.model_version,

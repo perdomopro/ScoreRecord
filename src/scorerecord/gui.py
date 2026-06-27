@@ -293,6 +293,7 @@ def _recommendation_rows(
           r.edge_prob,
           r.recommendation_score,
           r.stake_units,
+          r.capped_stake_units,
           r.confidence,
           r.bookmaker,
           r.odds_quality_flags,
@@ -613,7 +614,8 @@ def _picks_table(rows: list[sqlite3.Row]) -> str:
         "Fair Mkt",
         "EV",
         "Score",
-        "Stake",
+        "Model Stake",
+        "Capped Stake",
         "Books",
         "Age",
         "Flags",
@@ -634,6 +636,7 @@ def _picks_table(rows: list[sqlite3.Row]) -> str:
             f"<td class='{_edge_class(row['edge'])}'>{_pct(row['edge'])}</td>"
             f"<td>{_pct(row['recommendation_score'])}</td>"
             f"<td>{_pct(row['stake_units'])}</td>"
+            f"<td>{_pct(row['capped_stake_units'])}</td>"
             f"<td>{_v(row['odds_books'])}</td>"
             f"<td>{_minutes(row['odds_age_minutes'])}</td>"
             f"<td>{_pill(row['odds_quality_flags'])}</td>"

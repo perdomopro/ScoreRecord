@@ -446,6 +446,11 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Deduplicated audit-only display by logical pick (`fixture_id`, `market`, `selection`) while preserving bookmaker-level data for recommendation selection and future CLV.
 - Split GUI status wording into `Service status: OK` and `Data quality: ...` so odds/model warnings are not confused with service failure.
 - Made paper recommendation filtering explicitly reject critical audit markers such as `stale_odds`, `low_market_depth`, `bookmaker_outlier`, `long_odds_tail`, `draw_tail_risk`, and `calibration_tail_risk`; plain `model_market_disagreement` remains allowed.
+- Added `backtest` to generate walk-forward historical recommendation CSVs by both raw `edge_ev` and `recommendation_score` rankings.
+- Added `calibration-report` to generate market/selection/probability-bucket calibration CSVs and flag supported bucket errors above 8 percentage points.
+- Backtest outputs go to `outputs/backtests/` and are intentionally ignored by git.
+- Because historical bookmaker odds are not available yet, the backtest uses a training-window marginal probability as a market proxy; ROI fields are diagnostic, not real betting ROI.
+- Added conservative `capped_stake_units` alongside paper/model `stake_units`, defaulting to a 1% per-pick cap with extra reductions for long odds and 1X2 draws.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 

@@ -12,6 +12,7 @@ data/*.db
 data/*.sqlite
 data/public/*.json
 data/public/*.html
+outputs/
 htmlcov/
 dist/
 build/

@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS recommendation (
   edge_prob REAL,
   kelly_fraction REAL NOT NULL,
   stake_units REAL NOT NULL,
+  capped_stake_units REAL,
   confidence TEXT NOT NULL,
   bookmaker TEXT,
   model_version TEXT NOT NULL DEFAULT 'dev',

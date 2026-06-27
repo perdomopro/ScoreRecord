@@ -8,6 +8,7 @@ from pathlib import Path
 
 from scorerecord.aliases import seed_team_aliases
 from scorerecord.db import connect, init_db, table_count
+from scorerecord.evaluate.backtest import run_calibration_report, run_historical_backtest
 from scorerecord.evaluate.calibrator_drift import monitor_calibrator_drift
 from scorerecord.evaluate.edge import compute_edges
 from scorerecord.evaluate.goal_markets import run_goal_market_walk_forward
@@ -126,6 +127,28 @@ def main(argv: list[str] | None = None) -> int:
     clv.add_argument("--dry-run", action="store_true")
     drift = subparsers.add_parser("calibrator-drift", help="Monitor Platt coefficient drift.")
     drift.add_argument("--threshold", type=float, default=0.10)
+    backtest = subparsers.add_parser(
+        "backtest",
+        help="Historical walk-forward recommendation backtest with proxy odds.",
+    )
+    backtest.add_argument("--from", dest="from_date", required=True, help="YYYY-MM-DD")
+    backtest.add_argument("--to", dest="to_date", required=True, help="YYYY-MM-DD")
+    backtest.add_argument("--out-dir", default="outputs/backtests")
+    backtest.add_argument("--start-year", type=int, default=2021)
+    backtest.add_argument("--min-train", type=int, default=200)
+    backtest.add_argument("--min-edge", type=float, default=0.05)
+    backtest.add_argument("--max-edge", type=float, default=0.25)
+    backtest.add_argument("--min-prob", type=float, default=0.15)
+    backtest.add_argument("--max-picks-per-fixture", type=int, default=1)
+    calibration = subparsers.add_parser(
+        "calibration-report",
+        help="Historical walk-forward calibration report by market and probability bucket.",
+    )
+    calibration.add_argument("--from", dest="from_date", required=True, help="YYYY-MM-DD")
+    calibration.add_argument("--to", dest="to_date", required=True, help="YYYY-MM-DD")
+    calibration.add_argument("--out-dir", default="outputs/backtests")
+    calibration.add_argument("--start-year", type=int, default=2021)
+    calibration.add_argument("--min-train", type=int, default=200)
     gui = subparsers.add_parser("gui", help="Serve the read-only paper/audit dashboard.")
     gui.add_argument("--host", default="127.0.0.1")
     gui.add_argument("--port", type=int, default=8765)
@@ -341,6 +364,36 @@ def main(argv: list[str] | None = None) -> int:
             summary = monitor_calibrator_drift(
                 conn,
                 threshold=args.threshold,
+                cwd=Path.cwd(),
+            )
+            print(summary.as_row())
+            return 0
+
+        if args.command == "backtest":
+            summary = run_historical_backtest(
+                conn,
+                from_date=date.fromisoformat(args.from_date),
+                to_date=date.fromisoformat(args.to_date),
+                out_dir=Path(args.out_dir),
+                start_year=args.start_year,
+                min_train=args.min_train,
+                min_edge=args.min_edge,
+                max_edge=args.max_edge,
+                min_prob=args.min_prob,
+                max_picks_per_fixture=args.max_picks_per_fixture,
+                cwd=Path.cwd(),
+            )
+            print(summary.as_row())
+            return 0
+
+        if args.command == "calibration-report":
+            summary = run_calibration_report(
+                conn,
+                from_date=date.fromisoformat(args.from_date),
+                to_date=date.fromisoformat(args.to_date),
+                out_dir=Path(args.out_dir),
+                start_year=args.start_year,
+                min_train=args.min_train,
                 cwd=Path.cwd(),
             )
             print(summary.as_row())

@@ -73,6 +73,7 @@ def _run_lightweight_migrations(conn: sqlite3.Connection) -> None:
     )
     _add_column_if_missing(conn, "eval_metric", "run_id", "INTEGER REFERENCES ingest_run(run_id)")
     _add_column_if_missing(conn, "recommendation", "edge_prob", "REAL")
+    _add_column_if_missing(conn, "recommendation", "capped_stake_units", "REAL")
     _add_column_if_missing(conn, "recommendation", "bookmaker", "TEXT")
     _add_column_if_missing(conn, "recommendation", "model_version", "TEXT NOT NULL DEFAULT 'dev'")
     _add_column_if_missing(conn, "recommendation", "odds_captured_utc", "TEXT")
