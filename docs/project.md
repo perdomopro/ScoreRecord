@@ -477,6 +477,9 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added a `sample_size_policy` block to real-odds backtest metadata: fewer than 100 picks is smoke/exploratory only; 100-299 is initial signal; 300-999 supports cautious adjustments; 1000+ is more stable, still with bucket checks.
 - Added tests/smokes for season ranges, historical odds coverage reports, optional-season historical backtests, and the new score/CLV/sample fields.
 - Critical interpretation: a small smoke run validates plumbing only. Threshold/score changes should wait for sufficient overall sample and per-bucket counts.
+- Deployed the update to the homeserver, ingested EPL 2019-2025, and verified 6 seasons with 380 matches each and 100% Avg open/close coverage.
+- Ran EPL historical real-odds backtest `run_id=75` for 2021-08-01 through 2025-05-31: 4560 predictions, 1444 selected policy rows, global tier `more_stable_signal`.
+- Initial EPL read from `run_id=75`: capped ROI -8.46%, mean CLV -0.56%, positive CLV 43.56%; this is enough to review score/edge buckets, but not enough to blindly retune without per-bucket checks.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
