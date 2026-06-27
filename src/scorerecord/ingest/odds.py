@@ -78,6 +78,31 @@ class OddsRow:
     raw_json: str | None = None
 
 
+@dataclass(frozen=True)
+class OddsSnapshotCoverageRow:
+    fixture_id: str
+    home_name: str
+    away_name: str
+    kickoff_utc: str
+    total_snapshots: int
+    unique_bookmakers: int
+    unique_markets: int
+    first_snapshot_at: str
+    last_snapshot_at: str
+
+    def as_row(self) -> str:
+        return (
+            f"fixture_id={self.fixture_id} "
+            f"match={self.home_name} vs {self.away_name} "
+            f"kickoff_utc={self.kickoff_utc} "
+            f"total_snapshots={self.total_snapshots} "
+            f"unique_bookmakers={self.unique_bookmakers} "
+            f"unique_markets={self.unique_markets} "
+            f"first_snapshot_at={self.first_snapshot_at} "
+            f"last_snapshot_at={self.last_snapshot_at}"
+        )
+
+
 def fetch_live_odds(
     conn: sqlite3.Connection,
     *,
@@ -194,8 +219,52 @@ def fetch_live_odds(
             dry_run=False,
         )
         _record_odds_quality(conn, run_id, summary, bookmakers_seen, markets_seen)
+        _record_snapshot_coverage_quality(conn, run_id)
         conn.commit()
     return summary
+
+
+def odds_snapshot_coverage_report(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 50,
+) -> list[OddsSnapshotCoverageRow]:
+    rows = conn.execute(
+        """
+        SELECT
+          os.fixture_id,
+          COALESCE(ht.canonical, '') AS home_name,
+          COALESCE(at.canonical, '') AS away_name,
+          COALESCE(f.kickoff_utc, '') AS kickoff_utc,
+          COUNT(*) AS total_snapshots,
+          COUNT(DISTINCT os.bookmaker) AS unique_bookmakers,
+          COUNT(DISTINCT os.market) AS unique_markets,
+          MIN(os.snapshot_at) AS first_snapshot_at,
+          MAX(os.snapshot_at) AS last_snapshot_at
+        FROM odds_snapshots os
+        LEFT JOIN fixture f ON f.fixture_id = os.fixture_id
+        LEFT JOIN team ht ON ht.team_id = f.home_id
+        LEFT JOIN team at ON at.team_id = f.away_id
+        GROUP BY os.fixture_id
+        ORDER BY last_snapshot_at DESC, os.fixture_id
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [
+        OddsSnapshotCoverageRow(
+            fixture_id=str(row["fixture_id"]),
+            home_name=str(row["home_name"]),
+            away_name=str(row["away_name"]),
+            kickoff_utc=str(row["kickoff_utc"]),
+            total_snapshots=int(row["total_snapshots"]),
+            unique_bookmakers=int(row["unique_bookmakers"]),
+            unique_markets=int(row["unique_markets"]),
+            first_snapshot_at=str(row["first_snapshot_at"]),
+            last_snapshot_at=str(row["last_snapshot_at"]),
+        )
+        for row in rows
+    ]
 
 
 def _insert_odds_snapshot(conn: sqlite3.Connection, row: OddsRow) -> int:
@@ -601,6 +670,37 @@ def _record_odds_quality(
             conn,
             run_id,
             "odds_ingest",
+            metric_name,
+            float(value),
+            json.dumps(details, sort_keys=True),
+        )
+
+
+def _record_snapshot_coverage_quality(conn: sqlite3.Connection, run_id: int) -> None:
+    rows = odds_snapshot_coverage_report(conn, limit=100000)
+    total_snapshots = sum(row.total_snapshots for row in rows)
+    avg_snapshots = total_snapshots / len(rows) if rows else 0.0
+    max_snapshots = max((row.total_snapshots for row in rows), default=0)
+    fixtures_with_3plus = sum(1 for row in rows if row.total_snapshots >= 3)
+    details = {
+        "fixtures_with_snapshots": len(rows),
+        "total_snapshots": total_snapshots,
+        "avg_snapshots_per_fixture": avg_snapshots,
+        "max_snapshots_per_fixture": max_snapshots,
+        "fixtures_with_3plus_snapshots": fixtures_with_3plus,
+        "recent_fixture_rows": [row.__dict__ for row in rows[:25]],
+    }
+    for metric_name, value in [
+        ("snapshot_fixtures_with_rows", len(rows)),
+        ("snapshot_total_rows", total_snapshots),
+        ("snapshot_avg_rows_per_fixture", avg_snapshots),
+        ("snapshot_max_rows_per_fixture", max_snapshots),
+        ("snapshot_fixtures_with_3plus", fixtures_with_3plus),
+    ]:
+        record_quality(
+            conn,
+            run_id,
+            "odds_snapshot_coverage",
             metric_name,
             float(value),
             json.dumps(details, sort_keys=True),

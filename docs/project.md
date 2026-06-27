@@ -504,6 +504,7 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added `analyze-policy-grids` to aggregate `policy_grid_real_odds_*.csv` files across leagues by config, including `market_shrink_alpha`, and classify each policy as `candidate`, `review`, or `reject`.
 - The policy-grid analyzer is intentionally conservative: `candidate` requires at least three leagues, at least 1000 bets, nonnegative weighted capped ROI, positive weighted CLV, positive CLV rate above 50%, and positive CLV in at least 60% of leagues.
 - Added `odds_snapshots` as an append-only live price table populated during `fetch-odds`. The current edge layer still uses `odds`, while snapshots preserve event id, fixture id, bookmaker, market, selection, line, odds, timestamp, and commence time for future live CLV/drift analysis.
+- Added `odds-snapshot-report` and `odds_snapshot_coverage` data-quality metrics so live collection can be audited by fixture, total snapshots, bookmaker count, market count, first snapshot, and latest snapshot.
 - Added tests/smokes for market shrink, model-vs-market benchmark rows, cross-league grid aggregation, and live odds snapshots.
 - Updated README command examples with the benchmark, shrink grid, and grid aggregation workflow.
 - Critical interpretation: these tools decide whether the model needs market shrink or policy rejection; they do not prove future World Cup profitability and should not loosen paper-only staking gates without multi-league and live CLV evidence.

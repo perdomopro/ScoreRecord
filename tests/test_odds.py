@@ -6,6 +6,8 @@ from scorerecord.ingest.odds import (
     OddsRow,
     _candidate_fixtures,
     _insert_odds_snapshot,
+    _record_snapshot_coverage_quality,
+    odds_snapshot_coverage_report,
     parse_odds_payload,
 )
 
@@ -124,3 +126,55 @@ def test_insert_odds_snapshot_keeps_append_only_live_price_trace() -> None:
     assert stored["event_id"] == "event-1"
     assert stored["line"] == 2.5
     assert stored["snapshot_at"] == "2026-06-10T10:30:00+00:00"
+
+    coverage = odds_snapshot_coverage_report(conn)
+    assert len(coverage) == 1
+    assert coverage[0].fixture_id == "fx1"
+    assert coverage[0].total_snapshots == 1
+    assert coverage[0].unique_bookmakers == 1
+    assert coverage[0].unique_markets == 1
+
+
+def test_snapshot_coverage_quality_records_accumulated_snapshot_metrics() -> None:
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (1, 'Home', 'home')"
+    )
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (2, 'Away', 'away')"
+    )
+    conn.execute(
+        """
+        INSERT INTO fixture (fixture_id, kickoff_utc, home_id, away_id)
+        VALUES ('fx1', '2026-06-11T19:00:00+00:00', 1, 2)
+        """
+    )
+    for minute in ("30", "40", "50"):
+        _insert_odds_snapshot(
+            conn,
+            OddsRow(
+                fixture_id="fx1",
+                bookmaker="Bet365",
+                market="1X2",
+                selection="home",
+                decimal_odds=2.10,
+                captured_utc=f"2026-06-10T10:{minute}:00+00:00",
+                is_closing=0,
+                source_event_id="event-1",
+            ),
+        )
+
+    _record_snapshot_coverage_quality(conn, run_id=1)
+
+    metrics = {
+        row["metric_name"]: row["metric_value"]
+        for row in conn.execute(
+            """
+            SELECT metric_name, metric_value
+            FROM data_quality
+            WHERE check_name = 'odds_snapshot_coverage'
+            """
+        )
+    }
+    assert metrics["snapshot_total_rows"] == 3.0
+    assert metrics["snapshot_fixtures_with_3plus"] == 1.0

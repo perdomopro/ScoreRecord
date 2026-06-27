@@ -34,6 +34,7 @@ scorerecord model-manifest
 scorerecord settle-fixtures --dry-run
 scorerecord fetch-odds --dry-run
 scorerecord fetch-odds --closing --closing-window-minutes 60 --dry-run
+scorerecord odds-snapshot-report
 scorerecord compute-edge --dry-run
 scorerecord recommend --max-edge 0.25 --max-odds-age-minutes 180 --min-books 2 --dry-run
 scorerecord compute-clv --dry-run

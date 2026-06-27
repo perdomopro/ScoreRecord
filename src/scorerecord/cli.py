@@ -33,7 +33,7 @@ from scorerecord.ingest.football_data import (
     ingest_football_data,
 )
 from scorerecord.ingest.history import ingest_history
-from scorerecord.ingest.odds import fetch_live_odds
+from scorerecord.ingest.odds import fetch_live_odds, odds_snapshot_coverage_report
 from scorerecord.ingest.worldcup import ingest_worldcup_2026
 from scorerecord.models.manifest import build_model_manifest
 from scorerecord.predict.fixtures import publish_fixture_predictions
@@ -131,6 +131,11 @@ def main(argv: list[str] | None = None) -> int:
         help="When --closing is set, only fetch fixtures starting within this many minutes.",
     )
     odds.add_argument("--dry-run", action="store_true")
+    snapshot_report = subparsers.add_parser(
+        "odds-snapshot-report",
+        help="Print live odds snapshot coverage by fixture.",
+    )
+    snapshot_report.add_argument("--limit", type=int, default=50)
     edge = subparsers.add_parser("compute-edge", help="De-vig odds and compute model edge.")
     edge.add_argument("--bookmaker")
     edge.add_argument("--min-odds", type=float, default=1.10)
@@ -460,6 +465,15 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=Path.cwd(),
             )
             print(summary.as_row())
+            return 0
+
+        if args.command == "odds-snapshot-report":
+            rows = odds_snapshot_coverage_report(conn, limit=args.limit)
+            if not rows:
+                print("No odds snapshots found.")
+                return 0
+            for row in rows:
+                print(row.as_row())
             return 0
 
         if args.command == "compute-edge":
