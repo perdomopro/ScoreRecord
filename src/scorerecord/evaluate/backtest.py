@@ -1,9 +1,11 @@
 """Historical walk-forward backtest and calibration CSV reports.
 
-The current project has no historical bookmaker odds. These reports therefore use a
-training-window marginal probability as a market proxy. That makes the reports useful
-for calibration, bucket diagnostics, and comparing recommendation_score vs raw EV,
-but not for claiming real betting ROI.
+Proxy mode uses a training-window marginal probability as a market proxy. That makes
+the reports useful for calibration, bucket diagnostics, and comparing
+recommendation_score vs raw EV, but not for claiming real betting ROI.
+
+Historical mode is deliberately separate: it uses real historical odds stored in
+`historical_odds`, currently for Football-Data 1X2 only.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
-from scorerecord.evaluate.edge import _high_edge_reason, _recommendation_score
+from scorerecord.evaluate.edge import _high_edge_reason, _recommendation_score, devig_1x2
 from scorerecord.evaluate.goal_markets import _walk_forward_predictions, build_goal_markets
 from scorerecord.evaluate.recommendations import (
     _has_disqualifying_recommendation_marker,
@@ -25,6 +27,7 @@ from scorerecord.evaluate.recommendations import (
     kelly_stake,
 )
 from scorerecord.features.build import OUTCOME_LABELS, MatchFeature, load_match_features
+from scorerecord.ingest.football_data import normalize_season, resolve_league_code
 from scorerecord.models.calibration import PlattCalibrator
 from scorerecord.models.dixon_coles import DixonColes
 from scorerecord.models.markets import btts_probability, one_x_two_probabilities, over_probability
@@ -81,6 +84,98 @@ class BacktestBet:
 
 
 @dataclass(frozen=True)
+class HistoricalOddsMatch:
+    source: str
+    source_event_id: str
+    league_code: str
+    season: str
+    match_date: str
+    home_team: str
+    away_team: str
+    home_goals: int
+    away_goals: int
+    result_1x2: str
+    home_id: int
+    away_id: int
+
+    @property
+    def year(self) -> int:
+        return int(self.match_date[:4])
+
+    def as_feature(self) -> MatchFeature:
+        return MatchFeature(
+            source_match_id=self.source_event_id,
+            match_date=self.match_date,
+            home_id=self.home_id,
+            away_id=self.away_id,
+            home_score=self.home_goals,
+            away_score=self.away_goals,
+            neutral=0,
+            tournament=f"football-data:{self.league_code}",
+            elo_home_pre=1500.0,
+            elo_away_pre=1500.0,
+        )
+
+
+@dataclass(frozen=True)
+class HistoricalOddsMarket:
+    source: str
+    source_event_id: str
+    bookmaker: str
+    entry_odds_type: str
+    closing_odds_type: str | None
+    entry_odds: dict[str, float]
+    closing_odds: dict[str, float | None]
+    market_probs: dict[str, float]
+    market_overround: float
+    is_real_historical_odds: bool
+    is_timestamp_exact: bool
+
+
+@dataclass(frozen=True)
+class RealOddsPrediction:
+    match: HistoricalOddsMatch
+    market: str
+    selection: str
+    bookmaker: str
+    entry_odds: float
+    entry_odds_type: str
+    closing_odds: float | None
+    closing_odds_type: str | None
+    model_prob: float
+    market_prob: float
+    market_overround: float
+    edge_ev: float
+    edge_prob: float
+    recommendation_score: float
+    high_edge_reason: str
+    odds_quality_flags: str
+    won: int
+    is_real_historical_odds: bool
+    is_timestamp_exact: bool
+
+    @property
+    def edge_bucket(self) -> str:
+        return edge_bucket(self.edge_ev)
+
+    @property
+    def odds_bucket(self) -> str:
+        return odds_bucket(self.entry_odds)
+
+    @property
+    def prob_bucket(self) -> str:
+        return prob_bucket(self.model_prob)
+
+
+@dataclass(frozen=True)
+class RealOddsBet:
+    prediction: RealOddsPrediction
+    ranking_strategy: str
+    model_stake_fraction: float
+    capped_stake_fraction: float
+
+
+@dataclass(frozen=True)
 class ReportSummary:
     run_id: int
     output_dir: Path
@@ -108,8 +203,38 @@ def run_historical_backtest(
     max_edge: float = 0.25,
     min_prob: float = 0.15,
     max_picks_per_fixture: int = 1,
+    odds_mode: str = "proxy",
+    historical_odds_source: str = "football-data",
+    entry_odds: str = "avg_open",
+    closing_odds: str = "avg_close",
+    market: str = "1X2",
+    league: str | None = None,
+    season: str | None = None,
     cwd: Path | None = None,
 ) -> ReportSummary:
+    if odds_mode == "historical":
+        return run_real_odds_backtest(
+            conn,
+            from_date=from_date,
+            to_date=to_date,
+            out_dir=out_dir,
+            start_year=start_year,
+            min_train=min_train,
+            min_edge=min_edge,
+            max_edge=max_edge,
+            min_prob=min_prob,
+            max_picks_per_fixture=max_picks_per_fixture,
+            historical_odds_source=historical_odds_source,
+            entry_odds=entry_odds,
+            closing_odds=closing_odds,
+            market=market,
+            league=league,
+            season=season,
+            cwd=cwd,
+        )
+    if odds_mode != "proxy":
+        raise ValueError("odds_mode must be either 'proxy' or 'historical'")
+
     matches = _filtered_matches(conn, from_date=from_date, to_date=to_date)
     all_matches = load_match_features(conn)
     team_names = _team_names(conn)
@@ -153,6 +278,10 @@ def run_historical_backtest(
             "min_prob": min_prob,
             "max_picks_per_fixture": max_picks_per_fixture,
             "odds_source": "training_marginal_proxy",
+            "odds_mode": "proxy",
+            "is_real_historical_odds": False,
+            "is_timestamp_exact": False,
+            "profitability_gate": "blocked_proxy_odds",
             "warning": "No historical bookmaker odds are available; ROI is proxy-only.",
             "matches_in_requested_window": len(matches),
             "prediction_rows": len(predictions),
@@ -161,6 +290,137 @@ def run_historical_backtest(
         metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
         _record_backtest_quality(conn, run_id, metadata, summary_rows, calibration_rows)
         conn.commit()
+    return ReportSummary(
+        run_id=run_id,
+        output_dir=out_dir,
+        rows_written=len(selected),
+        summary_rows=len(summary_rows),
+        calibration_rows=len(calibration_rows),
+    )
+
+
+def run_real_odds_backtest(
+    conn: sqlite3.Connection,
+    *,
+    from_date: date,
+    to_date: date,
+    out_dir: Path,
+    start_year: int = 2021,
+    min_train: int = 200,
+    min_edge: float = 0.05,
+    max_edge: float = 0.25,
+    min_prob: float = 0.15,
+    max_picks_per_fixture: int = 1,
+    historical_odds_source: str = "football-data",
+    entry_odds: str = "avg_open",
+    closing_odds: str = "avg_close",
+    market: str = "1X2",
+    league: str | None = None,
+    season: str | None = None,
+    cwd: Path | None = None,
+) -> ReportSummary:
+    if market != "1X2":
+        raise ValueError("Historical real-odds backtest currently supports only market=1X2")
+    if historical_odds_source != "football-data":
+        raise ValueError("Only historical_odds_source=football-data is supported")
+
+    league_code = resolve_league_code(league) if league else None
+    normalized_season = normalize_season(season) if season else None
+    generated_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    with ingest_run(conn, "backtest-real-odds", source=historical_odds_source, cwd=cwd) as run_id:
+        matches = _load_historical_odds_matches(
+            conn,
+            source=historical_odds_source,
+            league_code=league_code,
+            test_season=normalized_season,
+            to_date=to_date,
+        )
+        odds = _load_historical_odds_markets(
+            conn,
+            source=historical_odds_source,
+            entry_odds_type=entry_odds,
+            closing_odds_type=closing_odds,
+        )
+        predictions = _walk_forward_real_odds_predictions(
+            matches,
+            odds=odds,
+            from_date=from_date,
+            to_date=to_date,
+            start_year=start_year,
+            min_train=min_train,
+            test_season=normalized_season,
+        )
+        selected = _select_real_odds_bets(
+            predictions,
+            min_edge=min_edge,
+            max_edge=max_edge,
+            min_prob=min_prob,
+            max_picks_per_fixture=max_picks_per_fixture,
+        )
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        recommendations_path = out_dir / f"backtest_recommendations_real_odds_{run_id}.csv"
+        summary_path = out_dir / f"backtest_summary_real_odds_{run_id}.csv"
+        calibration_path = out_dir / f"calibration_by_bucket_real_odds_{run_id}.csv"
+        clv_path = out_dir / f"clv_summary_real_odds_{run_id}.csv"
+        metadata_path = out_dir / f"backtest_metadata_real_odds_{run_id}.json"
+
+        _write_real_odds_recommendations(recommendations_path, selected)
+        summary_rows = _real_summary_rows(selected)
+        _write_dict_rows(summary_path, summary_rows)
+        calibration_rows = _real_calibration_rows(predictions)
+        _write_dict_rows(calibration_path, calibration_rows)
+        clv_rows = _real_clv_rows(selected)
+        _write_dict_rows(clv_path, clv_rows)
+
+        metadata = {
+            "run_id": run_id,
+            "generated_utc": generated_utc,
+            "from_date": from_date.isoformat(),
+            "to_date": to_date.isoformat(),
+            "start_year": start_year,
+            "min_train": min_train,
+            "min_edge": min_edge,
+            "max_edge": max_edge,
+            "min_prob": min_prob,
+            "max_picks_per_fixture": max_picks_per_fixture,
+            "odds_mode": "historical",
+            "odds_source": historical_odds_source,
+            "entry_odds_type": entry_odds,
+            "closing_odds_type": closing_odds,
+            "market": market,
+            "league_code": league_code,
+            "test_season": normalized_season,
+            "model_universe": "football_data_club_results",
+            "decision_time_rule": "pre_match_open_proxy",
+            "is_real_historical_odds": True,
+            "is_timestamp_exact": False,
+            "profitability_gate": (
+                "ok_real_historical_odds"
+                if selected
+                else "blocked_insufficient_sample_or_no_edges"
+            ),
+            "historical_matches_loaded": len(matches),
+            "odds_markets_loaded": len(odds),
+            "prediction_rows": len(predictions),
+            "recommendation_rows": len(selected),
+            "warning": (
+                "Football-Data odds unlock real historical 1X2 ROI for covered club "
+                "leagues, not direct World Cup/team-selection profitability."
+            ),
+        }
+        metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+        _record_real_backtest_quality(
+            conn,
+            run_id,
+            metadata,
+            summary_rows,
+            calibration_rows,
+            clv_rows,
+        )
+        conn.commit()
+
     return ReportSummary(
         run_id=run_id,
         output_dir=out_dir,
@@ -231,6 +491,290 @@ def _filtered_matches(
         for match in load_match_features(conn)
         if from_date.isoformat() <= match.match_date <= to_date.isoformat()
     ]
+
+
+def _load_historical_odds_matches(
+    conn: sqlite3.Connection,
+    *,
+    source: str,
+    league_code: str | None,
+    test_season: str | None,
+    to_date: date,
+) -> list[HistoricalOddsMatch]:
+    params: list[object] = [source, to_date.isoformat()]
+    filters = [
+        "source = ?",
+        "match_date <= ?",
+        "home_goals IS NOT NULL",
+        "away_goals IS NOT NULL",
+        "result_1x2 IN ('home', 'draw', 'away')",
+    ]
+    if league_code is not None:
+        filters.append("league_code = ?")
+        params.append(league_code)
+    rows = conn.execute(
+        f"""
+        SELECT *
+        FROM historical_match
+        WHERE {" AND ".join(filters)}
+        ORDER BY match_date, source_event_id
+        """,
+        params,
+    ).fetchall()
+    if not rows:
+        raise ValueError("No completed historical matches available for real-odds backtest")
+
+    team_keys = sorted(
+        {
+            _historical_team_key(str(row["home_team"]))
+            for row in rows
+        }
+        | {
+            _historical_team_key(str(row["away_team"]))
+            for row in rows
+        }
+    )
+    team_ids = {key: index + 1 for index, key in enumerate(team_keys)}
+    output = [
+        HistoricalOddsMatch(
+            source=str(row["source"]),
+            source_event_id=str(row["source_event_id"]),
+            league_code=str(row["league_code"]),
+            season=str(row["season"]),
+            match_date=str(row["match_date"]),
+            home_team=str(row["home_team"]),
+            away_team=str(row["away_team"]),
+            home_goals=int(row["home_goals"]),
+            away_goals=int(row["away_goals"]),
+            result_1x2=str(row["result_1x2"]),
+            home_id=team_ids[_historical_team_key(str(row["home_team"]))],
+            away_id=team_ids[_historical_team_key(str(row["away_team"]))],
+        )
+        for row in rows
+    ]
+    if test_season is not None and not any(match.season == test_season for match in output):
+        raise ValueError(f"No completed historical matches found for test season {test_season}")
+    return output
+
+
+def _load_historical_odds_markets(
+    conn: sqlite3.Connection,
+    *,
+    source: str,
+    entry_odds_type: str,
+    closing_odds_type: str | None,
+) -> dict[str, HistoricalOddsMarket]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM historical_odds
+        WHERE source = ?
+          AND market = '1X2'
+          AND entry_odds_type = ?
+          AND entry_odds IS NOT NULL
+        ORDER BY source_event_id, bookmaker, selection
+        """,
+        (source, entry_odds_type),
+    ).fetchall()
+    grouped: dict[tuple[str, str], list[sqlite3.Row]] = {}
+    for row in rows:
+        key = (str(row["source_event_id"]), str(row["bookmaker"] or ""))
+        grouped.setdefault(key, []).append(row)
+
+    markets: dict[str, HistoricalOddsMarket] = {}
+    for (source_event_id, bookmaker), group in grouped.items():
+        by_selection = {str(row["selection"]): row for row in group}
+        if not {"home", "draw", "away"}.issubset(by_selection):
+            continue
+        entry = {
+            selection: float(by_selection[selection]["entry_odds"])
+            for selection in OUTCOME_LABELS
+        }
+        probs = dict(zip(OUTCOME_LABELS, devig_1x2(entry["home"], entry["draw"], entry["away"])))
+        close_type = None
+        closing: dict[str, float | None] = {}
+        if closing_odds_type:
+            closing_complete = all(
+                by_selection[selection]["closing_odds"] is not None
+                and str(by_selection[selection]["closing_odds_type"] or "") == closing_odds_type
+                for selection in OUTCOME_LABELS
+            )
+            if closing_complete:
+                close_type = closing_odds_type
+                closing = {
+                    selection: float(by_selection[selection]["closing_odds"])
+                    for selection in OUTCOME_LABELS
+                }
+            else:
+                closing = {selection: None for selection in OUTCOME_LABELS}
+        else:
+            closing = {selection: None for selection in OUTCOME_LABELS}
+        markets[source_event_id] = HistoricalOddsMarket(
+            source=source,
+            source_event_id=source_event_id,
+            bookmaker=bookmaker,
+            entry_odds_type=entry_odds_type,
+            closing_odds_type=close_type,
+            entry_odds=entry,
+            closing_odds=closing,
+            market_probs=probs,
+            market_overround=sum(1.0 / odd for odd in entry.values()),
+            is_real_historical_odds=True,
+            is_timestamp_exact=False,
+        )
+    if not markets:
+        raise ValueError(
+            f"No complete 1X2 historical odds found for entry_odds_type={entry_odds_type}"
+        )
+    return markets
+
+
+def _walk_forward_real_odds_predictions(
+    matches: list[HistoricalOddsMatch],
+    *,
+    odds: dict[str, HistoricalOddsMarket],
+    from_date: date,
+    to_date: date,
+    start_year: int,
+    min_train: int,
+    test_season: str | None,
+) -> list[RealOddsPrediction]:
+    from_iso = from_date.isoformat()
+    to_iso = to_date.isoformat()
+    test_matches = [
+        match
+        for match in matches
+        if from_iso <= match.match_date <= to_iso
+        and match.year >= start_year
+        and (test_season is None or match.season == test_season)
+        and match.source_event_id in odds
+    ]
+    if not test_matches:
+        raise ValueError("No historical matches with complete real odds in requested window")
+
+    features_by_id = {match.source_event_id: match.as_feature() for match in matches}
+    by_date: dict[str, list[HistoricalOddsMatch]] = {}
+    for match in test_matches:
+        by_date.setdefault(match.match_date, []).append(match)
+
+    output: list[RealOddsPrediction] = []
+    for match_date in sorted(by_date):
+        train = [
+            match.as_feature()
+            for match in matches
+            if match.match_date < match_date
+        ]
+        if len(train) < min_train:
+            continue
+        model = DixonColes().fit(train)
+        for match in by_date[match_date]:
+            feature = features_by_id[match.source_event_id]
+            probs = dict(zip(OUTCOME_LABELS, one_x_two_probabilities(model.score_matrix(feature))))
+            market = odds[match.source_event_id]
+            for selection in OUTCOME_LABELS:
+                model_prob = probs[selection]
+                market_prob = market.market_probs[selection]
+                entry_odd = market.entry_odds[selection]
+                edge_ev = model_prob * entry_odd - 1.0
+                edge_prob = model_prob - market_prob
+                high_edge_reason = _high_edge_reason(
+                    market="1X2",
+                    selection=selection,
+                    odds_decimal=entry_odd,
+                    prob_model=model_prob,
+                    edge_ev=edge_ev,
+                    edge_prob=edge_prob,
+                    odds_quality_flags="",
+                )
+                recommendation_score = _recommendation_score(
+                    edge_ev=edge_ev,
+                    odds_decimal=entry_odd,
+                    market="1X2",
+                    selection=selection,
+                    odds_quality_flags="",
+                    close_match=None,
+                )
+                output.append(
+                    RealOddsPrediction(
+                        match=match,
+                        market="1X2",
+                        selection=selection,
+                        bookmaker=market.bookmaker,
+                        entry_odds=entry_odd,
+                        entry_odds_type=market.entry_odds_type,
+                        closing_odds=market.closing_odds[selection],
+                        closing_odds_type=market.closing_odds_type,
+                        model_prob=model_prob,
+                        market_prob=market_prob,
+                        market_overround=market.market_overround,
+                        edge_ev=edge_ev,
+                        edge_prob=edge_prob,
+                        recommendation_score=recommendation_score,
+                        high_edge_reason=high_edge_reason,
+                        odds_quality_flags="",
+                        won=int(match.result_1x2 == selection),
+                        is_real_historical_odds=market.is_real_historical_odds,
+                        is_timestamp_exact=market.is_timestamp_exact,
+                    )
+                )
+    if not output:
+        raise ValueError("Real-odds backtest produced no predictions; check min_train/date range")
+    return output
+
+
+def _select_real_odds_bets(
+    predictions: list[RealOddsPrediction],
+    *,
+    min_edge: float,
+    max_edge: float,
+    min_prob: float,
+    max_picks_per_fixture: int,
+) -> list[RealOddsBet]:
+    eligible = [
+        row
+        for row in predictions
+        if row.edge_ev >= min_edge
+        and row.edge_ev <= max_edge
+        and row.model_prob >= min_prob
+        and row.is_real_historical_odds
+        and not _has_disqualifying_recommendation_marker(
+            row.odds_quality_flags,
+            row.high_edge_reason,
+        )
+    ]
+    selected: list[RealOddsBet] = []
+    for strategy, ranker in [
+        ("edge_ev", lambda row: (row.edge_ev, row.recommendation_score)),
+        ("recommendation_score", lambda row: (row.recommendation_score, row.edge_ev)),
+    ]:
+        by_fixture: dict[str, list[RealOddsPrediction]] = {}
+        for row in eligible:
+            by_fixture.setdefault(row.match.source_event_id, []).append(row)
+        for rows in by_fixture.values():
+            ordered = sorted(rows, key=ranker, reverse=True)
+            for row in ordered[:max_picks_per_fixture]:
+                model_stake = kelly_stake(row.model_prob, row.entry_odds)
+                selected.append(
+                    RealOddsBet(
+                        prediction=row,
+                        ranking_strategy=strategy,
+                        model_stake_fraction=model_stake,
+                        capped_stake_fraction=capped_real_stake(
+                            model_stake=model_stake,
+                            odds_decimal=row.entry_odds,
+                            market=row.market,
+                            selection=row.selection,
+                        ),
+                    )
+                )
+    return sorted(
+        selected,
+        key=lambda bet: (
+            bet.prediction.match.match_date,
+            bet.prediction.match.source_event_id,
+            bet.ranking_strategy,
+        ),
+    )
 
 
 def _walk_forward_market_predictions(
@@ -499,12 +1043,75 @@ def _write_backtest_recommendations(
                 "profit_flat": profit_flat,
                 "profit_staked": profit_model,
                 "profit_capped_staked": profit_capped,
+                "proxy_profit_flat": profit_flat,
+                "proxy_profit_staked": profit_model,
+                "proxy_profit_capped_staked": profit_capped,
+                "odds_source": "training_marginal_proxy",
+                "is_real_historical_odds": 0,
+                "is_timestamp_exact": 0,
+                "profitability_gate": "blocked_proxy_odds",
                 "closing_odds": "",
                 "edge_bucket": row.edge_bucket,
                 "odds_bucket": row.odds_bucket,
                 "prob_bucket": row.prob_bucket,
                 "market_type": row.market_type,
                 "competition_type": _competition_type(match),
+                "high_edge_reason": row.high_edge_reason,
+                "odds_quality_flags": row.odds_quality_flags,
+            }
+        )
+    _write_dict_rows(path, rows)
+
+
+def _write_real_odds_recommendations(path: Path, bets: list[RealOddsBet]) -> None:
+    rows = []
+    for bet in bets:
+        row = bet.prediction
+        match = row.match
+        profit_flat = _real_profit(row, stake=1.0)
+        profit_model = _real_profit(row, stake=bet.model_stake_fraction)
+        profit_capped = _real_profit(row, stake=bet.capped_stake_fraction)
+        clv = _real_clv(row)
+        rows.append(
+            {
+                "ranking_strategy": bet.ranking_strategy,
+                "event_id": match.source_event_id,
+                "source": match.source,
+                "league": match.league_code,
+                "season": match.season,
+                "match_date": match.match_date,
+                "home_team": match.home_team,
+                "away_team": match.away_team,
+                "market": row.market,
+                "selection": row.selection,
+                "decision_time_rule": "pre_match_open_proxy",
+                "bookmaker": row.bookmaker,
+                "entry_odds": row.entry_odds,
+                "entry_odds_type": row.entry_odds_type,
+                "closing_odds": row.closing_odds if row.closing_odds is not None else "",
+                "closing_odds_type": row.closing_odds_type or "",
+                "model_prob": row.model_prob,
+                "fair_market_prob": row.market_prob,
+                "market_overround": row.market_overround,
+                "edge_ev": row.edge_ev,
+                "edge_prob": row.edge_prob,
+                "recommendation_score": row.recommendation_score,
+                "model_stake_fraction": bet.model_stake_fraction,
+                "capped_stake_fraction": bet.capped_stake_fraction,
+                "result": row.selection if row.won else match.result_1x2,
+                "score": f"{match.home_goals}-{match.away_goals}",
+                "won": row.won,
+                "profit_flat_real": profit_flat,
+                "profit_model_real": profit_model,
+                "profit_capped_real": profit_capped,
+                "clv_real": clv if clv is not None else "",
+                "odds_source": row.match.source,
+                "is_real_historical_odds": int(row.is_real_historical_odds),
+                "is_timestamp_exact": int(row.is_timestamp_exact),
+                "profitability_gate": "ok_real_historical_odds",
+                "edge_bucket": row.edge_bucket,
+                "odds_bucket": row.odds_bucket,
+                "prob_bucket": row.prob_bucket,
                 "high_edge_reason": row.high_edge_reason,
                 "odds_quality_flags": row.odds_quality_flags,
             }
@@ -533,6 +1140,27 @@ def _summary_rows(bets: list[BacktestBet]) -> list[dict[str, object]]:
     return output
 
 
+def _real_summary_rows(bets: list[RealOddsBet]) -> list[dict[str, object]]:
+    groupers: list[tuple[str, Callable[[RealOddsBet], str]]] = [
+        ("overall", lambda bet: "all"),
+        ("ranking_strategy", lambda bet: bet.ranking_strategy),
+        ("league", lambda bet: bet.prediction.match.league_code),
+        ("season", lambda bet: bet.prediction.match.season),
+        ("selection", lambda bet: bet.prediction.selection),
+        ("edge_bucket", lambda bet: bet.prediction.edge_bucket),
+        ("odds_bucket", lambda bet: bet.prediction.odds_bucket),
+        ("prob_bucket", lambda bet: bet.prediction.prob_bucket),
+    ]
+    output: list[dict[str, object]] = []
+    for group_type, key_fn in groupers:
+        grouped: dict[str, list[RealOddsBet]] = {}
+        for bet in bets:
+            grouped.setdefault(key_fn(bet), []).append(bet)
+        for group, rows in sorted(grouped.items()):
+            output.append(_real_metric_row(group_type, group, rows))
+    return output
+
+
 def _metric_row(group_type: str, group: str, bets: list[BacktestBet]) -> dict[str, object]:
     flat_profits = [_profit_flat(bet.prediction) for bet in bets]
     model_profits = [bet.model_stake_fraction * profit for bet, profit in zip(bets, flat_profits)]
@@ -544,6 +1172,7 @@ def _metric_row(group_type: str, group: str, bets: list[BacktestBet]) -> dict[st
     return {
         "group_type": group_type,
         "group": group,
+        "profitability_gate": "blocked_proxy_odds",
         "num_bets": len(bets),
         "hit_rate": _mean([bet.prediction.won for bet in bets]),
         "avg_odds": _mean([bet.prediction.odds for bet in bets]),
@@ -557,7 +1186,67 @@ def _metric_row(group_type: str, group: str, bets: list[BacktestBet]) -> dict[st
         "roi_flat": sum(flat_profits) / len(flat_profits) if flat_profits else 0.0,
         "roi_staked": sum(model_profits) / model_staked if model_staked > 0 else 0.0,
         "roi_capped_staked": sum(capped_profits) / capped_staked if capped_staked > 0 else 0.0,
+        "proxy_profit_flat": sum(flat_profits),
+        "proxy_profit_staked": sum(model_profits),
+        "proxy_profit_capped_staked": sum(capped_profits),
+        "proxy_roi_flat": sum(flat_profits) / len(flat_profits) if flat_profits else 0.0,
+        "proxy_roi_staked": sum(model_profits) / model_staked if model_staked > 0 else 0.0,
+        "proxy_roi_capped_staked": (
+            sum(capped_profits) / capped_staked if capped_staked > 0 else 0.0
+        ),
         "max_drawdown": max_drawdown(flat_profits),
+        "brier_score": _mean(
+            [(bet.prediction.model_prob - bet.prediction.won) ** 2 for bet in bets]
+        ),
+        "log_loss": _mean(
+            [_binary_logloss(bet.prediction.model_prob, bet.prediction.won) for bet in bets]
+        ),
+    }
+
+
+def _real_metric_row(group_type: str, group: str, bets: list[RealOddsBet]) -> dict[str, object]:
+    flat_profits = [_real_profit(bet.prediction, stake=1.0) for bet in bets]
+    model_profits = [
+        _real_profit(bet.prediction, stake=bet.model_stake_fraction) for bet in bets
+    ]
+    capped_profits = [
+        _real_profit(bet.prediction, stake=bet.capped_stake_fraction) for bet in bets
+    ]
+    model_staked = sum(bet.model_stake_fraction for bet in bets)
+    capped_staked = sum(bet.capped_stake_fraction for bet in bets)
+    clv_values = [
+        clv
+        for bet in bets
+        for clv in [_real_clv(bet.prediction)]
+        if clv is not None
+    ]
+    return {
+        "group_type": group_type,
+        "group": group,
+        "profitability_gate": "ok_real_historical_odds" if bets else "blocked_insufficient_sample",
+        "num_bets": len(bets),
+        "hit_rate": _mean([bet.prediction.won for bet in bets]),
+        "avg_entry_odds": _mean([bet.prediction.entry_odds for bet in bets]),
+        "avg_closing_odds": _mean(
+            [
+                bet.prediction.closing_odds
+                for bet in bets
+                if bet.prediction.closing_odds is not None
+            ]
+        ),
+        "avg_edge_ev": _mean([bet.prediction.edge_ev for bet in bets]),
+        "avg_recommendation_score": _mean(
+            [bet.prediction.recommendation_score for bet in bets]
+        ),
+        "profit_flat_real": sum(flat_profits),
+        "profit_model_real": sum(model_profits),
+        "profit_capped_real": sum(capped_profits),
+        "roi_flat_real": sum(flat_profits) / len(flat_profits) if flat_profits else 0.0,
+        "roi_model_real": sum(model_profits) / model_staked if model_staked > 0 else 0.0,
+        "roi_capped_real": sum(capped_profits) / capped_staked if capped_staked > 0 else 0.0,
+        "max_drawdown_flat": max_drawdown(flat_profits),
+        "mean_clv_real": _mean(clv_values),
+        "clv_rows": len(clv_values),
         "brier_score": _mean(
             [(bet.prediction.model_prob - bet.prediction.won) ** 2 for bet in bets]
         ),
@@ -592,6 +1281,65 @@ def _calibration_rows(predictions: list[HistoricalPrediction]) -> list[dict[str,
                 "problem": int(len(rows) >= 50 and abs(error) > 0.08),
             }
         )
+    return output
+
+
+def _real_calibration_rows(predictions: list[RealOddsPrediction]) -> list[dict[str, object]]:
+    grouped: dict[tuple[str, str, str], list[RealOddsPrediction]] = {}
+    for row in predictions:
+        grouped.setdefault((row.market, row.selection, row.prob_bucket), []).append(row)
+    output = []
+    for (market, selection, bucket), rows in sorted(grouped.items()):
+        avg_prob = _mean([row.model_prob for row in rows])
+        hit_rate = _mean([row.won for row in rows])
+        error = hit_rate - avg_prob
+        output.append(
+            {
+                "market": market,
+                "selection": selection,
+                "prob_bucket": bucket,
+                "count": len(rows),
+                "avg_model_prob": avg_prob,
+                "actual_hit_rate": hit_rate,
+                "avg_market_prob": _mean([row.market_prob for row in rows]),
+                "brier_score": _mean([(row.model_prob - row.won) ** 2 for row in rows]),
+                "log_loss": _mean([_binary_logloss(row.model_prob, row.won) for row in rows]),
+                "calibration_error": error,
+                "abs_calibration_error": abs(error),
+                "problem": int(len(rows) >= 50 and abs(error) > 0.08),
+            }
+        )
+    return output
+
+
+def _real_clv_rows(bets: list[RealOddsBet]) -> list[dict[str, object]]:
+    groupers: list[tuple[str, Callable[[RealOddsBet], str]]] = [
+        ("overall", lambda bet: "all"),
+        ("ranking_strategy", lambda bet: bet.ranking_strategy),
+        ("selection", lambda bet: bet.prediction.selection),
+        ("edge_bucket", lambda bet: bet.prediction.edge_bucket),
+        ("odds_bucket", lambda bet: bet.prediction.odds_bucket),
+    ]
+    output: list[dict[str, object]] = []
+    for group_type, key_fn in groupers:
+        grouped: dict[str, list[float]] = {}
+        for bet in bets:
+            clv = _real_clv(bet.prediction)
+            if clv is None:
+                continue
+            grouped.setdefault(key_fn(bet), []).append(clv)
+        for group, values in sorted(grouped.items()):
+            output.append(
+                {
+                    "group_type": group_type,
+                    "group": group,
+                    "clv_rows": len(values),
+                    "mean_clv_real": _mean(values),
+                    "median_proxy": "",
+                    "clv_reference": "football_data_close",
+                    "is_timestamp_exact": 0,
+                }
+            )
     return output
 
 
@@ -708,6 +1456,22 @@ def _profit_flat(row: HistoricalPrediction) -> float:
     return row.odds - 1.0 if row.won else -1.0
 
 
+def _real_profit(row: RealOddsPrediction, *, stake: float) -> float:
+    if stake <= 0:
+        return 0.0
+    return stake * (row.entry_odds - 1.0) if row.won else -stake
+
+
+def _real_clv(row: RealOddsPrediction) -> float | None:
+    if row.closing_odds is None or row.closing_odds <= 1.0:
+        return None
+    return row.entry_odds / row.closing_odds - 1.0
+
+
+def _historical_team_key(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
 def _binary_logloss(prob: float, label: int) -> float:
     p = min(max(prob, _EPS), 1.0 - _EPS)
     return -(label * math.log(p) + (1 - label) * math.log(1.0 - p))
@@ -770,6 +1534,44 @@ def _record_backtest_quality(
             conn,
             run_id,
             "historical_backtest",
+            metric_name,
+            float(value),
+            json.dumps(details, sort_keys=True),
+        )
+
+
+def _record_real_backtest_quality(
+    conn: sqlite3.Connection,
+    run_id: int,
+    metadata: dict[str, object],
+    summary_rows: list[dict[str, object]],
+    calibration_rows: list[dict[str, object]],
+    clv_rows: list[dict[str, object]],
+) -> None:
+    overall = [
+        row
+        for row in summary_rows
+        if row["group_type"] == "ranking_strategy"
+    ]
+    details = {
+        **metadata,
+        "ranking_strategy_rows": overall,
+        "clv_summary_rows": clv_rows,
+    }
+    clv_count = sum(int(row["clv_rows"]) for row in clv_rows if row["group_type"] == "overall")
+    for metric_name, value in [
+        ("prediction_rows", metadata["prediction_rows"]),
+        ("recommendation_rows", metadata["recommendation_rows"]),
+        ("summary_rows", len(summary_rows)),
+        ("calibration_rows", len(calibration_rows)),
+        ("clv_rows", clv_count),
+        ("real_historical_odds", 1.0),
+        ("timestamp_exact", 0.0),
+    ]:
+        record_quality(
+            conn,
+            run_id,
+            "historical_real_odds_backtest",
             metric_name,
             float(value),
             json.dumps(details, sort_keys=True),

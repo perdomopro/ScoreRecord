@@ -227,6 +227,58 @@ CREATE TABLE IF NOT EXISTS recommendation_result (
 CREATE INDEX IF NOT EXISTS idx_recommendation_result_lookup
   ON recommendation_result(fixture_id, market, selection, bookmaker);
 
+CREATE TABLE IF NOT EXISTS historical_match (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,
+  source_event_id TEXT NOT NULL,
+  league_code TEXT NOT NULL,
+  season TEXT NOT NULL,
+  match_date TEXT NOT NULL,
+  home_team TEXT NOT NULL,
+  away_team TEXT NOT NULL,
+  home_goals INTEGER,
+  away_goals INTEGER,
+  result_1x2 TEXT,
+  raw_json TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(source, source_event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_historical_match_lookup
+  ON historical_match(source, league_code, season, match_date);
+
+CREATE TABLE IF NOT EXISTS historical_odds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,
+  source_event_id TEXT NOT NULL,
+  bookmaker TEXT,
+  market TEXT NOT NULL,
+  selection TEXT NOT NULL,
+  line REAL,
+  entry_odds REAL,
+  entry_odds_type TEXT,
+  closing_odds REAL,
+  closing_odds_type TEXT,
+  is_real_historical_odds INTEGER NOT NULL DEFAULT 1,
+  is_timestamp_exact INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_historical_odds_unique
+  ON historical_odds(
+    source,
+    source_event_id,
+    COALESCE(bookmaker, ''),
+    market,
+    selection,
+    COALESCE(line, -999999.0),
+    COALESCE(entry_odds_type, ''),
+    COALESCE(closing_odds_type, '')
+  );
+
+CREATE INDEX IF NOT EXISTS idx_historical_odds_lookup
+  ON historical_odds(source, source_event_id, market, entry_odds_type);
+
 CREATE TABLE IF NOT EXISTS eval_metric (
   run_id INTEGER REFERENCES ingest_run(run_id),
   as_of TEXT NOT NULL,

@@ -1,3 +1,8 @@
+import json
+import sqlite3
+from datetime import date
+
+from scorerecord.db import init_db
 from scorerecord.evaluate.backtest import (
     BacktestBet,
     HistoricalPrediction,
@@ -7,6 +12,7 @@ from scorerecord.evaluate.backtest import (
     max_drawdown,
     odds_bucket,
     prob_bucket,
+    run_historical_backtest,
 )
 from scorerecord.features.build import MatchFeature
 
@@ -104,3 +110,76 @@ def test_calibration_rows_flag_large_supported_errors() -> None:
 
     assert len(calibration) == 1
     assert calibration[0]["problem"] == 1
+
+
+def test_real_odds_backtest_writes_real_profit_and_clv_outputs(tmp_path) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_db(conn)
+    for event_id, match_date, home, away, hg, ag, result in [
+        ("football-data:E0:2023-2024:2024-01-01:a:b", "2024-01-01", "A", "B", 1, 0, "home"),
+        ("football-data:E0:2023-2024:2024-01-02:c:d", "2024-01-02", "C", "D", 0, 1, "away"),
+        ("football-data:E0:2023-2024:2024-01-03:a:c", "2024-01-03", "A", "C", 2, 0, "home"),
+    ]:
+        conn.execute(
+            """
+            INSERT INTO historical_match (
+              source, source_event_id, league_code, season, match_date,
+              home_team, away_team, home_goals, away_goals, result_1x2
+            )
+            VALUES ('football-data', ?, 'E0', '2023-2024', ?, ?, ?, ?, ?, ?)
+            """,
+            (event_id, match_date, home, away, hg, ag, result),
+        )
+    for selection, entry, closing in [
+        ("home", 2.10, 2.00),
+        ("draw", 3.40, 3.20),
+        ("away", 3.80, 4.00),
+    ]:
+        conn.execute(
+            """
+            INSERT INTO historical_odds (
+              source, source_event_id, bookmaker, market, selection,
+              entry_odds, entry_odds_type, closing_odds, closing_odds_type,
+              is_real_historical_odds, is_timestamp_exact
+            )
+            VALUES (
+              'football-data', 'football-data:E0:2023-2024:2024-01-03:a:c',
+              'Avg', '1X2', ?, ?, 'avg_open', ?, 'avg_close', 1, 0
+            )
+            """,
+            (selection, entry, closing),
+        )
+
+    summary = run_historical_backtest(
+        conn,
+        from_date=date(2024, 1, 3),
+        to_date=date(2024, 1, 3),
+        out_dir=tmp_path,
+        start_year=2024,
+        min_train=2,
+        min_edge=-10.0,
+        max_edge=0.25,
+        min_prob=0.0,
+        odds_mode="historical",
+        league="EPL",
+        season="2023-2024",
+    )
+
+    metadata = json.loads(
+        (tmp_path / f"backtest_metadata_real_odds_{summary.run_id}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    recommendations = (
+        tmp_path / f"backtest_recommendations_real_odds_{summary.run_id}.csv"
+    ).read_text(encoding="utf-8")
+    clv = (tmp_path / f"clv_summary_real_odds_{summary.run_id}.csv").read_text(
+        encoding="utf-8"
+    )
+
+    assert metadata["odds_mode"] == "historical"
+    assert metadata["is_real_historical_odds"] is True
+    assert "profit_flat_real" in recommendations
+    assert "clv_real" in recommendations
+    assert "mean_clv_real" in clv

@@ -50,6 +50,8 @@ def table_count(conn: sqlite3.Connection, table_name: str) -> int:
         "prediction_result",
         "recommendation",
         "recommendation_result",
+        "historical_match",
+        "historical_odds",
         "eval_metric",
         "team_rating",
         "team_rating_history",

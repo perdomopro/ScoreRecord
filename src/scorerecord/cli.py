@@ -18,6 +18,7 @@ from scorerecord.evaluate.tune_decay import run_decay_sweep
 from scorerecord.evaluate.walk_forward import run_walk_forward
 from scorerecord.features.elo import rebuild_elo
 from scorerecord.gui import serve_dashboard
+from scorerecord.ingest.football_data import ingest_football_data
 from scorerecord.ingest.history import ingest_history
 from scorerecord.ingest.odds import fetch_live_odds
 from scorerecord.ingest.worldcup import ingest_worldcup_2026
@@ -47,6 +48,14 @@ def main(argv: list[str] | None = None) -> int:
     history = subparsers.add_parser("ingest-history", help="Ingest international results.")
     history.add_argument("--refresh", action="store_true", help="Refresh network cache.")
     history.add_argument("--start-date", default="2018-01-01", help="YYYY-MM-DD lower bound.")
+    football_data = subparsers.add_parser(
+        "ingest-football-data",
+        help="Ingest Football-Data historical results and 1X2 odds.",
+    )
+    football_data.add_argument("--league", required=True, help="League alias/code, e.g. EPL or E0.")
+    football_data.add_argument("--season", required=True, help="Season, e.g. 2023-2024.")
+    football_data.add_argument("--refresh", action="store_true", help="Refresh network cache.")
+    football_data.add_argument("--dry-run", action="store_true")
 
     subparsers.add_parser("build-elo", help="Rebuild Elo ratings from match_history.")
     subparsers.add_parser("quality-report", help="Print data quality checks.")
@@ -140,6 +149,13 @@ def main(argv: list[str] | None = None) -> int:
     backtest.add_argument("--max-edge", type=float, default=0.25)
     backtest.add_argument("--min-prob", type=float, default=0.15)
     backtest.add_argument("--max-picks-per-fixture", type=int, default=1)
+    backtest.add_argument("--odds-mode", choices=("proxy", "historical"), default="proxy")
+    backtest.add_argument("--historical-odds-source", default="football-data")
+    backtest.add_argument("--entry-odds", default="avg_open")
+    backtest.add_argument("--closing-odds", default="avg_close")
+    backtest.add_argument("--market", default="1X2")
+    backtest.add_argument("--league", help="Historical odds league alias/code filter.")
+    backtest.add_argument("--season", help="Historical odds season filter, e.g. 2023-2024.")
     calibration = subparsers.add_parser(
         "calibration-report",
         help="Historical walk-forward calibration report by market and probability bucket.",
@@ -203,6 +219,19 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 record_historical_alias_quality(conn, run_id)
             print(f"Upserted {match_count} historical matches and {goal_count} goals")
+            return 0
+
+        if args.command == "ingest-football-data":
+            summary = ingest_football_data(
+                conn,
+                settings.raw_dir,
+                league=args.league,
+                season=args.season,
+                refresh=args.refresh,
+                dry_run=args.dry_run,
+                cwd=Path.cwd(),
+            )
+            print(summary.as_row())
             return 0
 
         if args.command == "build-elo":
@@ -381,6 +410,13 @@ def main(argv: list[str] | None = None) -> int:
                 max_edge=args.max_edge,
                 min_prob=args.min_prob,
                 max_picks_per_fixture=args.max_picks_per_fixture,
+                odds_mode=args.odds_mode,
+                historical_odds_source=args.historical_odds_source,
+                entry_odds=args.entry_odds,
+                closing_odds=args.closing_odds,
+                market=args.market,
+                league=args.league,
+                season=args.season,
                 cwd=Path.cwd(),
             )
             print(summary.as_row())
@@ -415,6 +451,8 @@ def main(argv: list[str] | None = None) -> int:
                 "team_rating_history",
                 "recommendation",
                 "recommendation_result",
+                "historical_match",
+                "historical_odds",
                 "eval_metric",
                 "ingest_run",
                 "data_quality",

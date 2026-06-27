@@ -39,6 +39,8 @@ scorerecord recommend --max-edge 0.25 --max-odds-age-minutes 180 --min-books 2 -
 scorerecord compute-clv --dry-run
 scorerecord calibrator-drift
 scorerecord backtest --from 2024-01-01 --to 2024-12-31
+scorerecord ingest-football-data --league EPL --season 2023-2024 --dry-run
+scorerecord backtest --from 2023-08-01 --to 2024-05-31 --odds-mode historical --league EPL --season 2023-2024 --market 1X2
 scorerecord calibration-report --from 2024-01-01 --to 2024-12-31
 scorerecord gui --host 127.0.0.1 --port 8765
 scorerecord db-summary
@@ -53,6 +55,11 @@ http://127.0.0.1:8765/?date=2026-06-27&market=1X2
 Backtest CSVs are written to `outputs/backtests/`. Until historical bookmaker odds are
 available, those reports use a training-window marginal probability as a market proxy, so
 they are for calibration and ranking diagnostics rather than real ROI claims.
+
+For covered club leagues, `ingest-football-data` can load Football-Data CSV results and
+1X2 odds into separate historical tables. Then `backtest --odds-mode historical` writes
+separate real-odds CSVs with `profit_*_real` and `clv_real`. This is a club-league
+historical ROI harness, not a direct World Cup profitability proof.
 
 If you do not install the package, the same commands work with:
 

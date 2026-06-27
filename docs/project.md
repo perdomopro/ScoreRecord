@@ -452,6 +452,21 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Because historical bookmaker odds are not available yet, the backtest uses a training-window marginal probability as a market proxy; ROI fields are diagnostic, not real betting ROI.
 - Added conservative `capped_stake_units` alongside paper/model `stake_units`, defaulting to a 1% per-pick cap with extra reductions for long odds and 1X2 draws.
 
+### 2026-06-27 - Historical odds backtest with Football-Data
+
+- Added separate historical tables `historical_match` and `historical_odds` so real historical odds do not mix with live odds snapshots.
+- Added `evaluate/historical_odds.py` dataclasses for provider-neutral historical events and quotes.
+- Added `ingest/football_data.py` for Football-Data CSV ingestion with stable `source_event_id`, season normalization, date parsing, 1X2 Avg/Bet365/Max open odds, optional close odds, and data-quality counts.
+- Added `ingest-football-data --league ... --season ...` CLI with `--refresh` and `--dry-run`.
+- Added `THESTATSAPI_KEY` as an environment placeholder only; the current implementation uses public Football-Data CSV URLs and does not commit or require the provided secret.
+- Extended `backtest` with `--odds-mode proxy|historical`, `--historical-odds-source`, `--entry-odds`, `--closing-odds`, `--market`, `--league`, and `--season`.
+- Added `backtest --odds-mode historical` for Football-Data 1X2 using an offline club-league universe: it trains Dixon-Coles only on matches before each tested match date, then joins real historical entry/closing odds.
+- Real-odds backtest writes separate CSVs: `backtest_recommendations_real_odds_*`, `backtest_summary_real_odds_*`, `calibration_by_bucket_real_odds_*`, and `clv_summary_real_odds_*`.
+- Real profitability columns are named `profit_flat_real`, `profit_model_real`, `profit_capped_real`, `roi_*_real`, and `clv_real`.
+- Proxy backtest outputs now carry `odds_source=training_marginal_proxy`, `is_real_historical_odds=0`, `is_timestamp_exact=0`, and `profitability_gate=blocked_proxy_odds` so they are not confused with real ROI.
+- Added tests/smoke coverage for Football-Data parsing, historical schema initialization, and real-odds backtest output metadata.
+- Scope note: Football-Data unlocks honest historical 1X2 ROI for covered club leagues; it does not directly validate World Cup 2026 profitability or intraday CLV timing.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.
