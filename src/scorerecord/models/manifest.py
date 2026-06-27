@@ -36,6 +36,7 @@ class ModelManifest:
             "xi": self.xi,
             "markets": list(self.markets),
             "calibration": self.calibration,
+            "run_id_scope": "sqlite_database_local",
             "validated_run_id": self.validated_run_id,
             "prediction_run_id": self.prediction_run_id,
         }

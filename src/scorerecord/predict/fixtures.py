@@ -94,7 +94,7 @@ def publish_fixture_predictions(
                 skipped_fixtures += 1
                 continue
             predicted_fixtures += 1
-            match = _fixture_as_match_feature(fixture)
+            match = _fixture_as_match_feature(conn, fixture)
             score_grid = model.score_matrix(match)
             rows = _prediction_rows(
                 fixture_id=fixture["fixture_id"],
@@ -144,24 +144,44 @@ def publish_fixture_predictions(
                 sort_keys=True,
             ),
         )
+        _record_fixture_elo_quality(conn, run_id, fixtures)
         conn.commit()
     return summary
 
 
-def _fixture_as_match_feature(fixture: sqlite3.Row) -> MatchFeature:
+def _fixture_as_match_feature(conn: sqlite3.Connection, fixture: sqlite3.Row) -> MatchFeature:
     kickoff = fixture["kickoff_local"] or "2026-01-01"
+    home_id = int(fixture["home_id"])
+    away_id = int(fixture["away_id"])
+    elo_home = _latest_elo(conn, home_id)
+    elo_away = _latest_elo(conn, away_id)
     return MatchFeature(
         source_match_id=fixture["fixture_id"],
         match_date=str(kickoff)[:10],
-        home_id=int(fixture["home_id"]),
-        away_id=int(fixture["away_id"]),
+        home_id=home_id,
+        away_id=away_id,
         home_score=0,
         away_score=0,
         neutral=1,
         tournament="FIFA World Cup",
-        elo_home_pre=0.0,
-        elo_away_pre=0.0,
+        elo_home_pre=elo_home if elo_home is not None else 1500.0,
+        elo_away_pre=elo_away if elo_away is not None else 1500.0,
     )
+
+
+def _latest_elo(conn: sqlite3.Connection, team_id: int) -> float | None:
+    row = conn.execute(
+        """
+        SELECT rating
+        FROM team_rating
+        WHERE team_id = ?
+          AND rating_system = 'elo'
+        ORDER BY as_of DESC
+        LIMIT 1
+        """,
+        (team_id,),
+    ).fetchone()
+    return float(row["rating"]) if row else None
 
 
 def _prediction_rows(
@@ -286,3 +306,50 @@ def _record_calibrator_artifact(
         1.0 if artifact.calibrated_error <= artifact.raw_error else 0.0,
         json.dumps(details, sort_keys=True),
     )
+
+
+def _record_fixture_elo_quality(
+    conn: sqlite3.Connection,
+    run_id: int,
+    fixtures: list[sqlite3.Row],
+) -> None:
+    resolved = [
+        fixture
+        for fixture in fixtures
+        if fixture["home_id"] is not None and fixture["away_id"] is not None
+    ]
+    missing = 0
+    elo_diffs: list[float] = []
+    for fixture in resolved:
+        home_elo = _latest_elo(conn, int(fixture["home_id"]))
+        away_elo = _latest_elo(conn, int(fixture["away_id"]))
+        if home_elo is None:
+            missing += 1
+            home_elo = 1500.0
+        if away_elo is None:
+            missing += 1
+            away_elo = 1500.0
+        elo_diffs.append(home_elo - away_elo)
+
+    details = {
+        "resolved_fixtures": len(resolved),
+        "team_slots": len(resolved) * 2,
+        "missing_team_rating_slots": missing,
+        "fallback_rating": 1500.0,
+        "neutral_assumption": "World Cup fixtures are treated as neutral-site matches",
+        "min_elo_diff": min(elo_diffs) if elo_diffs else None,
+        "max_elo_diff": max(elo_diffs) if elo_diffs else None,
+    }
+    for metric_name, value in [
+        ("resolved_fixtures", len(resolved)),
+        ("team_slots", len(resolved) * 2),
+        ("missing_team_rating_slots", missing),
+    ]:
+        record_quality(
+            conn,
+            run_id,
+            "fixture_elo",
+            metric_name,
+            float(value),
+            json.dumps(details, sort_keys=True),
+        )

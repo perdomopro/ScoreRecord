@@ -126,3 +126,13 @@ journalctl --user -u scorerecord-odds.service -n 100 --no-pager
 ## Important Operational Gate
 
 Do not use real staking until paper CLV is positive on a forward sample. Keep quarter Kelly and the 1-unit cap until there are at least 100 tracked paper picks with positive CLV.
+
+## Run ID Scope
+
+`ingest_run.run_id` values are local to each SQLite database. The homeserver manifest is authoritative for production even when its `validated_run_id` differs from the local development DB. Verify production gates with:
+
+```bash
+cd /home/adrian/scorerecord
+.venv/bin/scorerecord model-manifest
+sqlite3 data/scorerecord.db "SELECT run_id, metric_name, metric_value FROM data_quality WHERE check_name='goal_market_gate' ORDER BY run_id, metric_name;"
+```

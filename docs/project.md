@@ -176,6 +176,7 @@ Frozen production-candidate manifest:
 - Calibration mode: prequential/out-of-fold for validation; current fixture-publish calibrators are fit on historical out-of-fold predictions.
 - Latest validated goal-market run: `run_id=19`.
 - Latest prediction publish with manifest and calibrator artifacts: `run_id=21`.
+- Run IDs are local to each SQLite database. A local `run_id=19` and a homeserver `run_id=5` can both be the latest passing goal-market run in their own DBs.
 
 Latest local walk-forward result, `--start-year 2021`:
 
@@ -201,6 +202,8 @@ Latest local fixture prediction publish, `run_id=21`:
 - Inserted predictions: 1672 rows across 1X2, OU1.5, OU2.5, OU3.5, BTTS, double chance, and top exact scores.
 - Model version: `dixon_coles:hl3y:platt-goals-v1`.
 - `data_quality` records the model manifest plus Platt `a`, `b`, `n`, raw mean, calibrated mean, observed rate, and delta mean per calibrated market.
+- Fixture prediction features load the latest Elo from `team_rating`; missing ratings fall back to 1500 and are counted in `data_quality` under `fixture_elo`.
+- World Cup fixture prediction intentionally uses `neutral=1` because matches are neutral-site tournament games.
 
 Latest fixture-publish Platt artifacts, `run_id=21`:
 
@@ -376,6 +379,14 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Ran `compute-edge` on the remote odds sample: 10 analyzed rows, 2 edges above 5%, max EV edge 6.56%.
 - Generated the first paper recommendation: Croatia home 1X2 at Unibet, model probability 0.6020, odds 1.77, EV edge 6.56%, stake 0.0213 units, confidence medium.
 - Started user systemd timers for hourly odds, daily predictions/recommendations, nightly settlement/CLV, and weekly monitoring.
+
+### 2026-06-27 - Production-quality fixes from operational review
+
+- Fixed `predict-fixtures` so future fixture `MatchFeature` objects use latest Elo from `team_rating` instead of hardcoded `0.0`.
+- Added fixture Elo quality logging with resolved fixture count, team-rating fallback count, and min/max fixture Elo difference.
+- Updated the model manifest payload with `run_id_scope='sqlite_database_local'` to make local-vs-remote run IDs explicit.
+- Verified homeserver `validated_run_id=5` is honest: BTTS, OU1.5, OU2.5, OU3.5, and `all_markets_passed` are all `1.0`.
+- Documented that `neutral=1` is an intentional World Cup simplification, not a general soccer assumption.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
