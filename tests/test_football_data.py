@@ -4,6 +4,8 @@ from datetime import date
 from scorerecord.db import init_db
 from scorerecord.ingest.football_data import (
     build_source_event_id,
+    football_data_coverage_report,
+    football_data_season_range,
     normalize_identifier,
     normalize_season,
     parse_football_data_csv,
@@ -34,6 +36,11 @@ def test_football_data_schema_is_initialized() -> None:
 def test_football_data_season_and_event_id_are_stable() -> None:
     assert normalize_season("2023/24") == "2023-2024"
     assert normalize_season("2324") == "2023-2024"
+    assert football_data_season_range("2021-2022", "2023-2024") == [
+        "2021-2022",
+        "2022-2023",
+        "2023-2024",
+    ]
     assert season_to_football_data_code("2023-2024") == "2324"
     assert normalize_identifier("Man United") == "man-united"
 
@@ -69,3 +76,41 @@ def test_parse_football_data_csv_extracts_avg_open_and_close_1x2() -> None:
     assert keyed["away"].closing_odds == 1.33
     assert keyed["draw"].entry_odds_type == "avg_open"
     assert keyed["draw"].closing_odds_type == "avg_close"
+
+
+def test_football_data_coverage_report_counts_avg_open_and_close() -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        INSERT INTO historical_match (
+          source, source_event_id, league_code, season, match_date,
+          home_team, away_team, home_goals, away_goals, result_1x2
+        )
+        VALUES (
+          'football-data', 'football-data:E0:2023-2024:2024-01-01:a:b',
+          'E0', '2023-2024', '2024-01-01', 'A', 'B', 1, 0, 'home'
+        )
+        """
+    )
+    for selection in ("home", "draw", "away"):
+        conn.execute(
+            """
+            INSERT INTO historical_odds (
+              source, source_event_id, bookmaker, market, selection,
+              entry_odds, entry_odds_type, closing_odds, closing_odds_type
+            )
+            VALUES (
+              'football-data', 'football-data:E0:2023-2024:2024-01-01:a:b',
+              'Avg', '1X2', ?, 2.0, 'avg_open', 1.9, 'avg_close'
+            )
+            """,
+            (selection,),
+        )
+
+    rows = football_data_coverage_report(conn, league="EPL")
+
+    assert len(rows) == 1
+    assert rows[0].matches == 1
+    assert rows[0].avg_open_rows == 3
+    assert rows[0].avg_close_rows == 3
+    assert rows[0].avg_open_coverage == 1.0

@@ -95,6 +95,29 @@ class FootballDataIngestSummary:
         )
 
 
+@dataclass(frozen=True)
+class FootballDataCoverageRow:
+    source: str
+    league_code: str
+    season: str
+    matches: int
+    odds_rows: int
+    avg_open_rows: int
+    avg_close_rows: int
+    avg_open_coverage: float
+    avg_close_coverage: float
+
+    def as_row(self) -> str:
+        return (
+            f"{self.source} {self.league_code} {self.season} "
+            f"matches={self.matches} odds_rows={self.odds_rows} "
+            f"avg_open_rows={self.avg_open_rows} "
+            f"avg_open_coverage={self.avg_open_coverage:.1%} "
+            f"avg_close_rows={self.avg_close_rows} "
+            f"avg_close_coverage={self.avg_close_coverage:.1%}"
+        )
+
+
 def ingest_football_data(
     conn: sqlite3.Connection,
     raw_dir: Path,
@@ -142,6 +165,76 @@ def ingest_football_data(
         duplicate_events=parsed.duplicate_events,
         dry_run=False,
     )
+
+
+def football_data_season_range(from_season: str, to_season: str) -> list[str]:
+    start = normalize_season(from_season)
+    end = normalize_season(to_season)
+    start_year = int(start[:4])
+    end_year = int(end[:4])
+    if end_year < start_year:
+        raise ValueError("--to-season must be greater than or equal to --from-season")
+    return [f"{year:04d}-{year + 1:04d}" for year in range(start_year, end_year + 1)]
+
+
+def football_data_coverage_report(
+    conn: sqlite3.Connection,
+    *,
+    source: str = FOOTBALL_DATA_SOURCE,
+    league: str | None = None,
+) -> list[FootballDataCoverageRow]:
+    league_code = resolve_league_code(league) if league else None
+    params: list[object] = [source]
+    league_filter = ""
+    if league_code is not None:
+        league_filter = "AND hm.league_code = ?"
+        params.append(league_code)
+    rows = conn.execute(
+        f"""
+        SELECT
+          hm.source,
+          hm.league_code,
+          hm.season,
+          COUNT(DISTINCT hm.source_event_id) AS matches,
+          COUNT(ho.id) AS odds_rows,
+          SUM(CASE WHEN ho.entry_odds_type = 'avg_open' THEN 1 ELSE 0 END) AS avg_open_rows,
+          SUM(CASE WHEN ho.closing_odds_type = 'avg_close' THEN 1 ELSE 0 END) AS avg_close_rows
+        FROM historical_match hm
+        LEFT JOIN historical_odds ho
+          ON ho.source = hm.source
+         AND ho.source_event_id = hm.source_event_id
+         AND ho.market = '1X2'
+        WHERE hm.source = ?
+          {league_filter}
+        GROUP BY hm.source, hm.league_code, hm.season
+        ORDER BY hm.league_code, hm.season
+        """,
+        params,
+    ).fetchall()
+    output: list[FootballDataCoverageRow] = []
+    for row in rows:
+        matches = int(row["matches"])
+        expected_selection_rows = matches * 3
+        avg_open_rows = int(row["avg_open_rows"] or 0)
+        avg_close_rows = int(row["avg_close_rows"] or 0)
+        output.append(
+            FootballDataCoverageRow(
+                source=str(row["source"]),
+                league_code=str(row["league_code"]),
+                season=str(row["season"]),
+                matches=matches,
+                odds_rows=int(row["odds_rows"] or 0),
+                avg_open_rows=avg_open_rows,
+                avg_close_rows=avg_close_rows,
+                avg_open_coverage=(
+                    avg_open_rows / expected_selection_rows if expected_selection_rows else 0.0
+                ),
+                avg_close_coverage=(
+                    avg_close_rows / expected_selection_rows if expected_selection_rows else 0.0
+                ),
+            )
+        )
+    return output
 
 
 def load_football_data(

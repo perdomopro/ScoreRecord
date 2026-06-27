@@ -18,7 +18,11 @@ from scorerecord.evaluate.tune_decay import run_decay_sweep
 from scorerecord.evaluate.walk_forward import run_walk_forward
 from scorerecord.features.elo import rebuild_elo
 from scorerecord.gui import serve_dashboard
-from scorerecord.ingest.football_data import ingest_football_data
+from scorerecord.ingest.football_data import (
+    football_data_coverage_report,
+    football_data_season_range,
+    ingest_football_data,
+)
 from scorerecord.ingest.history import ingest_history
 from scorerecord.ingest.odds import fetch_live_odds
 from scorerecord.ingest.worldcup import ingest_worldcup_2026
@@ -53,9 +57,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Ingest Football-Data historical results and 1X2 odds.",
     )
     football_data.add_argument("--league", required=True, help="League alias/code, e.g. EPL or E0.")
-    football_data.add_argument("--season", required=True, help="Season, e.g. 2023-2024.")
+    football_data.add_argument("--season", help="Single season, e.g. 2023-2024.")
+    football_data.add_argument("--from-season", help="Inclusive season range start.")
+    football_data.add_argument("--to-season", help="Inclusive season range end.")
     football_data.add_argument("--refresh", action="store_true", help="Refresh network cache.")
     football_data.add_argument("--dry-run", action="store_true")
+    historical_odds_report = subparsers.add_parser(
+        "historical-odds-report",
+        help="Print historical Football-Data match/odds coverage by season.",
+    )
+    historical_odds_report.add_argument("--league", help="League alias/code filter.")
 
     subparsers.add_parser("build-elo", help="Rebuild Elo ratings from match_history.")
     subparsers.add_parser("quality-report", help="Print data quality checks.")
@@ -222,16 +233,59 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "ingest-football-data":
-            summary = ingest_football_data(
-                conn,
-                settings.raw_dir,
-                league=args.league,
-                season=args.season,
-                refresh=args.refresh,
-                dry_run=args.dry_run,
-                cwd=Path.cwd(),
-            )
-            print(summary.as_row())
+            if args.season and (args.from_season or args.to_season):
+                raise ValueError("Use either --season or --from-season/--to-season, not both")
+            if args.season:
+                seasons = [args.season]
+            elif args.from_season and args.to_season:
+                seasons = football_data_season_range(args.from_season, args.to_season)
+            else:
+                raise ValueError("Provide --season or both --from-season and --to-season")
+            totals = {
+                "rows_seen": 0,
+                "events_upserted": 0,
+                "odds_upserted": 0,
+                "missing_results": 0,
+                "missing_open_odds": 0,
+                "missing_closing_odds": 0,
+                "invalid_odds": 0,
+                "duplicate_events": 0,
+            }
+            for season in seasons:
+                summary = ingest_football_data(
+                    conn,
+                    settings.raw_dir,
+                    league=args.league,
+                    season=season,
+                    refresh=args.refresh,
+                    dry_run=args.dry_run,
+                    cwd=Path.cwd(),
+                )
+                print(f"{season}: {summary.as_row()}")
+                for key in totals:
+                    totals[key] += int(getattr(summary, key))
+            if len(seasons) > 1:
+                print(
+                    "total: "
+                    f"seasons={len(seasons)} rows_seen={totals['rows_seen']} "
+                    f"events_upserted={totals['events_upserted']} "
+                    f"odds_upserted={totals['odds_upserted']} "
+                    f"missing_results={totals['missing_results']} "
+                    f"missing_open_odds={totals['missing_open_odds']} "
+                    f"missing_closing_odds={totals['missing_closing_odds']} "
+                    f"invalid_odds={totals['invalid_odds']} "
+                    f"duplicate_events={totals['duplicate_events']} "
+                    f"dry_run={args.dry_run}"
+                )
+            return 0
+
+        if args.command == "historical-odds-report":
+            rows = football_data_coverage_report(conn, league=args.league)
+            if not rows:
+                print("No historical odds rows found.")
+                return 0
+            for row in rows:
+                print(row.as_row())
             return 0
 
         if args.command == "build-elo":

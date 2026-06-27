@@ -40,7 +40,10 @@ scorerecord compute-clv --dry-run
 scorerecord calibrator-drift
 scorerecord backtest --from 2024-01-01 --to 2024-12-31
 scorerecord ingest-football-data --league EPL --season 2023-2024 --dry-run
+scorerecord ingest-football-data --league EPL --from-season 2019-2020 --to-season 2024-2025
+scorerecord historical-odds-report --league EPL
 scorerecord backtest --from 2023-08-01 --to 2024-05-31 --odds-mode historical --league EPL --season 2023-2024 --market 1X2
+scorerecord backtest --from 2021-08-01 --to 2025-05-31 --odds-mode historical --league EPL --market 1X2 --min-train 500
 scorerecord calibration-report --from 2024-01-01 --to 2024-12-31
 scorerecord gui --host 127.0.0.1 --port 8765
 scorerecord db-summary
@@ -60,6 +63,8 @@ For covered club leagues, `ingest-football-data` can load Football-Data CSV resu
 1X2 odds into separate historical tables. Then `backtest --odds-mode historical` writes
 separate real-odds CSVs with `profit_*_real` and `clv_real`. This is a club-league
 historical ROI harness, not a direct World Cup profitability proof.
+Use `--season` on historical backtests only when you intentionally want to evaluate one
+season; omit it to evaluate all loaded seasons inside `--from/--to`.
 
 If you do not install the package, the same commands work with:
 

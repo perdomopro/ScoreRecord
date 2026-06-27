@@ -69,6 +69,10 @@ class HistoricalPrediction:
         return prob_bucket(self.model_prob)
 
     @property
+    def score_bucket(self) -> str:
+        return score_bucket(self.recommendation_score)
+
+    @property
     def market_type(self) -> str:
         if self.market.startswith("OU"):
             return "OU"
@@ -165,6 +169,10 @@ class RealOddsPrediction:
     @property
     def prob_bucket(self) -> str:
         return prob_bucket(self.model_prob)
+
+    @property
+    def score_bucket(self) -> str:
+        return score_bucket(self.recommendation_score)
 
 
 @dataclass(frozen=True)
@@ -405,6 +413,14 @@ def run_real_odds_backtest(
             "odds_markets_loaded": len(odds),
             "prediction_rows": len(predictions),
             "recommendation_rows": len(selected),
+            "sample_size_policy": {
+                "lt_100": "smoke_or_exploratory_no_threshold_changes",
+                "100_299": "initial_signal_review_only",
+                "300_999": "useful_signal_cautious_adjustments_allowed",
+                "gte_1000": "more_stable_signal_with_bucket_checks",
+                "bucket_minimum_for_review": 50,
+                "bucket_minimum_for_adjustment": 100,
+            },
             "warning": (
                 "Football-Data odds unlock real historical 1X2 ROI for covered club "
                 "leagues, not direct World Cup/team-selection profitability."
@@ -1054,6 +1070,7 @@ def _write_backtest_recommendations(
                 "edge_bucket": row.edge_bucket,
                 "odds_bucket": row.odds_bucket,
                 "prob_bucket": row.prob_bucket,
+                "score_bucket": row.score_bucket,
                 "market_type": row.market_type,
                 "competition_type": _competition_type(match),
                 "high_edge_reason": row.high_edge_reason,
@@ -1112,6 +1129,7 @@ def _write_real_odds_recommendations(path: Path, bets: list[RealOddsBet]) -> Non
                 "edge_bucket": row.edge_bucket,
                 "odds_bucket": row.odds_bucket,
                 "prob_bucket": row.prob_bucket,
+                "score_bucket": row.score_bucket,
                 "high_edge_reason": row.high_edge_reason,
                 "odds_quality_flags": row.odds_quality_flags,
             }
@@ -1128,6 +1146,7 @@ def _summary_rows(bets: list[BacktestBet]) -> list[dict[str, object]]:
         ("edge_bucket", lambda bet: bet.prediction.edge_bucket),
         ("odds_bucket", lambda bet: bet.prediction.odds_bucket),
         ("prob_bucket", lambda bet: bet.prediction.prob_bucket),
+        ("score_bucket", lambda bet: bet.prediction.score_bucket),
         ("competition_type", lambda bet: _competition_type(bet.prediction.match)),
     ]
     output: list[dict[str, object]] = []
@@ -1150,6 +1169,7 @@ def _real_summary_rows(bets: list[RealOddsBet]) -> list[dict[str, object]]:
         ("edge_bucket", lambda bet: bet.prediction.edge_bucket),
         ("odds_bucket", lambda bet: bet.prediction.odds_bucket),
         ("prob_bucket", lambda bet: bet.prediction.prob_bucket),
+        ("score_bucket", lambda bet: bet.prediction.score_bucket),
     ]
     output: list[dict[str, object]] = []
     for group_type, key_fn in groupers:
@@ -1174,6 +1194,8 @@ def _metric_row(group_type: str, group: str, bets: list[BacktestBet]) -> dict[st
         "group": group,
         "profitability_gate": "blocked_proxy_odds",
         "num_bets": len(bets),
+        "sample_size_tier": sample_size_tier(len(bets)),
+        "decision_gate": decision_gate(len(bets)),
         "hit_rate": _mean([bet.prediction.won for bet in bets]),
         "avg_odds": _mean([bet.prediction.odds for bet in bets]),
         "avg_edge_ev": _mean([bet.prediction.edge_ev for bet in bets]),
@@ -1220,11 +1242,18 @@ def _real_metric_row(group_type: str, group: str, bets: list[RealOddsBet]) -> di
         for clv in [_real_clv(bet.prediction)]
         if clv is not None
     ]
+    positive_clv_rate = (
+        sum(1 for value in clv_values if value > 0) / len(clv_values)
+        if clv_values
+        else 0.0
+    )
     return {
         "group_type": group_type,
         "group": group,
         "profitability_gate": "ok_real_historical_odds" if bets else "blocked_insufficient_sample",
         "num_bets": len(bets),
+        "sample_size_tier": sample_size_tier(len(bets)),
+        "decision_gate": decision_gate(len(bets)),
         "hit_rate": _mean([bet.prediction.won for bet in bets]),
         "avg_entry_odds": _mean([bet.prediction.entry_odds for bet in bets]),
         "avg_closing_odds": _mean(
@@ -1246,6 +1275,7 @@ def _real_metric_row(group_type: str, group: str, bets: list[RealOddsBet]) -> di
         "roi_capped_real": sum(capped_profits) / capped_staked if capped_staked > 0 else 0.0,
         "max_drawdown_flat": max_drawdown(flat_profits),
         "mean_clv_real": _mean(clv_values),
+        "positive_clv_rate": positive_clv_rate,
         "clv_rows": len(clv_values),
         "brier_score": _mean(
             [(bet.prediction.model_prob - bet.prediction.won) ** 2 for bet in bets]
@@ -1319,6 +1349,7 @@ def _real_clv_rows(bets: list[RealOddsBet]) -> list[dict[str, object]]:
         ("selection", lambda bet: bet.prediction.selection),
         ("edge_bucket", lambda bet: bet.prediction.edge_bucket),
         ("odds_bucket", lambda bet: bet.prediction.odds_bucket),
+        ("score_bucket", lambda bet: bet.prediction.score_bucket),
     ]
     output: list[dict[str, object]] = []
     for group_type, key_fn in groupers:
@@ -1329,12 +1360,20 @@ def _real_clv_rows(bets: list[RealOddsBet]) -> list[dict[str, object]]:
                 continue
             grouped.setdefault(key_fn(bet), []).append(clv)
         for group, values in sorted(grouped.items()):
+            positive_clv_rate = (
+                sum(1 for value in values if value > 0) / len(values)
+                if values
+                else 0.0
+            )
             output.append(
                 {
                     "group_type": group_type,
                     "group": group,
                     "clv_rows": len(values),
+                    "sample_size_tier": sample_size_tier(len(values)),
+                    "decision_gate": decision_gate(len(values)),
                     "mean_clv_real": _mean(values),
+                    "positive_clv_rate": positive_clv_rate,
                     "median_proxy": "",
                     "clv_reference": "football_data_close",
                     "is_timestamp_exact": 0,
@@ -1435,6 +1474,42 @@ def prob_bucket(value: float) -> str:
         high="75%+",
         low="<0%",
     )
+
+
+def score_bucket(value: float) -> str:
+    return _bucket(
+        value,
+        [
+            (0.025, "0.0-2.5%"),
+            (0.05, "2.5-5.0%"),
+            (0.075, "5.0-7.5%"),
+            (0.10, "7.5-10.0%"),
+            (0.15, "10.0-15.0%"),
+            (0.20, "15.0-20.0%"),
+        ],
+        high="20.0%+",
+        low="<0.0%",
+    )
+
+
+def sample_size_tier(count: int) -> str:
+    if count < 100:
+        return "smoke_or_exploratory"
+    if count < 300:
+        return "initial_signal"
+    if count < 1000:
+        return "useful_signal"
+    return "more_stable_signal"
+
+
+def decision_gate(count: int) -> str:
+    if count < 100:
+        return "no_threshold_changes"
+    if count < 300:
+        return "review_only"
+    if count < 1000:
+        return "cautious_adjustments_allowed"
+    return "adjustments_supported_with_bucket_checks"
 
 
 def _bucket(

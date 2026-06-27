@@ -467,6 +467,17 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added tests/smoke coverage for Football-Data parsing, historical schema initialization, and real-odds backtest output metadata.
 - Scope note: Football-Data unlocks honest historical 1X2 ROI for covered club leagues; it does not directly validate World Cup 2026 profitability or intraday CLV timing.
 
+### 2026-06-27 - Historical backtest reading discipline
+
+- Kept `backtest --odds-mode historical --season` optional; omitting it evaluates every loaded season inside `--from/--to`, which is the preferred mode for multi-season walk-forward analysis.
+- Added `ingest-football-data --from-season ... --to-season ...` for controlled multi-season Football-Data loads without hand-running six commands.
+- Added `historical-odds-report --league ...` to report match counts, total odds rows, Avg open coverage, and Avg close coverage by season.
+- Added `score_bucket` to proxy and real backtest recommendation CSVs and summaries so `recommendation_score` can be evaluated separately from raw EV.
+- Added `positive_clv_rate`, `sample_size_tier`, and `decision_gate` to real-odds summaries and CLV summaries.
+- Added a `sample_size_policy` block to real-odds backtest metadata: fewer than 100 picks is smoke/exploratory only; 100-299 is initial signal; 300-999 supports cautious adjustments; 1000+ is more stable, still with bucket checks.
+- Added tests/smokes for season ranges, historical odds coverage reports, optional-season historical backtests, and the new score/CLV/sample fields.
+- Critical interpretation: a small smoke run validates plumbing only. Threshold/score changes should wait for sufficient overall sample and per-bucket counts.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.

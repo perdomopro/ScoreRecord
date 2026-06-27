@@ -13,6 +13,8 @@ from scorerecord.evaluate.backtest import (
     odds_bucket,
     prob_bucket,
     run_historical_backtest,
+    sample_size_tier,
+    score_bucket,
 )
 from scorerecord.features.build import MatchFeature
 
@@ -62,6 +64,8 @@ def test_backtest_buckets_and_drawdown() -> None:
     assert edge_bucket(0.03) == "2.5-5.0%"
     assert odds_bucket(3.4) == "3.00-5.00"
     assert prob_bucket(0.62) == "60-75%"
+    assert score_bucket(0.08) == "7.5-10.0%"
+    assert sample_size_tier(8) == "smoke_or_exploratory"
     assert max_drawdown([1.0, -0.5, -1.0, 0.25]) == -1.5
 
 
@@ -180,6 +184,10 @@ def test_real_odds_backtest_writes_real_profit_and_clv_outputs(tmp_path) -> None
 
     assert metadata["odds_mode"] == "historical"
     assert metadata["is_real_historical_odds"] is True
+    assert metadata["sample_size_policy"]["lt_100"] == "smoke_or_exploratory_no_threshold_changes"
     assert "profit_flat_real" in recommendations
     assert "clv_real" in recommendations
+    assert "score_bucket" in recommendations
+    assert "sample_size_tier" in clv
+    assert "positive_clv_rate" in clv
     assert "mean_clv_real" in clv
