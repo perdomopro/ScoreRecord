@@ -49,6 +49,7 @@ scorerecord backtest-policy-grid --from 2021-08-01 --to 2025-05-31 --league EPL 
 scorerecord backtest-policy-grid --from 2021-08-01 --to 2025-05-31 --league EPL --min-train 500 --market-shrink-alphas 1.0,0.75,0.5,0.25
 scorerecord market-benchmark-report --from 2021-08-01 --to 2025-05-31 --league EPL --min-train 500
 scorerecord analyze-policy-grids "outputs/backtests/policy_grid_real_odds_*.csv"
+scripts/run_multileague_validation.sh
 scorerecord calibration-report --from 2024-01-01 --to 2024-12-31
 scorerecord gui --host 127.0.0.1 --port 8765
 scorerecord db-summary

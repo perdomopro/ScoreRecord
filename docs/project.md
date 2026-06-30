@@ -509,6 +509,14 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Updated README command examples with the benchmark, shrink grid, and grid aggregation workflow.
 - Critical interpretation: these tools decide whether the model needs market shrink or policy rejection; they do not prove future World Cup profitability and should not loosen paper-only staking gates without multi-league and live CLV evidence.
 
+### 2026-06-30 - Reproducible multi-league validation runner
+
+- Added `scripts/run_multileague_validation.sh` to run the current evidence block across `EPL`, `LA_LIGA`, `SERIE_A`, `BUNDESLIGA`, `LIGUE_1`, and `CHAMPIONSHIP`.
+- The script ingests Football-Data seasons 2019-2020 through 2024-2025, writes coverage reports, runs `market-benchmark-report`, runs `backtest-policy-grid` with market-shrink alphas `1.0,0.75,0.5,0.25`, and aggregates policy-grid CSVs into `outputs/backtests/policy_grid_summary_multileague.csv`.
+- The runner writes per-league outputs under `outputs/backtests/<league>/benchmark` and `outputs/backtests/<league>/policy-grid`, making it possible to compare benchmark and policy evidence without mixing all CSVs in one flat directory.
+- Added a simple lock directory so accidental double launches fail fast instead of running two expensive validation jobs over the same database.
+- This is an execution aid, not a model change: recommendation score and production paper policy remain unchanged until multi-league results are read.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.
