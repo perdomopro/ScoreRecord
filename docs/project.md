@@ -534,6 +534,17 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added `calibration_diagnostics` data-quality metrics so the diagnostic run is traceable through `ingest_run` and `data_quality`.
 - Critical interpretation: this still does not create edge. It identifies the segments where the model is overconfident, underconfident, or losing most clearly against the market so future calibration can be evidence-based and out-of-sample validated.
 
+### 2026-06-30 - Calibration diagnostics readout
+
+- Ran homeserver `calibration-diagnostics` for `EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,CHAMPIONSHIP` over 2021-08-01 through 2025-05-31. Run `139` wrote 28,089 prediction rows, 341 segment rows, and 239 supported over/under-confidence rows.
+- Overall model-minus-market log-loss was `+0.011107`, confirming the fair market beats the model across the combined club-league sample. Overall ECE was not the core failure (`model_ece=0.0069`, `market_ece=0.0080`); the issue is weaker discrimination/likelihood versus market, not a simple global calibration offset.
+- By selection, the model lost to market on all three outcomes: home `+0.0157`, away `+0.0153`, draw `+0.0023`. Draw is the least bad but still not a positive edge segment.
+- By model-probability bucket, the model beat market only in low-probability tails `0-5%` and `5-10%`; supported mainstream buckets from `10-15%` through `75%+` all lost to market.
+- By odds bucket, every bucket lost to market. The worst broad bucket was short prices `1.01-1.50` with model-minus-market log-loss `+0.0230`, driven by underconfidence on strong favorites: hit rate `75.3%`, model `68.6%`, market `72.2%`.
+- Worst supported model-vs-market segments included EPL away `2.00-3.00`, EPL away `30-40%` model bucket, away `60-75%` model bucket, and EPL home/away mid-odds segments. These are not candidates for promotion; they are model-repair targets.
+- Supported model-better rows exist only in narrow/low-probability slices, such as model `0-5%`, model `5-10%`, and EPL draw `3.00-5.00`, but the gains are small and not enough to justify a betting policy.
+- Conclusion: ScoreRecord is now a reliable statistical audit tool for this question: it can say where the current model loses. The next improvement should be model/calibration research validated out of sample, not score tweaks, front-end work, or real staking.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.
