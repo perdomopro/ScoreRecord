@@ -49,6 +49,7 @@ scorerecord backtest-policy-grid --from 2021-08-01 --to 2025-05-31 --league EPL 
 scorerecord backtest-policy-grid --from 2021-08-01 --to 2025-05-31 --league EPL --min-train 500 --market-shrink-alphas 1.0,0.75,0.5,0.25
 scorerecord market-benchmark-report --from 2021-08-01 --to 2025-05-31 --league EPL --min-train 500
 scorerecord analyze-policy-grids "outputs/backtests/policy_grid_real_odds_*.csv"
+scorerecord calibration-diagnostics --from 2021-08-01 --to 2025-05-31 --leagues EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,CHAMPIONSHIP --min-train 500
 scripts/run_multileague_validation.sh
 scorerecord calibration-report --from 2024-01-01 --to 2024-12-31
 scorerecord gui --host 127.0.0.1 --port 8765
@@ -77,7 +78,8 @@ production defaults. Use `--market-shrink-alphas` to test whether blending model
 probabilities toward fair market probabilities improves historical robustness.
 `market-benchmark-report` compares the model directly against fair market probabilities
 by selection and probability buckets, while `analyze-policy-grids` consolidates policy
-CSV results across leagues.
+CSV results across leagues. `calibration-diagnostics` writes the deeper segmented
+diagnostics needed before changing the model or recommendation score.
 
 If you do not install the package, the same commands work with:
 

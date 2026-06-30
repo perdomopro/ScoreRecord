@@ -15,6 +15,7 @@ from scorerecord.evaluate.backtest import (
     run_real_odds_policy_grid,
 )
 from scorerecord.evaluate.calibrator_drift import monitor_calibrator_drift
+from scorerecord.evaluate.calibration_diagnostics import run_calibration_diagnostics
 from scorerecord.evaluate.edge import compute_edges
 from scorerecord.evaluate.goal_markets import run_goal_market_walk_forward
 from scorerecord.evaluate.policy_analysis import analyze_policy_grids
@@ -225,6 +226,24 @@ def main(argv: list[str] | None = None) -> int:
     benchmark.add_argument("--market", default="1X2")
     benchmark.add_argument("--league", help="Historical odds league alias/code filter.")
     benchmark.add_argument("--season", help="Historical odds season filter, e.g. 2023-2024.")
+    diagnostics = subparsers.add_parser(
+        "calibration-diagnostics",
+        help="Write segmented calibration and model-vs-market diagnostics for historical odds.",
+    )
+    diagnostics.add_argument("--from", dest="from_date", required=True, help="YYYY-MM-DD")
+    diagnostics.add_argument("--to", dest="to_date", required=True, help="YYYY-MM-DD")
+    diagnostics.add_argument(
+        "--leagues",
+        required=True,
+        help="Comma-separated league aliases/codes, e.g. EPL,LA_LIGA,SERIE_A.",
+    )
+    diagnostics.add_argument("--out-dir", default="outputs/diagnostics")
+    diagnostics.add_argument("--start-year", type=int, default=2021)
+    diagnostics.add_argument("--min-train", type=int, default=500)
+    diagnostics.add_argument("--min-segment-rows", type=int, default=100)
+    diagnostics.add_argument("--historical-odds-source", default="football-data")
+    diagnostics.add_argument("--entry-odds", default="avg_open")
+    diagnostics.add_argument("--closing-odds", default="avg_close")
     analyze_grids = subparsers.add_parser(
         "analyze-policy-grids",
         help="Aggregate policy-grid CSVs across leagues and flag candidate/review/reject configs.",
@@ -598,6 +617,24 @@ def main(argv: list[str] | None = None) -> int:
             print(summary.as_row())
             return 0
 
+        if args.command == "calibration-diagnostics":
+            summary = run_calibration_diagnostics(
+                conn,
+                from_date=date.fromisoformat(args.from_date),
+                to_date=date.fromisoformat(args.to_date),
+                leagues=_parse_str_tuple(args.leagues),
+                out_dir=Path(args.out_dir),
+                start_year=args.start_year,
+                min_train=args.min_train,
+                min_segment_rows=args.min_segment_rows,
+                historical_odds_source=args.historical_odds_source,
+                entry_odds=args.entry_odds,
+                closing_odds=args.closing_odds,
+                cwd=Path.cwd(),
+            )
+            print(summary.as_row())
+            return 0
+
         if args.command == "analyze-policy-grids":
             summary = analyze_policy_grids(
                 conn,
@@ -652,6 +689,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def _parse_float_tuple(value: str) -> tuple[float, ...]:
     return tuple(float(item.strip()) for item in value.split(",") if item.strip())
+
+
+def _parse_str_tuple(value: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
 def _parse_optional_int_tuple(value: str) -> tuple[int | None, ...]:

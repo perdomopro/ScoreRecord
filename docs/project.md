@@ -526,6 +526,14 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Multi-league policy summary classified all 480 configurations as `reject`. For rows with at least 1000 bets, the best weighted CLV row was still negative: 5488 bets, weighted capped ROI `-7.76%`, weighted CLV `-0.79%`, positive CLV rate `44.77%`, only 1 profitable league, and 0 positive-CLV leagues.
 - Conclusion: the current Dixon-Coles club-league policy does not beat the historical fair market. Do not promote a new default, do not loosen paper recommendations, and do not tune `recommendation_score` from intuition. The next analytical work should be model/calibration diagnostics by league, selection, odds bucket, and probability bucket.
 
+### 2026-06-30 - Segmented calibration diagnostics
+
+- Added `calibration-diagnostics` to produce the next required evidence layer before any scoring or model-policy changes.
+- The command reuses the same walk-forward historical odds pipeline and writes: `calibration_diagnostics_rows_*`, `calibration_by_league_*`, `calibration_by_selection_*`, `calibration_by_prob_bucket_*`, `calibration_by_odds_bucket_*`, `model_vs_market_by_bucket_*`, `overconfidence_report_*`, and metadata JSON.
+- Diagnostics include hit rate, average model probability, average fair-market probability, model/market log-loss, Brier, ECE, calibration error, overconfidence, and model-vs-market flags by league, selection, probability bucket, odds bucket, and combined league/selection/bucket segments.
+- Added `calibration_diagnostics` data-quality metrics so the diagnostic run is traceable through `ingest_run` and `data_quality`.
+- Critical interpretation: this still does not create edge. It identifies the segments where the model is overconfident, underconfident, or losing most clearly against the market so future calibration can be evidence-based and out-of-sample validated.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.
