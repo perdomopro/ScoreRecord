@@ -517,6 +517,15 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added a simple lock directory so accidental double launches fail fast instead of running two expensive validation jobs over the same database.
 - This is an execution aid, not a model change: recommendation score and production paper policy remain unchanged until multi-league results are read.
 
+### 2026-06-30 - Multi-league validation readout
+
+- Verified the previously launched multi-league validation completed on the homeserver. It ingested and evaluated `LA_LIGA`, `SERIE_A`, `BUNDESLIGA`, `LIGUE_1`, and `CHAMPIONSHIP`; together with the existing EPL run, `analyze-policy-grids` read 6 policy-grid files and wrote `outputs/backtests/policy_grid_summary_multileague.csv`.
+- Historical coverage was strong enough for screening: La Liga had 100% Avg open/close coverage; Serie A had 99.7%-100% depending on season; Bundesliga had 100%; Ligue 1 had 100% with shorter 2019-2020 and 2023-2025 seasons; Championship had 100%.
+- Model-vs-market benchmark was negative for the model in every league: EPL `+0.0167`, La Liga `+0.0103`, Serie A `+0.0110`, Bundesliga `+0.0131`, Ligue 1 `+0.0104`, Championship `+0.0072` model-minus-market log-loss. Positive values mean fair market probabilities beat the model.
+- Best useful policy rows by league still had negative CLV in all six leagues. Championship had one best useful row with positive capped ROI (`+3.63%`) but negative CLV (`-0.82%`), so it is not evidence of repeatable edge.
+- Multi-league policy summary classified all 480 configurations as `reject`. For rows with at least 1000 bets, the best weighted CLV row was still negative: 5488 bets, weighted capped ROI `-7.76%`, weighted CLV `-0.79%`, positive CLV rate `44.77%`, only 1 profitable league, and 0 positive-CLV leagues.
+- Conclusion: the current Dixon-Coles club-league policy does not beat the historical fair market. Do not promote a new default, do not loosen paper recommendations, and do not tune `recommendation_score` from intuition. The next analytical work should be model/calibration diagnostics by league, selection, odds bucket, and probability bucket.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.
