@@ -269,10 +269,10 @@ def _latest_odds(
         f"""
         WITH complete AS (
           SELECT
-            fixture_id,
-            bookmaker,
-            market,
-            captured_utc,
+            o.fixture_id,
+            o.bookmaker,
+            o.market,
+            o.captured_utc,
             COUNT(DISTINCT selection) AS selection_count,
             SUM(CASE WHEN selection = 'home' THEN 1 ELSE 0 END) AS has_home,
             SUM(CASE WHEN selection = 'draw' THEN 1 ELSE 0 END) AS has_draw,
@@ -281,9 +281,14 @@ def _latest_odds(
             SUM(CASE WHEN selection = 'under' THEN 1 ELSE 0 END) AS has_under,
             SUM(CASE WHEN selection = 'yes' THEN 1 ELSE 0 END) AS has_yes,
             SUM(CASE WHEN selection = 'no' THEN 1 ELSE 0 END) AS has_no
-          FROM odds
-          WHERE is_closing = 0
-          GROUP BY fixture_id, bookmaker, market, captured_utc
+          FROM odds o
+          JOIN fixture f ON f.fixture_id = o.fixture_id
+          WHERE o.is_closing = 0
+            AND (
+              f.kickoff_utc IS NULL
+              OR datetime(f.kickoff_utc) > datetime('now')
+            )
+          GROUP BY o.fixture_id, o.bookmaker, o.market, o.captured_utc
           HAVING
             (
               market = '1X2'
@@ -402,20 +407,23 @@ def _latest_predictions(
 ) -> dict[tuple[str, str], dict[str, sqlite3.Row]]:
     rows = conn.execute(
         """
-        WITH latest AS (
-          SELECT fixture_id, market, selection, model_version, MAX(generated_utc) AS generated_utc
-          FROM prediction
-          WHERE model_version = ?
-          GROUP BY fixture_id, market, selection, model_version
+        WITH latest_run AS (
+          SELECT run_id
+          FROM ingest_run
+          WHERE job_name = 'predict-fixtures'
+            AND status = 'succeeded'
+          ORDER BY run_id DESC
+          LIMIT 1
         )
         SELECT p.*
         FROM prediction p
-        JOIN latest l
-          ON l.fixture_id = p.fixture_id
-         AND l.market = p.market
-         AND l.selection = p.selection
-         AND l.model_version = p.model_version
-         AND l.generated_utc = p.generated_utc
+        JOIN latest_run lr ON lr.run_id = p.run_id
+        JOIN fixture f ON f.fixture_id = p.fixture_id
+        WHERE p.model_version = ?
+          AND (
+            f.kickoff_utc IS NULL
+            OR datetime(f.kickoff_utc) > datetime('now')
+          )
         ORDER BY p.fixture_id, p.market, p.selection
         """,
         (model_version,),

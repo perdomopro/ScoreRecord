@@ -565,7 +565,8 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Made `predict-fixtures` forward-only for production publishing: unresolved fixtures, finished fixtures, and already-started fixtures are skipped.
 - Changed `fetch-odds --closing` semantics to raw capture only. The flag may still limit the preplay window, but rows are stored as raw odds; closing truth is now derived later from `odds_snapshots`.
 - Updated CLV computation to use the last complete append-only odds snapshot before kickoff and after the recommendation, matching fixture, market, selection, line-by-market, and bookmaker. `recommendation_result` now stores legacy ratio CLV plus `clv_log`, `clv_fair_ev`, and `closing_snapshot_at`.
-- Changed `compute-edge` to use the latest complete market snapshot per fixture/bookmaker/market instead of mixing the latest individual selection rows.
+- Changed `compute-edge` to use the latest complete market snapshot per fixture/bookmaker/market instead of mixing the latest individual selection rows; it now also reads only the latest successful `predict-fixtures` run and skips fixtures that have already started.
+- Changed `recommend` to recompute odds age at recommendation time, preventing stale historical edge runs from emitting new paper picks.
 - Local validation: `compileall` passed; a direct CLV harness produced derived ratio CLV, log CLV, and fair-EV CLV from a complete OU2.5 snapshot; `db-health` is OK for schema, integrity, FKs, kickoff UTC, latest artifact coverage, and latest forward-only predictions.
 - Local warnings remaining are expected and informative: no local live snapshots and one recent failed run; legacy predictions remain recorded and are reported separately from the latest operational run.
 

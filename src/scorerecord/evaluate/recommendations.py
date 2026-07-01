@@ -11,6 +11,7 @@ from pathlib import Path
 
 from scorerecord.models.manifest import MODEL_VERSION
 from scorerecord.runs import ingest_run, record_quality
+from scorerecord.time_utils import parse_datetime_utc
 
 
 @dataclass(frozen=True)
@@ -347,7 +348,11 @@ def _recommendation_candidates(
         ),
     ).fetchall()
     candidates = []
+    now_utc = datetime.now(timezone.utc)
     for row in rows:
+        current_odds_age = _odds_age_minutes_now(str(row["captured_utc"]), now_utc)
+        if current_odds_age is not None and current_odds_age > max_odds_age_minutes:
+            continue
         if _has_disqualifying_recommendation_marker(
             str(row["odds_quality_flags"] or ""),
             str(row["high_edge_reason"] or ""),
@@ -373,6 +378,13 @@ def _recommendation_candidates(
             )
         )
     return candidates
+
+
+def _odds_age_minutes_now(captured_utc: str, now_utc: datetime) -> float | None:
+    captured = parse_datetime_utc(captured_utc)
+    if captured is None:
+        return None
+    return max((now_utc - captured).total_seconds() / 60.0, 0.0)
 
 
 def _best_candidates(
