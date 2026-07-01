@@ -590,7 +590,15 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Changed `market-benchmark-report` summaries so `1X2` is scored as one multiclass unit per match instead of three binary selection rows. Detail CSVs still expose selection rows for audit, but decision metrics now report `num_matches`, `num_selection_rows`, and `scoring_unit`.
 - Guarded the future two-way benchmark contract too: if complete `over/under` or `yes/no` rows are present, the benchmark summary scores one binary unit per match using the positive side (`over`/`yes`) and records the original selection-row count separately.
 - Increased benchmark bootstrap to 2000 block resamples and added `benchmark_state`: `PROMISING` only when the paired block CI is entirely below zero, `REJECTED_FOR_INDEPENDENT_VALUE` when it is entirely above zero or clearly positive at large sample, otherwise `INCONCLUSIVE`.
-- Current Football-Data ingestion still supports historical real odds for `1X2` only. The future Phase 3 OU2.5 benchmark should not be run until Football-Data totals odds are ingested as complete two-way markets.
+- At this point in the log, Football-Data real-odds benchmarking was still limited to `1X2`; the future Phase 3 OU2.5 benchmark remained blocked until complete totals ingestion and coverage checks.
+
+### 2026-07-01 - Roadmap and Football-Data OU2.5 ingestion prep
+
+- Added `docs/roadmap.md` as the decomposable execution plan for phases 0-9, including open Phase 0/1 loops, the Phase 2 scoring contract, the target Phase 3 OU2.5 benchmark, daily forecast web, odds coverage, daily-goals-v1 paper policy, forward validation, market-anchored residual modeling, and corners.
+- Extended Football-Data parsing with `extract_ou25_quotes`, storing complete `OU2.5` two-way rows as `over`/`under`, `line=2.5`, `entry_odds_type=avg_preclose`, and `closing_odds_type=avg_close`.
+- The OU2.5 extractor supports the target `Avg>2.5`/`Avg<2.5` and `AvgC>2.5`/`AvgC<2.5` columns plus common `BbAv`/`BbAvC` aliases, without counting missing OU markets when a CSV has no totals columns.
+- Added `historical-odds-report --market OU2.5` so coverage can be audited before enabling the Phase 3 benchmark.
+- Added tests for Football-Data OU2.5 parsing and OU2.5 coverage. The benchmark remains intentionally blocked until remote `pytest`/`ruff` are green and real multi-league totals coverage is confirmed.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 

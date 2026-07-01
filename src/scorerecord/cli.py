@@ -96,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Print historical Football-Data match/odds coverage by season.",
     )
     historical_odds_report.add_argument("--league", help="League alias/code filter.")
+    historical_odds_report.add_argument("--market", default="1X2", help="1X2 or OU2.5.")
 
     subparsers.add_parser("build-elo", help="Rebuild Elo ratings from match_history.")
     subparsers.add_parser("quality-report", help="Print data quality checks.")
@@ -446,7 +447,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "historical-odds-report":
-            rows = football_data_coverage_report(conn, league=args.league)
+            rows = football_data_coverage_report(conn, league=args.league, market=args.market)
             if not rows:
                 print("No historical odds rows found.")
                 return 0

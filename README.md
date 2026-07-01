@@ -45,6 +45,7 @@ scorerecord backtest --from 2024-01-01 --to 2024-12-31
 scorerecord ingest-football-data --league EPL --season 2023-2024 --dry-run
 scorerecord ingest-football-data --league EPL --from-season 2019-2020 --to-season 2024-2025
 scorerecord historical-odds-report --league EPL
+scorerecord historical-odds-report --league EPL --market OU2.5
 scorerecord backtest --from 2023-08-01 --to 2024-05-31 --odds-mode historical --league EPL --season 2023-2024 --market 1X2
 scorerecord backtest --from 2021-08-01 --to 2025-05-31 --odds-mode historical --league EPL --market 1X2 --min-train 500
 scorerecord backtest-policy-grid --from 2021-08-01 --to 2025-05-31 --league EPL --min-train 500
@@ -68,8 +69,9 @@ Backtest CSVs are written to `outputs/backtests/`. Until historical bookmaker od
 available, those reports use a training-window marginal probability as a market proxy, so
 they are for calibration and ranking diagnostics rather than real ROI claims.
 
-For covered club leagues, `ingest-football-data` can load Football-Data CSV results and
-1X2 odds into separate historical tables. Then `backtest --odds-mode historical` writes
+For covered club leagues, `ingest-football-data` can load Football-Data CSV results,
+1X2 odds, and OU2.5 totals where the CSV exposes complete two-way prices. Then
+`backtest --odds-mode historical` writes
 separate real-odds CSVs with `profit_*_real` and `clv_real`. This is a club-league
 historical ROI harness, not a direct World Cup profitability proof.
 Use `--season` on historical backtests only when you intentionally want to evaluate one
@@ -112,4 +114,5 @@ This is educational/research software. It estimates probabilities with uncertain
 
 ## Full Project Notes
 
-See [docs/project.md](docs/project.md) for the full architecture, roadmap, quality gates, and change log.
+See [docs/project.md](docs/project.md) for the full architecture, quality gates, and
+change log. See [docs/roadmap.md](docs/roadmap.md) for the phased execution plan.

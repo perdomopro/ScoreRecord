@@ -45,11 +45,21 @@ SELECTION_COLUMNS = {
     "draw": "D",
     "away": "A",
 }
+OU25_LINE = 2.5
+OU25_COLUMNS = {
+    "over": (">2.5", "O2.5"),
+    "under": ("<2.5", "U2.5"),
+}
 
 ODDS_SPECS = (
     ("Avg", "Avg", "avg_open", "AvgC", "avg_close"),
     ("Bet365", "B365", "bet365_open", "B365C", "bet365_close"),
     ("Max", "Max", "max_open", "MaxC", "max_close"),
+)
+OU25_SPECS = (
+    ("Avg", ("Avg", "BbAv"), "avg_preclose", ("AvgC", "BbAvC"), "avg_close"),
+    ("Bet365", ("B365",), "bet365_preclose", ("B365C",), "bet365_close"),
+    ("Max", ("Max", "BbMx"), "max_preclose", ("MaxC", "BbMxC"), "max_close"),
 )
 
 
@@ -100,21 +110,24 @@ class FootballDataCoverageRow:
     source: str
     league_code: str
     season: str
+    market: str
     matches: int
     odds_rows: int
     avg_open_rows: int
     avg_close_rows: int
     avg_open_coverage: float
     avg_close_coverage: float
+    avg_entry_odds_type: str = "avg_open"
+    avg_closing_odds_type: str = "avg_close"
 
     def as_row(self) -> str:
         return (
-            f"{self.source} {self.league_code} {self.season} "
+            f"{self.source} {self.league_code} {self.season} {self.market} "
             f"matches={self.matches} odds_rows={self.odds_rows} "
-            f"avg_open_rows={self.avg_open_rows} "
-            f"avg_open_coverage={self.avg_open_coverage:.1%} "
-            f"avg_close_rows={self.avg_close_rows} "
-            f"avg_close_coverage={self.avg_close_coverage:.1%}"
+            f"{self.avg_entry_odds_type}_rows={self.avg_open_rows} "
+            f"{self.avg_entry_odds_type}_coverage={self.avg_open_coverage:.1%} "
+            f"{self.avg_closing_odds_type}_rows={self.avg_close_rows} "
+            f"{self.avg_closing_odds_type}_coverage={self.avg_close_coverage:.1%}"
         )
 
 
@@ -182,9 +195,12 @@ def football_data_coverage_report(
     *,
     source: str = FOOTBALL_DATA_SOURCE,
     league: str | None = None,
+    market: str = "1X2",
 ) -> list[FootballDataCoverageRow]:
     league_code = resolve_league_code(league) if league else None
-    params: list[object] = [source]
+    market = normalize_market(market)
+    avg_entry_type, avg_close_type, expected_selections = _coverage_market_spec(market)
+    params: list[object] = [avg_entry_type, avg_close_type, market, source]
     league_filter = ""
     if league_code is not None:
         league_filter = "AND hm.league_code = ?"
@@ -197,13 +213,13 @@ def football_data_coverage_report(
           hm.season,
           COUNT(DISTINCT hm.source_event_id) AS matches,
           COUNT(ho.id) AS odds_rows,
-          SUM(CASE WHEN ho.entry_odds_type = 'avg_open' THEN 1 ELSE 0 END) AS avg_open_rows,
-          SUM(CASE WHEN ho.closing_odds_type = 'avg_close' THEN 1 ELSE 0 END) AS avg_close_rows
+          SUM(CASE WHEN ho.entry_odds_type = ? THEN 1 ELSE 0 END) AS avg_open_rows,
+          SUM(CASE WHEN ho.closing_odds_type = ? THEN 1 ELSE 0 END) AS avg_close_rows
         FROM historical_match hm
         LEFT JOIN historical_odds ho
           ON ho.source = hm.source
          AND ho.source_event_id = hm.source_event_id
-         AND ho.market = '1X2'
+         AND ho.market = ?
         WHERE hm.source = ?
           {league_filter}
         GROUP BY hm.source, hm.league_code, hm.season
@@ -214,7 +230,7 @@ def football_data_coverage_report(
     output: list[FootballDataCoverageRow] = []
     for row in rows:
         matches = int(row["matches"])
-        expected_selection_rows = matches * 3
+        expected_selection_rows = matches * expected_selections
         avg_open_rows = int(row["avg_open_rows"] or 0)
         avg_close_rows = int(row["avg_close_rows"] or 0)
         output.append(
@@ -222,6 +238,7 @@ def football_data_coverage_report(
                 source=str(row["source"]),
                 league_code=str(row["league_code"]),
                 season=str(row["season"]),
+                market=market,
                 matches=matches,
                 odds_rows=int(row["odds_rows"] or 0),
                 avg_open_rows=avg_open_rows,
@@ -232,6 +249,8 @@ def football_data_coverage_report(
                 avg_close_coverage=(
                     avg_close_rows / expected_selection_rows if expected_selection_rows else 0.0
                 ),
+                avg_entry_odds_type=avg_entry_type,
+                avg_closing_odds_type=avg_close_type,
             )
         )
     return output
@@ -327,6 +346,14 @@ def parse_football_data_csv(
         missing_open_odds += row_missing_open
         missing_closing_odds += row_missing_close
         invalid_odds += row_invalid
+        row_quotes, row_missing_open, row_missing_close, row_invalid = extract_ou25_quotes(
+            row,
+            source_event_id=source_event_id,
+        )
+        quotes.extend(row_quotes)
+        missing_open_odds += row_missing_open
+        missing_closing_odds += row_missing_close
+        invalid_odds += row_invalid
 
     return FootballDataParseResult(
         events=events,
@@ -405,6 +432,69 @@ def extract_1x2_quotes(
     return quotes, missing_open, missing_close, invalid
 
 
+def extract_ou25_quotes(
+    row: dict[str, str],
+    *,
+    source_event_id: str,
+) -> tuple[list[HistoricalOddsQuote], int, int, int]:
+    quotes: list[HistoricalOddsQuote] = []
+    missing_open = 0
+    missing_close = 0
+    invalid = 0
+    for bookmaker, open_prefixes, open_type, close_prefixes, close_type in OU25_SPECS:
+        if not _any_ou25_columns_present(row, open_prefixes, close_prefixes):
+            continue
+        open_odds = {
+            selection: _parse_odds_from_aliases(row, open_prefixes, suffixes)
+            for selection, suffixes in OU25_COLUMNS.items()
+        }
+        close_odds = {
+            selection: _parse_odds_from_aliases(row, close_prefixes, suffixes)
+            for selection, suffixes in OU25_COLUMNS.items()
+        }
+        open_present = [value is not None for value in open_odds.values()]
+        close_present = [value is not None for value in close_odds.values()]
+        invalid_open = any(
+            _is_invalid_raw_odds_from_aliases(row, open_prefixes, suffixes)
+            for suffixes in OU25_COLUMNS.values()
+        )
+        invalid_close = any(
+            _is_invalid_raw_odds_from_aliases(row, close_prefixes, suffixes)
+            for suffixes in OU25_COLUMNS.values()
+        )
+        if invalid_open:
+            invalid += 1
+        if invalid_close:
+            invalid += 1
+        if not all(open_present):
+            if any(open_present):
+                invalid += 1
+            else:
+                missing_open += 1
+            continue
+        closing_type = close_type if all(close_present) else None
+        if not all(close_present):
+            missing_close += 1
+        for selection in ("over", "under"):
+            quotes.append(
+                HistoricalOddsQuote(
+                    source=FOOTBALL_DATA_SOURCE,
+                    source_event_id=source_event_id,
+                    bookmaker=bookmaker,
+                    market="OU2.5",
+                    selection=selection,
+                    line=OU25_LINE,
+                    entry_odds=open_odds[selection],
+                    entry_odds_type=open_type,
+                    closing_odds=close_odds[selection] if closing_type else None,
+                    closing_odds_type=closing_type,
+                    is_real_historical_odds=True,
+                    is_timestamp_exact=False,
+                )
+            )
+    return quotes, missing_open, missing_close, invalid
+
+
 def football_data_url(*, league_code: str, season_code: str) -> str:
     return f"{FOOTBALL_DATA_BASE_URL}/{season_code}/{league_code}.csv"
 
@@ -417,6 +507,15 @@ def resolve_league_code(value: str) -> str:
         return key
     supported = ", ".join(sorted(FOOTBALL_DATA_LEAGUES))
     raise ValueError(f"Unsupported Football-Data league '{value}'. Supported aliases: {supported}")
+
+
+def normalize_market(value: str) -> str:
+    raw = value.strip().upper()
+    if raw in {"1X2", "H2H"}:
+        return "1X2"
+    if raw in {"OU2.5", "O/U2.5", "TOTALS2.5", "TOTALS_2.5"}:
+        return "OU2.5"
+    raise ValueError("Supported historical odds coverage markets: 1X2, OU2.5")
 
 
 def normalize_season(value: str) -> str:
@@ -524,11 +623,59 @@ def _parse_odds(value: object) -> float | None:
     return odds
 
 
+def _parse_odds_from_aliases(
+    row: dict[str, str],
+    prefixes: tuple[str, ...],
+    suffixes: tuple[str, ...],
+) -> float | None:
+    for prefix in prefixes:
+        for suffix in suffixes:
+            value = row.get(f"{prefix}{suffix}")
+            parsed = _parse_odds(value)
+            if parsed is not None:
+                return parsed
+    return None
+
+
 def _is_invalid_raw_odds(value: object) -> bool:
     text = str(value or "").strip()
     if not text:
         return False
     return _parse_odds(text) is None
+
+
+def _is_invalid_raw_odds_from_aliases(
+    row: dict[str, str],
+    prefixes: tuple[str, ...],
+    suffixes: tuple[str, ...],
+) -> bool:
+    return any(
+        _is_invalid_raw_odds(row.get(f"{prefix}{suffix}"))
+        for prefix in prefixes
+        for suffix in suffixes
+    )
+
+
+def _any_ou25_columns_present(
+    row: dict[str, str],
+    open_prefixes: tuple[str, ...],
+    close_prefixes: tuple[str, ...],
+) -> bool:
+    prefixes = open_prefixes + close_prefixes
+    return any(
+        f"{prefix}{suffix}" in row
+        for prefix in prefixes
+        for suffixes in OU25_COLUMNS.values()
+        for suffix in suffixes
+    )
+
+
+def _coverage_market_spec(market: str) -> tuple[str, str, int]:
+    if market == "1X2":
+        return "avg_open", "avg_close", 3
+    if market == "OU2.5":
+        return "avg_preclose", "avg_close", 2
+    raise ValueError("Supported historical odds coverage markets: 1X2, OU2.5")
 
 
 def _upsert_events(conn: sqlite3.Connection, events: list[HistoricalEvent]) -> int:
@@ -617,10 +764,10 @@ def _record_football_data_quality(
         "rows_loaded": parsed.rows_loaded,
         "events_upserted": event_count,
         "odds_upserted": quote_count,
-        "decision_time_rule": "pre_match_open_proxy",
+        "decision_time_rule": "pre_match_open_proxy_or_preclose_totals",
         "is_real_historical_odds": True,
         "is_timestamp_exact": False,
-        "markets": ["1X2"],
+        "markets": sorted({quote.market for quote in parsed.quotes}),
     }
     for metric_name, value in [
         ("football_data_rows", parsed.rows_seen),
