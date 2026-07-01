@@ -157,6 +157,19 @@ def _latest_predict_fixture_run(conn: sqlite3.Connection) -> int | None:
 
 
 def _odds_closing_flag_check(conn: sqlite3.Connection) -> HealthCheck:
+    migration = conn.execute(
+        """
+        SELECT applied_utc
+        FROM schema_migration
+        WHERE version = 3
+        """
+    ).fetchone()
+    applied_utc = migration["applied_utc"] if migration else None
+    post_migration_filter = ""
+    params: tuple[object, ...] = ()
+    if applied_utc:
+        post_migration_filter = "AND datetime(captured_utc) >= datetime(?)"
+        params = (applied_utc,)
     row = conn.execute(
         """
         SELECT COUNT(*) AS flagged
@@ -165,11 +178,21 @@ def _odds_closing_flag_check(conn: sqlite3.Connection) -> HealthCheck:
         """
     ).fetchone()
     flagged = int(row["flagged"] or 0)
+    post_row = conn.execute(
+        f"""
+        SELECT COUNT(*) AS flagged
+        FROM odds
+        WHERE is_closing = 1
+          {post_migration_filter}
+        """,
+        params,
+    ).fetchone()
+    post_migration = int(post_row["flagged"] or 0)
     return HealthCheck(
         "raw_odds_closing_flags",
-        "OK" if flagged == 0 else "WARNING",
-        f"is_closing_rows={flagged}",
-        "derived closing should come from odds_snapshots",
+        "OK" if post_migration == 0 else "WARNING",
+        f"post_migration={post_migration}",
+        f"legacy_total={flagged}; derived closing should come from odds_snapshots",
     )
 
 
