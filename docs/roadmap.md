@@ -11,7 +11,7 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 0 - Forward capture | Code ready; verify future fixtures with `kickoff_utc` before relying on timers. |
 | 1 - Repo and DB stabilization | Code ready; formal gate still pending remote `pytest` plus `ruff`. |
 | 2 - Evaluation and scoring | Code ready; quarantined until the formal gate is green. |
-| 3 - Club OU2.5 benchmark | Blocked until Football-Data totals coverage and green gate. |
+| 3 - Club OU2.5 benchmark | Coverage prep implemented; blocked until coverage readout and green gate. |
 | 4-9 | Pending. |
 
 Open loops that close Phase 0/1 when remote execution is available:
@@ -140,6 +140,12 @@ Technical work:
   - Entry/preclose: `Avg>2.5` and `Avg<2.5`, with aliases such as `BbAv>2.5`.
   - Close: `AvgC>2.5` and `AvgC<2.5`, with aliases such as `BbAvC>2.5`.
   - Internal names: `avg_preclose` and `avg_close`.
+  - Persist `metadata_json.entry_column_family` to segment `Avg` versus `BbAv`.
+- Use `historical-odds-report --market OU2.5` before benchmarking:
+  - Check complete two-way rate.
+  - Check close-complete rate separately.
+  - Check entry and close overround ranges.
+  - Treat suspicious overround warnings as ingest/parsing blockers.
 - Generalize `market-benchmark-report` after coverage is verified.
 - Use one binary observation per match.
 - De-vig two-way odds from the same bookmaker/snapshot family.

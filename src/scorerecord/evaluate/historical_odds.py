@@ -35,3 +35,4 @@ class HistoricalOddsQuote:
     closing_odds_type: str | None
     is_real_historical_odds: bool = True
     is_timestamp_exact: bool = False
+    metadata_json: str | None = None

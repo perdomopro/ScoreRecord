@@ -117,17 +117,50 @@ class FootballDataCoverageRow:
     avg_close_rows: int
     avg_open_coverage: float
     avg_close_coverage: float
+    complete_two_way_count: int = 0
+    complete_two_way_rate: float = 0.0
+    close_complete_count: int = 0
+    close_complete_rate: float = 0.0
+    entry_overround_min: float | None = None
+    entry_overround_avg: float | None = None
+    entry_overround_max: float | None = None
+    close_overround_min: float | None = None
+    close_overround_avg: float | None = None
+    close_overround_max: float | None = None
+    entry_overround_warning_count: int = 0
+    close_overround_warning_count: int = 0
+    column_families: str = ""
     avg_entry_odds_type: str = "avg_open"
     avg_closing_odds_type: str = "avg_close"
 
     def as_row(self) -> str:
+        complete_label = (
+            "complete_two_way_rate" if self.market == "OU2.5" else "complete_market_rate"
+        )
+        entry_overround = _format_range(
+            self.entry_overround_min,
+            self.entry_overround_avg,
+            self.entry_overround_max,
+        )
+        close_overround = _format_range(
+            self.close_overround_min,
+            self.close_overround_avg,
+            self.close_overround_max,
+        )
         return (
             f"{self.source} {self.league_code} {self.season} {self.market} "
             f"matches={self.matches} odds_rows={self.odds_rows} "
             f"{self.avg_entry_odds_type}_rows={self.avg_open_rows} "
             f"{self.avg_entry_odds_type}_coverage={self.avg_open_coverage:.1%} "
             f"{self.avg_closing_odds_type}_rows={self.avg_close_rows} "
-            f"{self.avg_closing_odds_type}_coverage={self.avg_close_coverage:.1%}"
+            f"{self.avg_closing_odds_type}_coverage={self.avg_close_coverage:.1%} "
+            f"{complete_label}={self.complete_two_way_rate:.1%} "
+            f"close_complete_rate={self.close_complete_rate:.1%} "
+            f"entry_overround={entry_overround} "
+            f"close_overround={close_overround} "
+            f"entry_overround_warnings={self.entry_overround_warning_count} "
+            f"close_overround_warnings={self.close_overround_warning_count} "
+            f"column_families={self.column_families or 'unknown'}"
         )
 
 
@@ -200,7 +233,8 @@ def football_data_coverage_report(
     league_code = resolve_league_code(league) if league else None
     market = normalize_market(market)
     avg_entry_type, avg_close_type, expected_selections = _coverage_market_spec(market)
-    params: list[object] = [avg_entry_type, avg_close_type, market, source]
+    required_selections = _required_selections(market)
+    params: list[object] = [market, source]
     league_filter = ""
     if league_code is not None:
         league_filter = "AND hm.league_code = ?"
@@ -209,12 +243,17 @@ def football_data_coverage_report(
         f"""
         SELECT
           hm.source,
+          hm.source_event_id,
           hm.league_code,
           hm.season,
-          COUNT(DISTINCT hm.source_event_id) AS matches,
-          COUNT(ho.id) AS odds_rows,
-          SUM(CASE WHEN ho.entry_odds_type = ? THEN 1 ELSE 0 END) AS avg_open_rows,
-          SUM(CASE WHEN ho.closing_odds_type = ? THEN 1 ELSE 0 END) AS avg_close_rows
+          ho.id AS odds_id,
+          ho.bookmaker,
+          ho.selection,
+          ho.entry_odds,
+          ho.entry_odds_type,
+          ho.closing_odds,
+          ho.closing_odds_type,
+          ho.metadata_json
         FROM historical_match hm
         LEFT JOIN historical_odds ho
           ON ho.source = hm.source
@@ -222,25 +261,90 @@ def football_data_coverage_report(
          AND ho.market = ?
         WHERE hm.source = ?
           {league_filter}
-        GROUP BY hm.source, hm.league_code, hm.season
-        ORDER BY hm.league_code, hm.season
+        ORDER BY hm.league_code, hm.season, hm.source_event_id, ho.bookmaker, ho.selection
         """,
         params,
     ).fetchall()
-    output: list[FootballDataCoverageRow] = []
+
+    groups: dict[tuple[str, str, str], dict[str, object]] = {}
     for row in rows:
-        matches = int(row["matches"])
+        key = (str(row["source"]), str(row["league_code"]), str(row["season"]))
+        group = groups.setdefault(
+            key,
+            {
+                "matches": set(),
+                "odds_rows": 0,
+                "avg_open_rows": 0,
+                "avg_close_rows": 0,
+                "events": {},
+                "family_counts": {},
+            },
+        )
+        source_event_id = str(row["source_event_id"])
+        matches = group["matches"]
+        assert isinstance(matches, set)
+        matches.add(source_event_id)
+        events = group["events"]
+        assert isinstance(events, dict)
+        event = events.setdefault(source_event_id, {"entry": {}, "close": {}})
+        if row["odds_id"] is None:
+            continue
+
+        group["odds_rows"] = int(group["odds_rows"]) + 1
+        selection = str(row["selection"])
+        if row["entry_odds_type"] == avg_entry_type and row["entry_odds"] is not None:
+            group["avg_open_rows"] = int(group["avg_open_rows"]) + 1
+            entry = event["entry"]
+            assert isinstance(entry, dict)
+            entry[selection] = float(row["entry_odds"])
+            family = _metadata_value(row["metadata_json"], "entry_column_family")
+            family_counts = group["family_counts"]
+            assert isinstance(family_counts, dict)
+            family_counts[family] = int(family_counts.get(family, 0)) + 1
+        if row["closing_odds_type"] == avg_close_type and row["closing_odds"] is not None:
+            group["avg_close_rows"] = int(group["avg_close_rows"]) + 1
+            close = event["close"]
+            assert isinstance(close, dict)
+            close[selection] = float(row["closing_odds"])
+
+    output: list[FootballDataCoverageRow] = []
+    for (row_source, row_league_code, row_season), group in groups.items():
+        matches_set = group["matches"]
+        assert isinstance(matches_set, set)
+        matches = len(matches_set)
         expected_selection_rows = matches * expected_selections
-        avg_open_rows = int(row["avg_open_rows"] or 0)
-        avg_close_rows = int(row["avg_close_rows"] or 0)
+        avg_open_rows = int(group["avg_open_rows"])
+        avg_close_rows = int(group["avg_close_rows"])
+        events = group["events"]
+        assert isinstance(events, dict)
+        entry_overrounds: list[float] = []
+        close_overrounds: list[float] = []
+        complete_two_way_count = 0
+        close_complete_count = 0
+        for event in events.values():
+            assert isinstance(event, dict)
+            entry = event["entry"]
+            close = event["close"]
+            assert isinstance(entry, dict)
+            assert isinstance(close, dict)
+            if all(selection in entry for selection in required_selections):
+                complete_two_way_count += 1
+                entry_overrounds.append(sum(1.0 / float(entry[s]) for s in required_selections))
+            if all(selection in close for selection in required_selections):
+                close_complete_count += 1
+                close_overrounds.append(sum(1.0 / float(close[s]) for s in required_selections))
+        entry_min, entry_avg, entry_max = _range_values(entry_overrounds)
+        close_min, close_avg, close_max = _range_values(close_overrounds)
+        family_counts = group["family_counts"]
+        assert isinstance(family_counts, dict)
         output.append(
             FootballDataCoverageRow(
-                source=str(row["source"]),
-                league_code=str(row["league_code"]),
-                season=str(row["season"]),
+                source=row_source,
+                league_code=row_league_code,
+                season=row_season,
                 market=market,
                 matches=matches,
-                odds_rows=int(row["odds_rows"] or 0),
+                odds_rows=int(group["odds_rows"]),
                 avg_open_rows=avg_open_rows,
                 avg_close_rows=avg_close_rows,
                 avg_open_coverage=(
@@ -249,6 +353,23 @@ def football_data_coverage_report(
                 avg_close_coverage=(
                     avg_close_rows / expected_selection_rows if expected_selection_rows else 0.0
                 ),
+                complete_two_way_count=complete_two_way_count,
+                complete_two_way_rate=complete_two_way_count / matches if matches else 0.0,
+                close_complete_count=close_complete_count,
+                close_complete_rate=close_complete_count / matches if matches else 0.0,
+                entry_overround_min=entry_min,
+                entry_overround_avg=entry_avg,
+                entry_overround_max=entry_max,
+                close_overround_min=close_min,
+                close_overround_avg=close_avg,
+                close_overround_max=close_max,
+                entry_overround_warning_count=sum(
+                    1 for value in entry_overrounds if _is_suspicious_overround(value, market)
+                ),
+                close_overround_warning_count=sum(
+                    1 for value in close_overrounds if _is_suspicious_overround(value, market)
+                ),
+                column_families=_format_counts(family_counts),
                 avg_entry_odds_type=avg_entry_type,
                 avg_closing_odds_type=avg_close_type,
             )
@@ -444,14 +565,16 @@ def extract_ou25_quotes(
     for bookmaker, open_prefixes, open_type, close_prefixes, close_type in OU25_SPECS:
         if not _any_ou25_columns_present(row, open_prefixes, close_prefixes):
             continue
-        open_odds = {
-            selection: _parse_odds_from_aliases(row, open_prefixes, suffixes)
+        open_values = {
+            selection: _parse_odds_with_alias(row, open_prefixes, suffixes)
             for selection, suffixes in OU25_COLUMNS.items()
         }
-        close_odds = {
-            selection: _parse_odds_from_aliases(row, close_prefixes, suffixes)
+        close_values = {
+            selection: _parse_odds_with_alias(row, close_prefixes, suffixes)
             for selection, suffixes in OU25_COLUMNS.items()
         }
+        open_odds = {selection: value[0] for selection, value in open_values.items()}
+        close_odds = {selection: value[0] for selection, value in close_values.items()}
         open_present = [value is not None for value in open_odds.values()]
         close_present = [value is not None for value in close_odds.values()]
         invalid_open = any(
@@ -475,6 +598,12 @@ def extract_ou25_quotes(
         closing_type = close_type if all(close_present) else None
         if not all(close_present):
             missing_close += 1
+        metadata_json = _quote_metadata_json(
+            bookmaker=bookmaker,
+            market="OU2.5",
+            open_values=open_values,
+            close_values=close_values if closing_type else {},
+        )
         for selection in ("over", "under"):
             quotes.append(
                 HistoricalOddsQuote(
@@ -490,6 +619,7 @@ def extract_ou25_quotes(
                     closing_odds_type=closing_type,
                     is_real_historical_odds=True,
                     is_timestamp_exact=False,
+                    metadata_json=metadata_json,
                 )
             )
     return quotes, missing_open, missing_close, invalid
@@ -623,18 +753,18 @@ def _parse_odds(value: object) -> float | None:
     return odds
 
 
-def _parse_odds_from_aliases(
+def _parse_odds_with_alias(
     row: dict[str, str],
     prefixes: tuple[str, ...],
     suffixes: tuple[str, ...],
-) -> float | None:
+) -> tuple[float | None, str | None, str | None]:
     for prefix in prefixes:
         for suffix in suffixes:
-            value = row.get(f"{prefix}{suffix}")
-            parsed = _parse_odds(value)
+            column = f"{prefix}{suffix}"
+            parsed = _parse_odds(row.get(column))
             if parsed is not None:
-                return parsed
-    return None
+                return parsed, column, prefix
+    return None, None, None
 
 
 def _is_invalid_raw_odds(value: object) -> bool:
@@ -676,6 +806,102 @@ def _coverage_market_spec(market: str) -> tuple[str, str, int]:
     if market == "OU2.5":
         return "avg_preclose", "avg_close", 2
     raise ValueError("Supported historical odds coverage markets: 1X2, OU2.5")
+
+
+def _required_selections(market: str) -> tuple[str, ...]:
+    if market == "1X2":
+        return ("home", "draw", "away")
+    if market == "OU2.5":
+        return ("over", "under")
+    raise ValueError("Supported historical odds coverage markets: 1X2, OU2.5")
+
+
+def _quote_metadata_json(
+    *,
+    bookmaker: str,
+    market: str,
+    open_values: dict[str, tuple[float | None, str | None, str | None]],
+    close_values: dict[str, tuple[float | None, str | None, str | None]],
+) -> str:
+    entry_column_family = _column_family(open_values)
+    close_column_family = _column_family(close_values) if close_values else None
+    details = {
+        "bookmaker_family": bookmaker,
+        "market": market,
+        "entry_column_family": entry_column_family,
+        "entry_columns": _column_map(open_values),
+        "entry_price_semantics": (
+            "football_data_average_preclose_consensus"
+            if bookmaker == "Avg"
+            else "football_data_preclose_quote"
+        ),
+        "closing_column_family": close_column_family,
+        "closing_columns": _column_map(close_values),
+        "closing_price_semantics": (
+            "market_close_fair_average_consensus"
+            if bookmaker == "Avg"
+            else "football_data_closing_quote"
+        ),
+    }
+    return json.dumps(details, sort_keys=True)
+
+
+def _column_family(values: dict[str, tuple[float | None, str | None, str | None]]) -> str:
+    families = sorted(
+        {str(value[2]) for value in values.values() if value[0] is not None and value[2]}
+    )
+    if not families:
+        return "unknown"
+    if len(families) == 1:
+        return families[0]
+    return "mixed:" + ",".join(families)
+
+
+def _column_map(values: dict[str, tuple[float | None, str | None, str | None]]) -> dict[str, str]:
+    return {
+        selection: str(value[1])
+        for selection, value in values.items()
+        if value[0] is not None and value[1]
+    }
+
+
+def _metadata_value(raw_json: object, key: str) -> str:
+    if not raw_json:
+        return "unknown"
+    try:
+        data = json.loads(str(raw_json))
+    except json.JSONDecodeError:
+        return "invalid_metadata"
+    value = data.get(key)
+    return str(value) if value else "unknown"
+
+
+def _range_values(values: list[float]) -> tuple[float | None, float | None, float | None]:
+    if not values:
+        return None, None, None
+    return min(values), sum(values) / len(values), max(values)
+
+
+def _format_range(
+    minimum: float | None,
+    average: float | None,
+    maximum: float | None,
+) -> str:
+    if minimum is None or average is None or maximum is None:
+        return "na"
+    return f"min={minimum:.3f},avg={average:.3f},max={maximum:.3f}"
+
+
+def _is_suspicious_overround(value: float, market: str) -> bool:
+    if market == "OU2.5":
+        return value < 1.01 or value > 1.15
+    return value < 1.01 or value > 1.30
+
+
+def _format_counts(counts: dict[str, int]) -> str:
+    if not counts:
+        return ""
+    return ",".join(f"{key}:{counts[key]}" for key in sorted(counts))
 
 
 def _upsert_events(conn: sqlite3.Connection, events: list[HistoricalEvent]) -> int:
@@ -725,9 +951,9 @@ def _upsert_quotes(conn: sqlite3.Connection, quotes: list[HistoricalOddsQuote]) 
             INSERT OR REPLACE INTO historical_odds (
               source, source_event_id, bookmaker, market, selection, line,
               entry_odds, entry_odds_type, closing_odds, closing_odds_type,
-              is_real_historical_odds, is_timestamp_exact
+              is_real_historical_odds, is_timestamp_exact, metadata_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 quote.source,
@@ -742,6 +968,7 @@ def _upsert_quotes(conn: sqlite3.Connection, quotes: list[HistoricalOddsQuote]) 
                 quote.closing_odds_type,
                 int(quote.is_real_historical_odds),
                 int(quote.is_timestamp_exact),
+                quote.metadata_json,
             ),
         )
         count += cursor.rowcount

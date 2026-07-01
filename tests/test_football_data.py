@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import date
 
@@ -31,6 +32,10 @@ def test_football_data_schema_is_initialized() -> None:
     }
 
     assert {"historical_match", "historical_odds"}.issubset(tables)
+    odds_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(historical_odds)")
+    }
+    assert "metadata_json" in odds_columns
 
 
 def test_football_data_season_and_event_id_are_stable() -> None:
@@ -98,6 +103,9 @@ def test_parse_football_data_csv_extracts_avg_preclose_and_close_ou25() -> None:
     assert keyed[("OU2.5", "under")].closing_odds == 2.00
     assert keyed[("OU2.5", "over")].entry_odds_type == "avg_preclose"
     assert keyed[("OU2.5", "under")].closing_odds_type == "avg_close"
+    metadata = json.loads(keyed[("OU2.5", "over")].metadata_json or "{}")
+    assert metadata["entry_column_family"] == "Avg"
+    assert metadata["closing_price_semantics"] == "market_close_fair_average_consensus"
 
 
 def test_parse_football_data_csv_extracts_bbav_ou25_aliases() -> None:
@@ -115,6 +123,22 @@ def test_parse_football_data_csv_extracts_bbav_ou25_aliases() -> None:
     assert keyed[("OU2.5", "under")].entry_odds == 1.94
     assert keyed[("OU2.5", "over")].closing_odds == 1.86
     assert keyed[("OU2.5", "under")].closing_odds == 1.99
+    metadata = json.loads(keyed[("OU2.5", "over")].metadata_json or "{}")
+    assert metadata["entry_column_family"] == "BbAv"
+
+
+def test_parse_football_data_csv_discards_incomplete_ou25_two_way() -> None:
+    text = (
+        "Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,AvgH,AvgD,AvgA,AvgCH,AvgCD,AvgCA,"
+        "Avg>2.5\n"
+        "E0,11/08/2023,Burnley,Man City,0,3,A,8.00,5.00,1.36,9.00,5.50,1.33,"
+        "1.90\n"
+    )
+
+    parsed = parse_football_data_csv(text, league_code="E0", season="2023-2024")
+
+    assert len([quote for quote in parsed.quotes if quote.market == "OU2.5"]) == 0
+    assert parsed.invalid_odds == 1
 
 
 def test_football_data_coverage_report_counts_avg_open_and_close() -> None:
@@ -157,6 +181,7 @@ def test_football_data_coverage_report_counts_avg_open_and_close() -> None:
 
 def test_football_data_coverage_report_counts_ou25_avg_preclose_and_close() -> None:
     conn = _conn()
+    metadata = json.dumps({"entry_column_family": "Avg"})
     conn.execute(
         """
         INSERT INTO historical_match (
@@ -169,28 +194,65 @@ def test_football_data_coverage_report_counts_ou25_avg_preclose_and_close() -> N
         )
         """
     )
+    conn.execute(
+        """
+        INSERT INTO historical_match (
+          source, source_event_id, league_code, season, match_date,
+          home_team, away_team, home_goals, away_goals, result_1x2
+        )
+        VALUES (
+          'football-data', 'football-data:E0:2023-2024:2024-01-02:c:d',
+          'E0', '2023-2024', '2024-01-02', 'C', 'D', 2, 2, 'draw'
+        )
+        """
+    )
     for selection in ("over", "under"):
         conn.execute(
             """
             INSERT INTO historical_odds (
               source, source_event_id, bookmaker, market, selection, line,
-              entry_odds, entry_odds_type, closing_odds, closing_odds_type
+              entry_odds, entry_odds_type, closing_odds, closing_odds_type, metadata_json
             )
             VALUES (
               'football-data', 'football-data:E0:2023-2024:2024-01-01:a:b',
-              'Avg', 'OU2.5', ?, 2.5, 2.0, 'avg_preclose', 1.9, 'avg_close'
+              'Avg', 'OU2.5', ?, 2.5, ?, 'avg_preclose', ?, 'avg_close', ?
             )
             """,
-            (selection,),
+            (
+                selection,
+                1.90 if selection == "over" else 1.95,
+                1.85 if selection == "over" else 2.00,
+                metadata,
+            ),
         )
+    conn.execute(
+        """
+        INSERT INTO historical_odds (
+          source, source_event_id, bookmaker, market, selection, line,
+          entry_odds, entry_odds_type, metadata_json
+        )
+        VALUES (
+          'football-data', 'football-data:E0:2023-2024:2024-01-02:c:d',
+          'Avg', 'OU2.5', 'over', 2.5, 1.80, 'avg_preclose', ?
+        )
+        """,
+        (metadata,),
+    )
 
     rows = football_data_coverage_report(conn, league="EPL", market="OU2.5")
 
     assert len(rows) == 1
     assert rows[0].market == "OU2.5"
-    assert rows[0].matches == 1
-    assert rows[0].avg_open_rows == 2
-    assert rows[0].avg_open_coverage == 1.0
+    assert rows[0].matches == 2
+    assert rows[0].avg_open_rows == 3
+    assert rows[0].avg_open_coverage == 0.75
     assert rows[0].avg_entry_odds_type == "avg_preclose"
-    assert "avg_preclose_rows=2" in rows[0].as_row()
+    assert rows[0].complete_two_way_count == 1
+    assert rows[0].complete_two_way_rate == 0.5
+    assert rows[0].close_complete_count == 1
+    assert rows[0].close_complete_rate == 0.5
+    assert rows[0].entry_overround_warning_count == 0
+    assert rows[0].column_families == "Avg:3"
+    assert "avg_preclose_rows=3" in rows[0].as_row()
     assert "avg_close_rows=2" in rows[0].as_row()
+    assert "complete_two_way_rate=50.0%" in rows[0].as_row()

@@ -600,6 +600,14 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added `historical-odds-report --market OU2.5` so coverage can be audited before enabling the Phase 3 benchmark.
 - Added tests for Football-Data OU2.5 parsing and OU2.5 coverage. The benchmark remains intentionally blocked until remote `pytest`/`ruff` are green and real multi-league totals coverage is confirmed.
 
+### 2026-07-01 - Football-Data OU2.5 coverage hardening
+
+- Added `historical_odds.metadata_json` under schema version 4 so OU2.5 rows retain the source column family (`Avg` vs `BbAv`) while keeping the normalized `avg_preclose` entry type for later benchmarking.
+- Made OU2.5 ingestion explicitly require complete preclose two-way odds before emitting quotes; partial `over` or `under` rows are discarded and counted as invalid.
+- Extended `historical-odds-report --market OU2.5` with complete two-way rate, close-complete rate, entry/close overround ranges, overround warning counts, and column-family distribution by league and season.
+- Documented `avg_close` as a Football-Data average closing consensus/fair-price proxy, not a single-bookmaker closing quote.
+- Added tests for incomplete two-way rejection, `BbAv` alias metadata, coverage completeness, and overround-health output. Phase 3 remains blocked until the formal gate and live coverage readout are green.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.

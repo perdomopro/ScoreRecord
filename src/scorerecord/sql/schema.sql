@@ -307,6 +307,7 @@ CREATE TABLE IF NOT EXISTS historical_odds (
   closing_odds_type TEXT,
   is_real_historical_odds INTEGER NOT NULL DEFAULT 1,
   is_timestamp_exact INTEGER NOT NULL DEFAULT 0,
+  metadata_json TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

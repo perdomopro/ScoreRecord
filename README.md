@@ -70,8 +70,9 @@ available, those reports use a training-window marginal probability as a market 
 they are for calibration and ranking diagnostics rather than real ROI claims.
 
 For covered club leagues, `ingest-football-data` can load Football-Data CSV results,
-1X2 odds, and OU2.5 totals where the CSV exposes complete two-way prices. Then
-`backtest --odds-mode historical` writes
+1X2 odds, and OU2.5 totals where the CSV exposes complete two-way prices. The
+OU2.5 coverage report includes two-way completeness, close completeness, column-family
+counts, and overround ranges. Then `backtest --odds-mode historical` writes
 separate real-odds CSVs with `profit_*_real` and `clv_real`. This is a club-league
 historical ROI harness, not a direct World Cup profitability proof.
 Use `--season` on historical backtests only when you intentionally want to evaluate one
