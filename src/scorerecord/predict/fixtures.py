@@ -8,11 +8,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scorerecord.features.build import MatchFeature, load_match_features
 from scorerecord.evaluate.goal_markets import _walk_forward_predictions, build_goal_markets
+from scorerecord.features.build import MatchFeature, load_match_features
 from scorerecord.models.calibration import PlattCalibrator
 from scorerecord.models.dixon_coles import DixonColes
-from scorerecord.models.manifest import MODEL_VERSION, build_model_manifest
+from scorerecord.models.manifest import (
+    MODEL_VERSION,
+    TRAINED_UNTIL,
+    build_model_manifest,
+    build_model_artifact,
+    persist_model_artifact,
+)
 from scorerecord.models.markets import (
     btts_probability,
     double_chance_probabilities,
@@ -22,6 +28,7 @@ from scorerecord.models.markets import (
     under_probability,
 )
 from scorerecord.runs import ingest_run, record_quality
+from scorerecord.time_utils import parse_kickoff_utc
 
 
 DEFAULT_OU_LINES = (1.5, 2.5, 3.5)
@@ -70,18 +77,28 @@ def publish_fixture_predictions(
     exact_top_n: int = 5,
     cwd: Path | None = None,
 ) -> FixturePublishSummary:
-    training_matches = load_match_features(conn)
+    training_matches = [
+        match for match in load_match_features(conn) if match.match_date < TRAINED_UNTIL
+    ]
     model = DixonColes().fit(training_matches)
     calibrators = _fit_goal_market_calibrators(training_matches, ou_lines=ou_lines)
     generated_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     with ingest_run(conn, "predict-fixtures", source="fixture", cwd=cwd) as run_id:
+        model_artifact = build_model_artifact(
+            conn,
+            prediction_run_id=run_id,
+            calibration_coefficients=_calibration_coefficients(calibrators),
+        )
+        persist_model_artifact(conn, artifact=model_artifact, prediction_run_id=run_id)
         _record_model_manifest(conn, run_id)
-        for artifact in calibrators.values():
-            _record_calibrator_artifact(conn, run_id, artifact)
+        for calibrator_artifact in calibrators.values():
+            _record_calibrator_artifact(conn, run_id, calibrator_artifact)
         fixtures = conn.execute(
             """
-            SELECT fixture_id, kickoff_local, home_id, away_id, home_placeholder, away_placeholder
+            SELECT
+              fixture_id, kickoff_local, kickoff_utc, home_id, away_id,
+              home_placeholder, away_placeholder, home_score, away_score
             FROM fixture
             ORDER BY kickoff_local, fixture_id
             """
@@ -91,6 +108,12 @@ def publish_fixture_predictions(
         inserted_predictions = 0
         for fixture in fixtures:
             if fixture["home_id"] is None or fixture["away_id"] is None:
+                skipped_fixtures += 1
+                continue
+            if fixture["home_score"] is not None or fixture["away_score"] is not None:
+                skipped_fixtures += 1
+                continue
+            if _fixture_started(fixture, generated_utc):
                 skipped_fixtures += 1
                 continue
             predicted_fixtures += 1
@@ -107,14 +130,15 @@ def publish_fixture_predictions(
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO prediction (
-                      run_id, fixture_id, model, market, selection, prob,
+                      run_id, fixture_id, artifact_id, model, market, selection, prob,
                       fair_odds, generated_utc, model_version
                     )
-                    VALUES (?, ?, 'dixon_coles', ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, 'dixon_coles', ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         run_id,
                         fixture["fixture_id"],
+                        model_artifact.artifact_id,
                         market,
                         selection,
                         prob,
@@ -140,6 +164,10 @@ def publish_fixture_predictions(
                     "skipped_fixtures": skipped_fixtures,
                     "inserted_predictions": inserted_predictions,
                     "model_version": MODEL_VERSION,
+                    "model_artifact_id": model_artifact.artifact_id,
+                    "trained_until": TRAINED_UNTIL,
+                    "training_rows": len(training_matches),
+                    "publish_policy": "forward_only_unstarted_fixtures",
                 },
                 sort_keys=True,
             ),
@@ -147,6 +175,22 @@ def publish_fixture_predictions(
         _record_fixture_elo_quality(conn, run_id, fixtures)
         conn.commit()
     return summary
+
+
+def _calibration_coefficients(
+    calibrators: dict[str, CalibratorArtifact],
+) -> dict[str, dict[str, object]]:
+    return {
+        market: {
+            "a": artifact.calibrator.a,
+            "b": artifact.calibrator.b,
+            "n": artifact.n,
+            "raw_mean": artifact.raw_mean,
+            "calibrated_mean": artifact.calibrated_mean,
+            "observed_rate": artifact.observed_rate,
+        }
+        for market, artifact in sorted(calibrators.items())
+    }
 
 
 def _fixture_as_match_feature(conn: sqlite3.Connection, fixture: sqlite3.Row) -> MatchFeature:
@@ -167,6 +211,17 @@ def _fixture_as_match_feature(conn: sqlite3.Connection, fixture: sqlite3.Row) ->
         elo_home_pre=elo_home if elo_home is not None else 1500.0,
         elo_away_pre=elo_away if elo_away is not None else 1500.0,
     )
+
+
+def _fixture_started(fixture: sqlite3.Row, generated_utc: str) -> bool:
+    kickoff_utc = parse_kickoff_utc(
+        kickoff_utc=fixture["kickoff_utc"],
+        kickoff_local=fixture["kickoff_local"],
+    )
+    generated = parse_kickoff_utc(kickoff_utc=generated_utc)
+    if kickoff_utc is None or generated is None:
+        return False
+    return generated >= kickoff_utc
 
 
 def _latest_elo(conn: sqlite3.Connection, team_id: int) -> float | None:

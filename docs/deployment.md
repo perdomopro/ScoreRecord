@@ -98,8 +98,9 @@ Start timers when `.env` is ready:
 ```bash
 systemctl --user start scorerecord-gui.service
 systemctl --user start scorerecord-odds.timer
-systemctl --user start scorerecord-preplay-odds.timer
-systemctl --user start scorerecord-daily.timer
+# Keep these stopped until the derived-closing and paper policy checks are reviewed:
+# systemctl --user start scorerecord-preplay-odds.timer
+# systemctl --user start scorerecord-daily.timer
 systemctl --user start scorerecord-postmatch.timer
 systemctl --user start scorerecord-weekly.timer
 ```
@@ -108,8 +109,8 @@ Recommended schedule:
 
 - Read-only dashboard: `scorerecord-gui.service` on port `8765`
 - Hourly odds: `scorerecord-odds.timer`
-- Pre-play closing odds, hourly at minute 25 for fixtures inside the next 60 minutes: `scorerecord-preplay-odds.timer`
-- Daily 08:00 predictions + paper recommendations: `scorerecord-daily.timer`
+- Pre-play raw odds snapshots: use only after confirming the service no longer writes capture-time `is_closing=1`; closing is derived from complete `odds_snapshots` before kickoff.
+- Daily predictions + paper recommendations: keep stopped until `db-health`, `model-manifest`, `compute-edge --dry-run`, and `recommend --dry-run` are reviewed after deployment.
 - Nightly 23:30 settlement + CLV: `scorerecord-postmatch.timer`
 - Weekly monitoring, including goal-market gates and Platt coefficient drift: `scorerecord-weekly.timer`
 
@@ -141,10 +142,12 @@ Do not use real staking until paper CLV is positive on a forward sample. Keep qu
 
 ## Run ID Scope
 
-`ingest_run.run_id` values are local to each SQLite database. The homeserver manifest is authoritative for production even when its `validated_run_id` differs from the local development DB. Verify production gates with:
+`ingest_run.run_id` values are local to each SQLite database. The homeserver manifest is authoritative for production even when its `predictive_validation_run_id` differs from the local development DB. `market_validation_status=NOT_TESTED` means the artifact has not beaten real forward market/CLV evidence yet. Verify production gates with:
 
 ```bash
 cd /home/adrian/scorerecord
+.venv/bin/scorerecord migrate-db
+.venv/bin/scorerecord db-health
 .venv/bin/scorerecord model-manifest
-sqlite3 data/scorerecord.db "SELECT run_id, metric_name, metric_value FROM data_quality WHERE check_name='goal_market_gate' ORDER BY run_id, metric_name;"
+sqlite3 data/scorerecord.db "SELECT run_id, metric_name, metric_value FROM data_quality WHERE check_name IN ('predictive_baseline_gate','goal_market_gate') ORDER BY run_id, metric_name;"
 ```

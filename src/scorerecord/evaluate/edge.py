@@ -267,11 +267,48 @@ def _latest_odds(
         params = (bookmaker,)
     rows = conn.execute(
         f"""
-        WITH latest AS (
-          SELECT fixture_id, bookmaker, market, selection, MAX(captured_utc) AS captured_utc
+        WITH complete AS (
+          SELECT
+            fixture_id,
+            bookmaker,
+            market,
+            captured_utc,
+            COUNT(DISTINCT selection) AS selection_count,
+            SUM(CASE WHEN selection = 'home' THEN 1 ELSE 0 END) AS has_home,
+            SUM(CASE WHEN selection = 'draw' THEN 1 ELSE 0 END) AS has_draw,
+            SUM(CASE WHEN selection = 'away' THEN 1 ELSE 0 END) AS has_away,
+            SUM(CASE WHEN selection = 'over' THEN 1 ELSE 0 END) AS has_over,
+            SUM(CASE WHEN selection = 'under' THEN 1 ELSE 0 END) AS has_under,
+            SUM(CASE WHEN selection = 'yes' THEN 1 ELSE 0 END) AS has_yes,
+            SUM(CASE WHEN selection = 'no' THEN 1 ELSE 0 END) AS has_no
           FROM odds
           WHERE is_closing = 0
-          GROUP BY fixture_id, bookmaker, market, selection
+          GROUP BY fixture_id, bookmaker, market, captured_utc
+          HAVING
+            (
+              market = '1X2'
+              AND selection_count = 3
+              AND has_home > 0
+              AND has_draw > 0
+              AND has_away > 0
+            )
+            OR (
+              market LIKE 'OU%'
+              AND selection_count = 2
+              AND has_over > 0
+              AND has_under > 0
+            )
+            OR (
+              market = 'BTTS'
+              AND selection_count = 2
+              AND has_yes > 0
+              AND has_no > 0
+            )
+        ),
+        latest AS (
+          SELECT fixture_id, bookmaker, market, MAX(captured_utc) AS captured_utc
+          FROM complete
+          GROUP BY fixture_id, bookmaker, market
         )
         SELECT o.*
         FROM odds o
@@ -279,7 +316,6 @@ def _latest_odds(
           ON l.fixture_id = o.fixture_id
          AND l.bookmaker = o.bookmaker
          AND l.market = o.market
-         AND l.selection = o.selection
          AND l.captured_utc = o.captured_utc
         WHERE o.is_closing = 0
           {filter_sql}

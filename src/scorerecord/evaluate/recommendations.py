@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -243,9 +244,10 @@ def compute_recommendation_clv(
                 INSERT OR IGNORE INTO recommendation_result (
                   run_id, recommendation_run_id, fixture_id, market, selection,
                   bookmaker, model_version, odds_taken, closing_odds, clv,
+                  clv_log, clv_fair_ev, closing_snapshot_at,
                   recommendation_generated_utc, closing_captured_utc, computed_utc
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -258,6 +260,9 @@ def compute_recommendation_clv(
                     row["odds_taken"],
                     row["closing_odds"],
                     row["clv"],
+                    row["clv_log"],
+                    row["clv_fair_ev"],
+                    row["closing_snapshot_at"],
                     row["recommendation_generated_utc"],
                     row["closing_captured_utc"],
                     computed_utc,
@@ -279,6 +284,14 @@ def compute_recommendation_clv(
 
 def compute_clv(odds_taken: float, closing_odds: float) -> float:
     return odds_taken / closing_odds - 1.0
+
+
+def compute_clv_log(odds_taken: float, closing_odds: float) -> float:
+    return math.log(odds_taken / closing_odds)
+
+
+def compute_clv_fair_ev(odds_taken: float, closing_fair_prob: float) -> float:
+    return odds_taken * closing_fair_prob - 1.0
 
 
 def _recommendation_candidates(
@@ -461,14 +474,73 @@ def _record_recommendation_quality(
         )
 
 
-def _clv_rows(conn: sqlite3.Connection, *, model_version: str) -> list[sqlite3.Row]:
-    return conn.execute(
+def _clv_rows(conn: sqlite3.Connection, *, model_version: str) -> list[dict[str, object]]:
+    rows = conn.execute(
         """
-        WITH latest_closing AS (
-          SELECT fixture_id, market, selection, bookmaker, MAX(captured_utc) AS captured_utc
-          FROM odds
-          WHERE is_closing = 1
-          GROUP BY fixture_id, market, selection, bookmaker
+        WITH snapshot_selection AS (
+          SELECT
+            fixture_id,
+            market,
+            bookmaker,
+            snapshot_at,
+            selection,
+            MAX(decimal_odds) AS decimal_odds
+          FROM odds_snapshots
+          WHERE fixture_id IS NOT NULL
+          GROUP BY fixture_id, market, bookmaker, snapshot_at, selection
+        ),
+        complete_snapshots AS (
+          SELECT
+            fixture_id,
+            market,
+            bookmaker,
+            snapshot_at,
+            COUNT(DISTINCT selection) AS selection_count,
+            SUM(CASE WHEN selection = 'home' THEN 1 ELSE 0 END) AS has_home,
+            SUM(CASE WHEN selection = 'draw' THEN 1 ELSE 0 END) AS has_draw,
+            SUM(CASE WHEN selection = 'away' THEN 1 ELSE 0 END) AS has_away,
+            SUM(CASE WHEN selection = 'over' THEN 1 ELSE 0 END) AS has_over,
+            SUM(CASE WHEN selection = 'under' THEN 1 ELSE 0 END) AS has_under,
+            SUM(CASE WHEN selection = 'yes' THEN 1 ELSE 0 END) AS has_yes,
+            SUM(CASE WHEN selection = 'no' THEN 1 ELSE 0 END) AS has_no,
+            SUM(1.0 / decimal_odds) AS overround
+          FROM snapshot_selection
+          GROUP BY fixture_id, market, bookmaker, snapshot_at
+          HAVING
+            (
+              market = '1X2'
+              AND selection_count = 3
+              AND has_home > 0
+              AND has_draw > 0
+              AND has_away > 0
+            )
+            OR (
+              market LIKE 'OU%'
+              AND selection_count = 2
+              AND has_over > 0
+              AND has_under > 0
+            )
+            OR (
+              market = 'BTTS'
+              AND selection_count = 2
+              AND has_yes > 0
+              AND has_no > 0
+            )
+        ),
+        latest_closing AS (
+          SELECT
+            r.rowid AS recommendation_rowid,
+            MAX(cs.snapshot_at) AS snapshot_at
+          FROM recommendation r
+          JOIN fixture f ON f.fixture_id = r.fixture_id
+          JOIN complete_snapshots cs
+            ON cs.fixture_id = r.fixture_id
+           AND cs.market = r.market
+           AND cs.bookmaker = r.bookmaker
+          WHERE f.kickoff_utc IS NOT NULL
+            AND datetime(cs.snapshot_at) < datetime(f.kickoff_utc)
+            AND datetime(cs.snapshot_at) >= datetime(r.generated_utc)
+          GROUP BY r.rowid
         )
         SELECT
           r.run_id AS recommendation_run_id,
@@ -478,22 +550,26 @@ def _clv_rows(conn: sqlite3.Connection, *, model_version: str) -> list[sqlite3.R
           r.bookmaker,
           r.model_version,
           r.market_odds AS odds_taken,
-          o.decimal_odds AS closing_odds,
-          (r.market_odds / o.decimal_odds) - 1.0 AS clv,
+          os.decimal_odds AS closing_odds,
+          (r.market_odds / os.decimal_odds) - 1.0 AS clv,
+          ((1.0 / os.decimal_odds) / cs.overround) AS closing_fair_prob,
           r.generated_utc AS recommendation_generated_utc,
-          o.captured_utc AS closing_captured_utc
+          os.snapshot_at AS closing_captured_utc,
+          os.snapshot_at AS closing_snapshot_at
         FROM recommendation r
         JOIN latest_closing lc
-          ON lc.fixture_id = r.fixture_id
-         AND lc.market = r.market
-         AND lc.selection = r.selection
-         AND lc.bookmaker = r.bookmaker
-        JOIN odds o
-          ON o.fixture_id = lc.fixture_id
-         AND o.market = lc.market
-         AND o.selection = lc.selection
-         AND o.bookmaker = lc.bookmaker
-         AND o.captured_utc = lc.captured_utc
+          ON lc.recommendation_rowid = r.rowid
+        JOIN complete_snapshots cs
+          ON cs.fixture_id = r.fixture_id
+         AND cs.market = r.market
+         AND cs.bookmaker = r.bookmaker
+         AND cs.snapshot_at = lc.snapshot_at
+        JOIN snapshot_selection os
+          ON os.fixture_id = r.fixture_id
+         AND os.market = r.market
+         AND os.selection = r.selection
+         AND os.bookmaker = r.bookmaker
+         AND os.snapshot_at = lc.snapshot_at
         WHERE r.paper = 1
           AND r.model_version = ?
           AND NOT EXISTS (
@@ -510,6 +586,19 @@ def _clv_rows(conn: sqlite3.Connection, *, model_version: str) -> list[sqlite3.R
         """,
         (model_version,),
     ).fetchall()
+    output: list[dict[str, object]] = []
+    for row in rows:
+        enriched = dict(row)
+        enriched["clv_log"] = compute_clv_log(
+            float(row["odds_taken"]),
+            float(row["closing_odds"]),
+        )
+        enriched["clv_fair_ev"] = compute_clv_fair_ev(
+            float(row["odds_taken"]),
+            float(row["closing_fair_prob"]),
+        )
+        output.append(enriched)
+    return output
 
 
 def _recommendation_count(conn: sqlite3.Connection, *, model_version: str) -> int:
@@ -559,7 +648,8 @@ def _record_clv_quality(conn: sqlite3.Connection, run_id: int, summary: ClvSumma
         "recommendations_seen": summary.recommendations_seen,
         "clv_rows": summary.clv_rows,
         "mean_clv": summary.mean_clv,
-        "gate": "mean_clv should be positive over 50+ settled forward picks before real staking",
+        "closing_source": "last complete odds_snapshots market before kickoff and after recommendation",
+        "gate": "mean_clv and clv_fair_ev should be positive over preregistered forward picks before real staking",
     }
     for metric_name, value in [
         ("recommendations_seen", summary.recommendations_seen),

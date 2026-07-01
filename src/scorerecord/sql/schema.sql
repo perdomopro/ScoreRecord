@@ -1,3 +1,9 @@
+CREATE TABLE IF NOT EXISTS schema_migration (
+  version INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS team (
   team_id INTEGER PRIMARY KEY,
   canonical TEXT UNIQUE NOT NULL,
@@ -170,9 +176,24 @@ CREATE TABLE IF NOT EXISTS player_prop (
   PRIMARY KEY (fixture_id, player_id, market, line, bookmaker, captured_utc)
 );
 
+CREATE TABLE IF NOT EXISTS model_artifact (
+  artifact_id TEXT PRIMARY KEY,
+  model_version TEXT NOT NULL,
+  predictive_validation_run_id INTEGER REFERENCES ingest_run(run_id),
+  market_validation_status TEXT NOT NULL DEFAULT 'NOT_TESTED',
+  trained_until TEXT NOT NULL,
+  training_rows INTEGER NOT NULL,
+  params_json TEXT NOT NULL,
+  calibration_json TEXT,
+  code_git_sha TEXT,
+  created_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  details_json TEXT
+);
+
 CREATE TABLE IF NOT EXISTS prediction (
   run_id INTEGER REFERENCES ingest_run(run_id),
   fixture_id TEXT NOT NULL REFERENCES fixture(fixture_id),
+  artifact_id TEXT REFERENCES model_artifact(artifact_id),
   model TEXT NOT NULL,
   market TEXT NOT NULL,
   selection TEXT NOT NULL,
@@ -240,6 +261,9 @@ CREATE TABLE IF NOT EXISTS recommendation_result (
   odds_taken REAL NOT NULL,
   closing_odds REAL NOT NULL,
   clv REAL NOT NULL,
+  clv_log REAL,
+  clv_fair_ev REAL,
+  closing_snapshot_at TEXT,
   recommendation_generated_utc TEXT NOT NULL,
   closing_captured_utc TEXT NOT NULL,
   computed_utc TEXT NOT NULL,

@@ -299,7 +299,10 @@ def test_compute_recommendation_clv_matches_closing_odds() -> None:
     conn = _conn()
     recommendation_run_id = _run(conn, "recommend")
     conn.execute(
-        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m2', '2026-06-11 13:00 UTC-6')"
+        """
+        INSERT INTO fixture (fixture_id, kickoff_local, kickoff_utc)
+        VALUES ('m2', '2026-06-11 13:00 UTC-6', '2026-06-11T19:00:00+00:00')
+        """
     )
     conn.execute(
         """
@@ -314,18 +317,25 @@ def test_compute_recommendation_clv_matches_closing_odds() -> None:
         """,
         (recommendation_run_id, MODEL_VERSION),
     )
-    conn.execute(
-        """
-        INSERT INTO odds (
-          fixture_id, market, selection, decimal_odds, bookmaker, captured_utc, is_closing
+    for selection, odds in [("over", 1.85), ("under", 2.05)]:
+        conn.execute(
+            """
+            INSERT INTO odds_snapshots (
+              event_id, fixture_id, bookmaker, market, selection, line,
+              decimal_odds, snapshot_at, commence_time, source
+            )
+            VALUES ('event-m2', 'm2', 'Bet365', 'OU2.5', ?, 2.5,
+                    ?, '2026-06-11T18:00:00+00:00',
+                    '2026-06-11T19:00:00Z', 'odds-api.io')
+            """,
+            (selection, odds),
         )
-        VALUES ('m2', 'OU2.5', 'over', 1.85, 'Bet365',
-                '2026-06-11T18:00:00+00:00', 1)
-        """
-    )
 
     summary = compute_recommendation_clv(conn)
 
     assert summary.clv_rows == 1
     assert round(summary.mean_clv, 8) == round(compute_clv(2.00, 1.85), 8)
-    assert conn.execute("SELECT COUNT(*) FROM recommendation_result").fetchone()[0] == 1
+    row = conn.execute("SELECT * FROM recommendation_result").fetchone()
+    assert row["closing_snapshot_at"] == "2026-06-11T18:00:00+00:00"
+    assert row["clv_log"] is not None
+    assert row["clv_fair_ev"] is not None

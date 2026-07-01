@@ -22,6 +22,8 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
 scorerecord init-db
+scorerecord migrate-db
+scorerecord db-health
 scorerecord ingest-worldcup
 scorerecord ingest-history
 scorerecord build-elo
@@ -33,7 +35,7 @@ scorerecord predict-fixtures
 scorerecord model-manifest
 scorerecord settle-fixtures --dry-run
 scorerecord fetch-odds --dry-run
-scorerecord fetch-odds --closing --closing-window-minutes 60 --dry-run
+scorerecord fetch-odds --preplay-window-minutes 60 --dry-run
 scorerecord odds-snapshot-report
 scorerecord compute-edge --dry-run
 scorerecord recommend --max-edge 0.25 --max-odds-age-minutes 180 --min-books 2 --dry-run

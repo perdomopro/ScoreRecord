@@ -1,5 +1,5 @@
 [Unit]
-Description=Run ScoreRecord pre-play closing odds fetch
+Description=Run ScoreRecord pre-play raw odds snapshot fetch
 
 [Timer]
 OnCalendar=*-*-* *:25:00

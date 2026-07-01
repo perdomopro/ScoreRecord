@@ -7,7 +7,14 @@ from datetime import date
 from pathlib import Path
 
 from scorerecord.aliases import seed_team_aliases
-from scorerecord.db import connect, init_db, table_count
+from scorerecord.db import (
+    connect,
+    init_db,
+    migrate_db,
+    schema_migration_rows,
+    schema_version,
+    table_count,
+)
 from scorerecord.evaluate.backtest import (
     run_market_benchmark_report,
     run_calibration_report,
@@ -28,6 +35,7 @@ from scorerecord.evaluate.tune_decay import run_decay_sweep
 from scorerecord.evaluate.walk_forward import run_walk_forward
 from scorerecord.features.elo import rebuild_elo
 from scorerecord.gui import serve_dashboard
+from scorerecord.health import db_health_checks
 from scorerecord.ingest.football_data import (
     football_data_coverage_report,
     football_data_season_range,
@@ -55,6 +63,9 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init-db", help="Create/update database schema and seed aliases.")
+    subparsers.add_parser("migrate-db", help="Apply idempotent database migrations.")
+    subparsers.add_parser("db-version", help="Print applied database migration versions.")
+    subparsers.add_parser("db-health", help="Run SQLite, schema, and pipeline health checks.")
 
     worldcup = subparsers.add_parser("ingest-worldcup", help="Ingest World Cup 2026 fixtures.")
     worldcup.add_argument("--refresh", action="store_true", help="Refresh network cache.")
@@ -124,12 +135,24 @@ def main(argv: list[str] | None = None) -> int:
     odds.add_argument("--fixture-id")
     odds.add_argument("--max-requests", type=int, default=90)
     odds.add_argument("--min-interval-seconds", type=float, default=36.0)
-    odds.add_argument("--closing", action="store_true", help="Store odds as closing prices.")
+    odds.add_argument(
+        "--closing",
+        action="store_true",
+        help=(
+            "Deprecated compatibility flag: limit to the preplay window, but store raw odds; "
+            "closing prices are derived later from odds_snapshots."
+        ),
+    )
     odds.add_argument(
         "--closing-window-minutes",
         type=int,
         default=60,
-        help="When --closing is set, only fetch fixtures starting within this many minutes.",
+        help="Deprecated alias used with --closing for preplay-window raw capture.",
+    )
+    odds.add_argument(
+        "--preplay-window-minutes",
+        type=int,
+        help="Fetch raw odds only for fixtures starting within this many minutes.",
     )
     odds.add_argument("--dry-run", action="store_true")
     snapshot_report = subparsers.add_parser(
@@ -288,7 +311,27 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Initialized {settings.db_path}")
             return 0
 
+        if args.command == "migrate-db":
+            version = migrate_db(conn)
+            print(f"Applied database migrations through version {version}")
+            return 0
+
         init_db(conn)
+
+        if args.command == "db-version":
+            print(f"schema_version: {schema_version(conn)}")
+            for row in schema_migration_rows(conn):
+                print(
+                    f"migration: version={row['version']} "
+                    f"name={row['name']} applied_utc={row['applied_utc']}"
+                )
+            return 0
+
+        if args.command == "db-health":
+            checks = db_health_checks(conn)
+            for check in checks:
+                print(check.as_row())
+            return 0
 
         if args.command == "ingest-worldcup":
             with ingest_run(conn, "ingest-worldcup", source="openfootball", cwd=Path.cwd()) as run_id:
@@ -467,6 +510,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "fetch-odds":
+            preplay_window_minutes = (
+                args.preplay_window_minutes
+                if args.preplay_window_minutes is not None
+                else args.closing_window_minutes if args.closing else None
+            )
             summary = fetch_live_odds(
                 conn,
                 api_key=settings.odds_api_io_key,
@@ -478,8 +526,8 @@ def main(argv: list[str] | None = None) -> int:
                 fixture_id=args.fixture_id,
                 max_requests=args.max_requests,
                 dry_run=args.dry_run,
-                is_closing=args.closing,
-                closing_window_minutes=args.closing_window_minutes,
+                is_closing=args.closing or args.preplay_window_minutes is not None,
+                closing_window_minutes=preplay_window_minutes,
                 min_interval_seconds=args.min_interval_seconds,
                 cwd=Path.cwd(),
             )
@@ -668,6 +716,7 @@ def main(argv: list[str] | None = None) -> int:
                 "fixture",
                 "odds",
                 "edge_analysis",
+                "model_artifact",
                 "prediction",
                 "prediction_result",
                 "team_rating",
@@ -680,6 +729,7 @@ def main(argv: list[str] | None = None) -> int:
                 "eval_metric",
                 "ingest_run",
                 "data_quality",
+                "schema_migration",
             ]:
                 print(f"{table}: {table_count(conn, table)}")
             return 0

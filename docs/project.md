@@ -47,7 +47,9 @@ Important tables:
 - `team_rating`: current Elo snapshot per team.
 - `team_rating_history`: pre/post-match Elo history by team and historical match.
 - `odds`: raw bookmaker prices, stored before de-vig or recommendation logic.
+- `odds_snapshots`: append-only live price snapshots; closing prices are derived from complete snapshots rather than written as capture-time truth.
 - `edge_analysis`: model probability versus de-vigged market probability, raw implied probability, overround, odds quality diagnostics, EV edge, fixture Elo difference, close-match flag, high-edge reason, and conservative recommendation score.
+- `model_artifact`: reproducible model artifact manifest with training cutoff, training rows, parameters, calibrators, validation run provenance, market-validation status, and git SHA.
 - `prediction`: future model outputs for tournament fixtures.
 - `prediction_result`: settled prediction labels and scoring metrics for finished fixtures.
 - `recommendation`: future value-bet recommendations.
@@ -55,6 +57,7 @@ Important tables:
 - `eval_metric`: backtest metrics such as Brier and log-loss, linked to `ingest_run`.
 - `ingest_run`: job provenance, status, source, and git SHA when available.
 - `data_quality`: quality metrics tied to runs.
+- `schema_migration`: idempotent schema-version ledger for operational migrations.
 
 ## Modeling Roadmap
 
@@ -110,6 +113,9 @@ Fase 6 is deployment:
 
 ```bash
 scorerecord init-db
+scorerecord migrate-db
+scorerecord db-version
+scorerecord db-health
 scorerecord ingest-worldcup
 scorerecord ingest-history
 scorerecord build-elo
@@ -164,8 +170,8 @@ Fase 2 candidate:
 - `dixon_coles`: numpy-only bivariate Poisson goals model with ridge shrinkage, tuned 3-year time-decay half-life, home advantage, and low-score Dixon-Coles correction.
 - `tune-decay`: sweeps Dixon-Coles half-life values and selects the winner by close-match log-loss.
 - `goal-markets`: evaluates Dixon-Coles-derived OU and BTTS probabilities against binary marginal baselines.
-- `predict-fixtures`: writes Dixon-Coles 1X2, OU, BTTS, double-chance, and top exact-score predictions for resolved tournament fixtures.
-- `model-manifest`: prints the frozen production-candidate manifest.
+- `predict-fixtures`: writes Dixon-Coles 1X2, OU, BTTS, double-chance, and top exact-score predictions only for resolved fixtures that have not started.
+- `model-manifest`: prints the frozen production-candidate manifest and latest `model_artifact_id`.
 - `settle-fixtures`: scores finished fixtures, guarded against post-kickoff backfill by default.
 
 Frozen production-candidate manifest:
@@ -174,8 +180,11 @@ Frozen production-candidate manifest:
 - Base model: Dixon-Coles with 3-year half-life (`xi=0.000633011`).
 - Goal markets calibrated with Platt scaling: BTTS, OU1.5, OU2.5, OU3.5.
 - Calibration mode: prequential/out-of-fold for validation; current fixture-publish calibrators are fit on historical out-of-fold predictions.
-- Latest validated goal-market run: `run_id=19`.
-- Latest prediction publish with manifest and calibrator artifacts: `run_id=21`.
+- Predictive validation field: `predictive_validation_run_id`; the previous `validated_run_id` wording is intentionally retired because market validation is a separate question.
+- Market validation status for the World Cup artifact: `NOT_TESTED` until real forward odds/CLV evidence exists.
+- Training cutoff: `match_history.date < 2026-06-11`, so World Cup 2026 results cannot leak into the V1 artifact.
+- Latest local predictive goal-market run: `run_id=19`.
+- Latest local forward-only prediction publish with model artifact: `run_id=25`.
 - Run IDs are local to each SQLite database. A local `run_id=19` and a homeserver `run_id=5` can both be the latest passing goal-market run in their own DBs.
 
 Latest local walk-forward result, `--start-year 2021`:
@@ -224,10 +233,10 @@ Settlement status:
 
 Fase 4 is implemented as a paper pipeline, not a staking pipeline:
 
-- `fetch-odds`: maps local resolved fixtures to Odds-API.io events and stores raw odds in `odds`.
-- `compute-edge`: applies multiplicative de-vig and writes EV/probability edge to `edge_analysis`.
+- `fetch-odds`: maps local resolved fixtures to Odds-API.io events and stores raw odds in `odds` plus append-only `odds_snapshots`.
+- `compute-edge`: applies multiplicative de-vig from the latest complete market snapshot and writes EV/probability edge to `edge_analysis`.
 - `recommend`: creates paper recommendations from the latest edge run, using a 5% default EV threshold, 25% max EV sanity cap, 15% minimum model probability, odds freshness/depth filters, max 1 pick per fixture, conservative recommendation score, quarter Kelly, and 1-unit cap.
-- `compute-clv`: compares paper recommendations to later `is_closing=1` odds and writes granular CLV to `recommendation_result`.
+- `compute-clv`: derives the closing price from the last complete `odds_snapshots` market before kickoff and after the recommendation, then writes ratio CLV, log CLV, and fair-EV CLV to `recommendation_result`.
 - `calibrator-drift`: compares Platt coefficients between the two latest fixture-prediction runs and records drift alerts in `data_quality`.
 
 Odds-API.io integration notes:
@@ -544,6 +553,21 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Worst supported model-vs-market segments included EPL away `2.00-3.00`, EPL away `30-40%` model bucket, away `60-75%` model bucket, and EPL home/away mid-odds segments. These are not candidates for promotion; they are model-repair targets.
 - Supported model-better rows exist only in narrow/low-probability slices, such as model `0-5%`, model `5-10%`, and EPL draw `3.00-5.00`, but the gains are small and not enough to justify a betting policy.
 - Conclusion: ScoreRecord is now a reliable statistical audit tool for this question: it can say where the current model loses. The next improvement should be model/calibration research validated out of sample, not score tweaks, front-end work, or real staking.
+
+### 2026-07-01 - Operational hardening, artifacts, and derived closing
+
+- Added `schema_migration`, `migrate-db`, `db-version`, and `db-health` so schema state, SQLite integrity, foreign keys, kickoff UTC coverage, artifact coverage, forward-only prediction status, snapshot coverage, and failed runs can be checked explicitly.
+- Added a shared UTC parser for ISO timestamps and openfootball-style `UTC-6` kickoff strings, then wired it into fixture ingest, odds matching, settlement, and migration backfill.
+- Added `model_artifact` plus `prediction.artifact_id`. Fixture predictions now persist a reproducible artifact id built from model parameters, training cutoff, training-row count, Platt calibrator coefficients, predictive validation run, market-validation status, and git SHA.
+- Renamed the semantic gate in new runs from `goal_market_gate` to `predictive_baseline_gate`; older rows are still readable for backward compatibility.
+- Changed the model manifest vocabulary: `predictive_validation_run_id` is separate from `market_validation_status`, which remains `NOT_TESTED` until forward odds/CLV evidence exists.
+- Froze World Cup V1 training at `match_history.date < 2026-06-11` to prevent tournament-result leakage.
+- Made `predict-fixtures` forward-only for production publishing: unresolved fixtures, finished fixtures, and already-started fixtures are skipped.
+- Changed `fetch-odds --closing` semantics to raw capture only. The flag may still limit the preplay window, but rows are stored as raw odds; closing truth is now derived later from `odds_snapshots`.
+- Updated CLV computation to use the last complete append-only odds snapshot before kickoff and after the recommendation, matching fixture, market, selection, line-by-market, and bookmaker. `recommendation_result` now stores legacy ratio CLV plus `clv_log`, `clv_fair_ev`, and `closing_snapshot_at`.
+- Changed `compute-edge` to use the latest complete market snapshot per fixture/bookmaker/market instead of mixing the latest individual selection rows.
+- Local validation: `compileall` passed; a direct CLV harness produced derived ratio CLV, log CLV, and fair-EV CLV from a complete OU2.5 snapshot; `db-health` is OK for schema, integrity, FKs, kickoff UTC, latest artifact coverage, and latest forward-only predictions.
+- Local warnings remaining are expected and informative: no local live snapshots and one recent failed run; legacy predictions remain recorded and are reported separately from the latest operational run.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 

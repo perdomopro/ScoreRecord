@@ -7,6 +7,7 @@ from pathlib import Path
 
 from scorerecord.aliases import get_or_create_team, normalize_name, seed_team_aliases
 from scorerecord.sources import OPENFOOTBALL_2026_URL, fetch_text
+from scorerecord.time_utils import format_utc, parse_kickoff_utc
 
 
 _PLACEHOLDER_RE = re.compile(r"^(?:[WL]\d+|[12][A-L]|3[A-L](?:/(?:3?[A-L]))+)$")
@@ -35,6 +36,7 @@ def ingest_worldcup_2026(
         status = "finished" if home_score is not None and away_score is not None else "scheduled"
         fixture_id = _fixture_id(match, index)
         kickoff_local = _kickoff_local(match)
+        kickoff_utc = format_utc(parse_kickoff_utc(kickoff_local=kickoff_local))
 
         conn.execute(
             """
@@ -62,7 +64,7 @@ def ingest_worldcup_2026(
             (
                 fixture_id,
                 kickoff_local,
-                None,
+                kickoff_utc,
                 match.get("round"),
                 match.get("group"),
                 home_id,

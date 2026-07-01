@@ -348,6 +348,7 @@ def _record_goal_market_gates(
     *,
     max_ece: float = 0.03,
 ) -> None:
+    gate_check_name = "predictive_baseline_gate"
     by_market_model = {(result.market, result.model): result for result in results}
     markets = sorted({result.market for result in results})
     all_pass = True
@@ -383,7 +384,7 @@ def _record_goal_market_gates(
         record_quality(
             conn,
             run_id,
-            "goal_market_gate",
+            gate_check_name,
             f"{market}_passed",
             1.0 if passed else 0.0,
             json.dumps(details[-1], sort_keys=True),
@@ -391,7 +392,7 @@ def _record_goal_market_gates(
     record_quality(
         conn,
         run_id,
-        "goal_market_gate",
+        gate_check_name,
         "all_markets_passed",
         1.0 if all_pass else 0.0,
         json.dumps({"markets": details}, sort_keys=True),

@@ -1,5 +1,5 @@
 [Unit]
-Description=ScoreRecord pre-play closing odds fetch
+Description=ScoreRecord pre-play raw odds snapshot fetch
 
 [Service]
 Type=oneshot
@@ -10,4 +10,4 @@ Environment=OPENBLAS_NUM_THREADS=2
 MemoryMax=700M
 Nice=10
 IOSchedulingClass=idle
-ExecStart=/home/adrian/scorerecord/.venv/bin/scorerecord fetch-odds --closing --closing-window-minutes 60
+ExecStart=/home/adrian/scorerecord/.venv/bin/scorerecord fetch-odds --preplay-window-minutes 60

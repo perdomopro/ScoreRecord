@@ -7,7 +7,6 @@ are intentionally handled in later steps so each layer stays auditable.
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 import time
 import urllib.parse
@@ -19,6 +18,7 @@ from typing import Any
 
 from scorerecord.aliases import normalize_key
 from scorerecord.runs import ingest_run, record_quality
+from scorerecord.time_utils import parse_datetime_utc, parse_kickoff_utc
 
 
 API_MARKET_MAP = {
@@ -177,7 +177,7 @@ def fetch_live_odds(
                 payload,
                 fixture_id=str(fixture["fixture_id"]),
                 captured_utc=captured_utc,
-                is_closing=is_closing,
+                is_closing=False,
                 requested_markets=requested_markets,
             )
             for row in parsed_rows:
@@ -583,31 +583,11 @@ def _fixture_utc_date(row: sqlite3.Row) -> str:
 
 
 def _row_kickoff_utc(row: sqlite3.Row) -> datetime | None:
-    if row["kickoff_utc"]:
-        return _parse_datetime(str(row["kickoff_utc"]))
-    kickoff_local = row["kickoff_local"]
-    if not kickoff_local:
-        return None
-    match = re.match(
-        r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})\s+UTC([+-]\d{1,2})$",
-        str(kickoff_local),
-    )
-    if not match:
-        return None
-    date_part, hour, minute, offset_hours = match.groups()
-    offset = timezone(timedelta(hours=int(offset_hours)))
-    local_dt = datetime.fromisoformat(f"{date_part}T{hour}:{minute}:00").replace(tzinfo=offset)
-    return local_dt.astimezone(timezone.utc)
+    return parse_kickoff_utc(kickoff_utc=row["kickoff_utc"], kickoff_local=row["kickoff_local"])
 
 
 def _parse_datetime(value: str) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+    return parse_datetime_utc(value)
 
 
 def _fetch_odds_payload(
@@ -655,6 +635,7 @@ def _record_odds_quality(
         "api_requests_used": summary.api_requests_used,
         "bookmakers_seen": sorted(bookmakers_seen),
         "markets_seen": sorted(markets_seen),
+        "closing_semantics": "raw capture only; closing is derived later from odds_snapshots",
     }
     for metric_name, value in [
         ("odds_fixtures_seen", summary.fixtures_seen),

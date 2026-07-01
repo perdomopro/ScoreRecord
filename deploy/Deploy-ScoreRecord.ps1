@@ -55,5 +55,5 @@ if (-not $SkipBootstrap) {
 
 Invoke-NativeChecked ssh @(
     "-i", $KeyPath, "$User@$HostName",
-    "cd '$RemoteDir' && .venv/bin/scorerecord model-manifest && .venv/bin/scorerecord fetch-odds --dry-run --min-interval-seconds 0 && .venv/bin/scorerecord db-summary"
+    "cd '$RemoteDir' && .venv/bin/scorerecord migrate-db && .venv/bin/scorerecord db-health && .venv/bin/scorerecord model-manifest && .venv/bin/scorerecord fetch-odds --dry-run --min-interval-seconds 0 && .venv/bin/scorerecord db-summary"
 )

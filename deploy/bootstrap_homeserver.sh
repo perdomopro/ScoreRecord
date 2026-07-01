@@ -22,7 +22,7 @@ if [ ! -f .env ]; then
   chmod 600 .env
 fi
 
-SCORERECORD_DB_PATH=data/scorerecord.db .venv/bin/scorerecord init-db
+SCORERECORD_DB_PATH=data/scorerecord.db .venv/bin/scorerecord migrate-db
 
 mkdir -p "$HOME/.config/systemd/user"
 cp deploy/systemd/*.service deploy/systemd/*.timer "$HOME/.config/systemd/user/"
@@ -30,8 +30,6 @@ cp deploy/systemd/*.service deploy/systemd/*.timer "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 systemctl --user enable scorerecord-gui.service
 systemctl --user enable scorerecord-odds.timer
-systemctl --user enable scorerecord-preplay-odds.timer
-systemctl --user enable scorerecord-daily.timer
 systemctl --user enable scorerecord-postmatch.timer
 systemctl --user enable scorerecord-weekly.timer
 loginctl enable-linger "$USER" >/dev/null 2>&1 || true
@@ -41,10 +39,13 @@ ScoreRecord installed.
 
 Next server-side steps:
 1. Edit /home/adrian/scorerecord/.env and set ODDS_API_IO_KEY.
-2. Run: systemctl --user start scorerecord-daily.service
-3. Inspect: journalctl --user -u scorerecord-daily.service -n 100 --no-pager
+2. Run: .venv/bin/scorerecord db-health
+3. Inspect dry-runs: .venv/bin/scorerecord compute-edge --dry-run && .venv/bin/scorerecord recommend --dry-run
 4. Start the dashboard when ready:
    systemctl --user start scorerecord-gui.service
-5. Start timers when ready:
-   systemctl --user start scorerecord-odds.timer scorerecord-preplay-odds.timer scorerecord-daily.timer scorerecord-postmatch.timer scorerecord-weekly.timer
+5. Start conservative timers when ready:
+   systemctl --user start scorerecord-odds.timer scorerecord-postmatch.timer scorerecord-weekly.timer
+6. Start preplay raw snapshots or daily recommendations only after reviewing db-health and dry-runs:
+   systemctl --user start scorerecord-preplay-odds.timer
+   systemctl --user start scorerecord-daily.timer
 MSG

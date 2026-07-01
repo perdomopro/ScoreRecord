@@ -6,11 +6,11 @@ import json
 import math
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-import re
 
 from scorerecord.runs import ingest_run, record_quality
+from scorerecord.time_utils import parse_datetime_utc, parse_kickoff_utc
 
 
 _EPS = 1e-12
@@ -345,28 +345,8 @@ def _binary_logloss(prob: float, label: int) -> float:
 
 
 def _row_kickoff_utc(row: sqlite3.Row) -> datetime | None:
-    if row["kickoff_utc"]:
-        return _parse_generated_utc(str(row["kickoff_utc"]))
-    kickoff_local = row["kickoff_local"]
-    if not kickoff_local:
-        return None
-    match = re.match(
-        r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})\s+UTC([+-]\d{1,2})$",
-        str(kickoff_local),
-    )
-    if not match:
-        return None
-    date_part, hour, minute, offset_hours = match.groups()
-    offset = timezone(timedelta(hours=int(offset_hours)))
-    local_dt = datetime.fromisoformat(f"{date_part}T{hour}:{minute}:00").replace(tzinfo=offset)
-    return local_dt.astimezone(timezone.utc)
+    return parse_kickoff_utc(kickoff_utc=row["kickoff_utc"], kickoff_local=row["kickoff_local"])
 
 
 def _parse_generated_utc(value: str) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+    return parse_datetime_utc(value)
