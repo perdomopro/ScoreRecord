@@ -5,11 +5,25 @@ from scorerecord.evaluate.edge import compute_edge, compute_edges, devig_1x2, de
 from scorerecord.models.manifest import MODEL_VERSION
 
 
+FUTURE_KICKOFF_LOCAL = "2099-06-11 13:00 UTC-6"
+FUTURE_GENERATED_UTC = "2099-06-10T00:00:00+00:00"
+FUTURE_CAPTURED_UTC = "2099-06-10T01:00:00+00:00"
+STALE_CAPTURED_UTC = "2026-06-10T01:00:00+00:00"
+
+
 def _conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     init_db(conn)
     return conn
+
+
+def _run(conn: sqlite3.Connection, job_name: str) -> int:
+    cursor = conn.execute(
+        "INSERT INTO ingest_run (job_name, status) VALUES (?, 'succeeded')",
+        (job_name,),
+    )
+    return int(cursor.lastrowid)
 
 
 def test_devig_helpers_normalize_implied_probabilities() -> None:
@@ -27,6 +41,7 @@ def test_compute_edge_returns_ev_and_probability_gap() -> None:
 
 def test_compute_edges_persists_complete_market_rows() -> None:
     conn = _conn()
+    prediction_run_id = _run(conn, "predict-fixtures")
     conn.execute(
         "INSERT INTO team (team_id, canonical, canonical_key) VALUES (1, 'Home', 'home')"
     )
@@ -36,8 +51,9 @@ def test_compute_edges_persists_complete_market_rows() -> None:
     conn.execute(
         """
         INSERT INTO fixture (fixture_id, kickoff_local, home_id, away_id)
-        VALUES ('m1', '2026-06-11 13:00 UTC-6', 1, 2)
-        """
+        VALUES ('m1', ?, 1, 2)
+        """,
+        (FUTURE_KICKOFF_LOCAL,),
     )
     conn.execute(
         """
@@ -58,10 +74,9 @@ def test_compute_edges_persists_complete_market_rows() -> None:
               run_id, fixture_id, model, market, selection, prob,
               fair_odds, generated_utc, model_version
             )
-            VALUES (NULL, 'm1', 'dixon_coles', '1X2', ?, ?, ?,
-                    '2026-06-10T00:00:00+00:00', ?)
+            VALUES (?, 'm1', 'dixon_coles', '1X2', ?, ?, ?, ?, ?)
             """,
-            (selection, prob, 1.0 / prob, MODEL_VERSION),
+            (prediction_run_id, selection, prob, 1.0 / prob, FUTURE_GENERATED_UTC, MODEL_VERSION),
         )
     for selection, odds in [("home", 2.40), ("draw", 3.50), ("away", 4.00)]:
         conn.execute(
@@ -69,9 +84,9 @@ def test_compute_edges_persists_complete_market_rows() -> None:
             INSERT INTO odds (
               fixture_id, market, selection, decimal_odds, bookmaker, captured_utc
             )
-            VALUES ('m1', '1X2', ?, ?, 'Bet365', '2026-06-10T01:00:00+00:00')
+            VALUES ('m1', '1X2', ?, ?, 'Bet365', ?)
             """,
-            (selection, odds),
+            (selection, odds, STALE_CAPTURED_UTC),
         )
 
     summary = compute_edges(conn)
@@ -110,20 +125,21 @@ def test_compute_edges_persists_complete_market_rows() -> None:
 
 def test_compute_edges_groups_bookmaker_variants_for_market_depth() -> None:
     conn = _conn()
+    prediction_run_id = _run(conn, "predict-fixtures")
     conn.execute(
-        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m2', '2026-06-11 13:00 UTC-6')"
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m2', ?)",
+        (FUTURE_KICKOFF_LOCAL,),
     )
     for selection, prob in [("home", 0.50), ("draw", 0.30), ("away", 0.20)]:
         conn.execute(
             """
             INSERT INTO prediction (
-              fixture_id, model, market, selection, prob,
+              run_id, fixture_id, model, market, selection, prob,
               fair_odds, generated_utc, model_version
             )
-            VALUES ('m2', 'dixon_coles', '1X2', ?, ?, ?,
-                    '2026-06-10T00:00:00+00:00', ?)
+            VALUES (?, 'm2', 'dixon_coles', '1X2', ?, ?, ?, ?, ?)
             """,
-            (selection, prob, 1.0 / prob, MODEL_VERSION),
+            (prediction_run_id, selection, prob, 1.0 / prob, FUTURE_GENERATED_UTC, MODEL_VERSION),
         )
     for bookmaker, home_odds in [
         ("Bet365", 2.00),
@@ -136,9 +152,9 @@ def test_compute_edges_groups_bookmaker_variants_for_market_depth() -> None:
                 INSERT INTO odds (
                   fixture_id, market, selection, decimal_odds, bookmaker, captured_utc
                 )
-                VALUES ('m2', '1X2', ?, ?, ?, '2026-06-10T01:00:00+00:00')
+                VALUES ('m2', '1X2', ?, ?, ?, ?)
                 """,
-                (selection, odds, bookmaker),
+                (selection, odds, bookmaker, FUTURE_CAPTURED_UTC),
             )
 
     compute_edges(conn)

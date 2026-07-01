@@ -35,7 +35,7 @@ from scorerecord.evaluate.tune_decay import run_decay_sweep
 from scorerecord.evaluate.walk_forward import run_walk_forward
 from scorerecord.features.elo import rebuild_elo
 from scorerecord.gui import serve_dashboard
-from scorerecord.health import db_health_checks
+from scorerecord.health import db_health_checks, fixture_ops_summary, recent_failed_runs
 from scorerecord.ingest.football_data import (
     football_data_coverage_report,
     football_data_season_range,
@@ -66,6 +66,14 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("migrate-db", help="Apply idempotent database migrations.")
     subparsers.add_parser("db-version", help="Print applied database migration versions.")
     subparsers.add_parser("db-health", help="Run SQLite, schema, and pipeline health checks.")
+    failures = subparsers.add_parser("db-failures", help="Print recent failed ingest runs.")
+    failures.add_argument("--days", type=int, default=7)
+    failures.add_argument("--limit", type=int, default=10)
+    fixture_summary = subparsers.add_parser(
+        "fixture-summary",
+        help="Print operational fixture coverage for prediction and odds capture.",
+    )
+    fixture_summary.add_argument("--limit", type=int, default=12)
 
     worldcup = subparsers.add_parser("ingest-worldcup", help="Ingest World Cup 2026 fixtures.")
     worldcup.add_argument("--refresh", action="store_true", help="Refresh network cache.")
@@ -331,6 +339,38 @@ def main(argv: list[str] | None = None) -> int:
             checks = db_health_checks(conn)
             for check in checks:
                 print(check.as_row())
+            return 0
+
+        if args.command == "db-failures":
+            rows = recent_failed_runs(conn, days=args.days, limit=args.limit)
+            if not rows:
+                print("No failed runs found.")
+                return 0
+            for row in rows:
+                print(row.as_row())
+            return 0
+
+        if args.command == "fixture-summary":
+            summary = fixture_ops_summary(conn, limit=args.limit)
+            print(summary.as_row())
+            for row in summary.rows:
+                resolved = (
+                    "resolved"
+                    if row["home_id"] is not None and row["away_id"] is not None
+                    else "unresolved"
+                )
+                score = (
+                    "unscored"
+                    if row["home_score"] is None or row["away_score"] is None
+                    else f"{row['home_score']}-{row['away_score']}"
+                )
+                print(
+                    "fixture: "
+                    f"{row['fixture_id']} kickoff_utc={row['kickoff_utc'] or 'na'} "
+                    f"home={row['home_placeholder'] or row['home_id'] or 'na'} "
+                    f"away={row['away_placeholder'] or row['away_id'] or 'na'} "
+                    f"{resolved} {score}"
+                )
             return 0
 
         if args.command == "ingest-worldcup":

@@ -18,7 +18,31 @@ CALIBRATION_TYPE = "platt"
 CALIBRATION_MODE = "prequential"
 CALIBRATION_VERSION = "v1"
 MARKET_VALIDATION_STATUS = "NOT_TESTED"
-TRAINED_UNTIL = "2026-06-11"
+
+
+@dataclass(frozen=True)
+class ModelTrainingPolicy:
+    policy_id: str
+    tournament: str
+    trained_until: str
+    cutoff_rule: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "policy_id": self.policy_id,
+            "tournament": self.tournament,
+            "trained_until": self.trained_until,
+            "cutoff_rule": self.cutoff_rule,
+        }
+
+
+TRAINING_POLICY = ModelTrainingPolicy(
+    policy_id="worldcup-2026-pre-tournament-v1",
+    tournament="FIFA World Cup 2026",
+    trained_until="2026-06-11",
+    cutoff_rule="match_history.date < trained_until",
+)
+TRAINED_UNTIL = TRAINING_POLICY.trained_until
 
 
 @dataclass(frozen=True)
@@ -39,6 +63,7 @@ class ModelManifest:
     prediction_run_id: int | None
     market_validation_status: str
     trained_until: str
+    training_policy: dict[str, str]
     training_rows: int
     model_artifact_id: str
     code_git_sha: str | None
@@ -56,6 +81,7 @@ class ModelManifest:
             "prediction_run_id": self.prediction_run_id,
             "market_validation_status": self.market_validation_status,
             "trained_until": self.trained_until,
+            "training_policy": self.training_policy,
             "training_rows": self.training_rows,
             "model_artifact_id": self.model_artifact_id,
             "code_git_sha": self.code_git_sha,
@@ -89,6 +115,7 @@ def build_model_manifest(
                 latest_artifact["market_validation_status"] or MARKET_VALIDATION_STATUS
             ),
             trained_until=str(latest_artifact["trained_until"]),
+            training_policy=_artifact_training_policy(payload),
             training_rows=int(latest_artifact["training_rows"]),
             model_artifact_id=str(latest_artifact["artifact_id"]),
             code_git_sha=_maybe_str(latest_artifact["code_git_sha"]),
@@ -107,6 +134,7 @@ def build_model_manifest(
         prediction_run_id=prediction_run_id or _latest_prediction_run(conn),
         market_validation_status=MARKET_VALIDATION_STATUS,
         trained_until=TRAINED_UNTIL,
+        training_policy=_training_policy_payload(),
         training_rows=int(payload["training_rows"]),
         model_artifact_id=artifact.artifact_id,
         code_git_sha=_maybe_str(payload.get("code_git_sha")),
@@ -128,6 +156,7 @@ def build_model_artifact(
         "predictive_validation_run_id": validation_run_id,
         "market_validation_status": MARKET_VALIDATION_STATUS,
         "trained_until": TRAINED_UNTIL,
+        "training_policy": _training_policy_payload(),
         "training_rows": _training_rows(conn),
         "code_git_sha": _run_git_sha(conn, prediction_run_id),
         "run_id_scope": "sqlite_database_local",
@@ -178,8 +207,19 @@ def _params_payload() -> dict[str, object]:
         "half_life_years": HALF_LIFE_YEARS,
         "xi": round(_DEFAULT_XI, 9),
         "l2": 1.0,
-        "training_cutoff_rule": "match_history.date < trained_until",
+        "training_policy_id": TRAINING_POLICY.policy_id,
     }
+
+
+def _training_policy_payload() -> dict[str, str]:
+    return TRAINING_POLICY.as_dict()
+
+
+def _artifact_training_policy(payload: dict[str, object]) -> dict[str, str]:
+    policy = payload.get("training_policy")
+    if isinstance(policy, dict):
+        return {str(key): str(value) for key, value in policy.items()}
+    return _training_policy_payload()
 
 
 def _calibration_payload(
@@ -267,7 +307,7 @@ def _training_rows(conn: sqlite3.Connection) -> int:
             FROM match_history
             WHERE date < ?
             """,
-            (TRAINED_UNTIL,),
+            (TRAINING_POLICY.trained_until,),
         ).fetchone()[0]
     )
 

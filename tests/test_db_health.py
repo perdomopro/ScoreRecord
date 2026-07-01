@@ -22,4 +22,4 @@ def test_db_health_reports_ok_for_empty_initialized_database() -> None:
 
     assert checks["sqlite_integrity"].status == "OK"
     assert checks["foreign_keys"].status == "OK"
-    assert checks["prediction_artifact_id"].value == "no_predictions"
+    assert checks["prediction_artifact_id"].value == "no_prediction_runs"

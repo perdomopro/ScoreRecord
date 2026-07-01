@@ -576,6 +576,22 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Homeserver timers left active: `scorerecord-odds.timer`, `scorerecord-postmatch.timer`, and `scorerecord-weekly.timer`. `scorerecord-daily.timer` and `scorerecord-preplay-odds.timer` are disabled/inactive pending manual review.
 - Homeserver GUI remained active after deploy on port `8765`, around 31 MB RSS under `MemoryMax=350M`.
 
+### 2026-07-01 - Phase 1 closeout and Phase 2 scoring contract
+
+- Updated stale-sensitive tests to use future synthetic timestamps and explicit successful `predict-fixtures` run ids, matching the current guardrail that `compute-edge` only reads the latest successful prediction run.
+- Fixed two `edge_analysis` fixture inserts in recommendation tests that were missing the `edge_prob` value after the audit schema expansion.
+- Added `ModelTrainingPolicy` to the frozen model manifest. The World Cup V1 cutoff is now exposed as `training_policy` with `policy_id=worldcup-2026-pre-tournament-v1` and `cutoff_rule=match_history.date < trained_until`; `predict-fixtures` consumes this policy instead of a loose cutoff constant.
+- Added `db-failures` for recent failed-run inspection and `fixture-summary` for operational fixture coverage, including future resolved/unresolved counts and next unscored fixtures.
+- Started Phase 2 by adding `evaluate/scoring.py` as the shared scoring contract: multiclass 1X2 Brier/log-loss are scored once per match, binary OU/BTTS Brier/log-loss are scored once per market row, and block bootstrap means can be computed by independent fixture/date/week blocks.
+- Wired walk-forward, goal-market evaluation, settlement, and backtest binary log-loss through the shared scoring helpers, keeping existing output schemas stable while reducing metric drift risk.
+- Added block bootstrap confidence columns to `market-benchmark-report` for `model_minus_market_logloss`, grouped by club league plus ISO week. This makes the model-vs-market readout less dependent on row-level independence assumptions.
+- Added scoring tests for the 1X2 unit, binary unit, invalid units, World Cup date blocks, club league ISO-week blocks, and deterministic block bootstrap metadata.
+- Tightened the Phase 2 scoring contract after review: multiclass probabilities are normalized before 1X2 log-loss/Brier, preserving exact `0/1` probabilities for Brier while clipping only log-loss extremes.
+- Changed `market-benchmark-report` summaries so `1X2` is scored as one multiclass unit per match instead of three binary selection rows. Detail CSVs still expose selection rows for audit, but decision metrics now report `num_matches`, `num_selection_rows`, and `scoring_unit`.
+- Guarded the future two-way benchmark contract too: if complete `over/under` or `yes/no` rows are present, the benchmark summary scores one binary unit per match using the positive side (`over`/`yes`) and records the original selection-row count separately.
+- Increased benchmark bootstrap to 2000 block resamples and added `benchmark_state`: `PROMISING` only when the paired block CI is entirely below zero, `REJECTED_FOR_INDEPENDENT_VALUE` when it is entirely above zero or clearly positive at large sample, otherwise `INCONCLUSIVE`.
+- Current Football-Data ingestion still supports historical real odds for `1X2` only. The future Phase 3 OU2.5 benchmark should not be run until Football-Data totals odds are ingested as complete two-way markets.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.

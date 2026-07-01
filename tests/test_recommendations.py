@@ -11,6 +11,12 @@ from scorerecord.evaluate.recommendations import (
 from scorerecord.models.manifest import MODEL_VERSION
 
 
+FUTURE_KICKOFF_LOCAL = "2099-06-11 13:00 UTC-6"
+FUTURE_KICKOFF_UTC = "2099-06-11T18:00:00+00:00"
+FUTURE_CAPTURED_UTC = "2099-06-10T01:00:00+00:00"
+FUTURE_GENERATED_UTC = "2099-06-10T02:00:00+00:00"
+
+
 def _conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -56,7 +62,8 @@ def test_generate_recommendations_uses_latest_edge_run() -> None:
     conn = _conn()
     edge_run_id = _run(conn, "compute-edge")
     conn.execute(
-        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m1', '2026-06-11 13:00 UTC-6')"
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m1', ?)",
+        (FUTURE_KICKOFF_LOCAL,),
     )
     conn.execute(
         """
@@ -66,10 +73,9 @@ def test_generate_recommendations_uses_latest_edge_run() -> None:
           captured_utc, generated_utc
         )
         VALUES ('m1', ?, ?, 'OU2.5', 'over', 0.57, 2.00, 0.50,
-                0.14, 0.07, 'Bet365', '2026-06-10T01:00:00+00:00',
-                '2026-06-10T02:00:00+00:00')
+                0.14, 0.07, 'Bet365', ?, ?)
         """,
-        (edge_run_id, MODEL_VERSION),
+        (edge_run_id, MODEL_VERSION, FUTURE_CAPTURED_UTC, FUTURE_GENERATED_UTC),
     )
 
     summary = generate_recommendations(conn)
@@ -94,7 +100,8 @@ def test_generate_recommendations_excludes_implausibly_high_edges_by_default() -
     conn = _conn()
     edge_run_id = _run(conn, "compute-edge")
     conn.execute(
-        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m3', '2026-06-11 13:00 UTC-6')"
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m3', ?)",
+        (FUTURE_KICKOFF_LOCAL,),
     )
     conn.execute(
         """
@@ -104,10 +111,9 @@ def test_generate_recommendations_excludes_implausibly_high_edges_by_default() -
           captured_utc, generated_utc
         )
         VALUES ('m3', ?, ?, '1X2', 'home', 0.35, 4.00, 0.25,
-                0.40, 0.10, 'Bet365', '2026-06-10T01:00:00+00:00',
-                '2026-06-10T02:00:00+00:00')
+                0.40, 0.10, 'Bet365', ?, ?)
         """,
-        (edge_run_id, MODEL_VERSION),
+        (edge_run_id, MODEL_VERSION, FUTURE_CAPTURED_UTC, FUTURE_GENERATED_UTC),
     )
 
     summary = generate_recommendations(conn)
@@ -120,7 +126,8 @@ def test_generate_recommendations_excludes_flagged_odds_quality() -> None:
     conn = _conn()
     edge_run_id = _run(conn, "compute-edge")
     conn.execute(
-        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m4', '2026-06-11 13:00 UTC-6')"
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m4', ?)",
+        (FUTURE_KICKOFF_LOCAL,),
     )
     conn.execute(
         """
@@ -131,11 +138,9 @@ def test_generate_recommendations_excludes_flagged_odds_quality() -> None:
           recommendation_score
         )
         VALUES ('m4', ?, ?, 'BTTS', 'yes', 0.55, 2.00, 0.50,
-                0.10, 0.05, 'Bet365', '2026-06-10T01:00:00+00:00',
-                '2026-06-10T02:00:00+00:00', 1, 'low_market_depth',
-                0.05)
+                0.10, 0.05, 'Bet365', ?, ?, 1, 'low_market_depth', 0.05)
         """,
-        (edge_run_id, MODEL_VERSION),
+        (edge_run_id, MODEL_VERSION, FUTURE_CAPTURED_UTC, FUTURE_GENERATED_UTC),
     )
 
     summary = generate_recommendations(conn)
@@ -148,7 +153,8 @@ def test_generate_recommendations_excludes_critical_high_edge_reasons() -> None:
     conn = _conn()
     edge_run_id = _run(conn, "compute-edge")
     conn.execute(
-        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m6', '2026-06-11 13:00 UTC-6')"
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m6', ?)",
+        (FUTURE_KICKOFF_LOCAL,),
     )
     conn.execute(
         """
@@ -159,11 +165,10 @@ def test_generate_recommendations_excludes_critical_high_edge_reasons() -> None:
           high_edge_reason, recommendation_score
         )
         VALUES ('m6', ?, ?, '1X2', 'draw', 0.28, 4.00, 0.20,
-                0.12, 0.08, 'Bet365', '2026-06-10T01:00:00+00:00',
-                '2026-06-10T02:00:00+00:00', 2, '',
+                0.12, 0.08, 'Bet365', ?, ?, 2, '',
                 'model_market_disagreement,long_odds_tail', 0.07)
         """,
-        (edge_run_id, MODEL_VERSION),
+        (edge_run_id, MODEL_VERSION, FUTURE_CAPTURED_UTC, FUTURE_GENERATED_UTC),
     )
 
     summary = generate_recommendations(conn)
@@ -176,7 +181,8 @@ def test_generate_recommendations_allows_model_market_disagreement_alone() -> No
     conn = _conn()
     edge_run_id = _run(conn, "compute-edge")
     conn.execute(
-        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m7', '2026-06-11 13:00 UTC-6')"
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m7', ?)",
+        (FUTURE_KICKOFF_LOCAL,),
     )
     conn.execute(
         """
@@ -187,11 +193,10 @@ def test_generate_recommendations_allows_model_market_disagreement_alone() -> No
           high_edge_reason, recommendation_score
         )
         VALUES ('m7', ?, ?, '1X2', 'home', 0.40, 2.80, 0.32,
-                0.12, 0.08, 'Bet365', '2026-06-10T01:00:00+00:00',
-                '2026-06-10T02:00:00+00:00', 2, '',
+                0.12, 0.08, 'Bet365', ?, ?, 2, '',
                 'model_market_disagreement', 0.08)
         """,
-        (edge_run_id, MODEL_VERSION),
+        (edge_run_id, MODEL_VERSION, FUTURE_CAPTURED_UTC, FUTURE_GENERATED_UTC),
     )
 
     summary = generate_recommendations(conn)
@@ -204,7 +209,8 @@ def test_generate_recommendations_limits_correlated_fixture_picks() -> None:
     conn = _conn()
     edge_run_id = _run(conn, "compute-edge")
     conn.execute(
-        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m5', '2026-06-11 13:00 UTC-6')"
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m5', ?)",
+        (FUTURE_KICKOFF_LOCAL,),
     )
     for market, selection, edge, score in [
         ("1X2", "home", 0.10, 0.07),
@@ -219,11 +225,18 @@ def test_generate_recommendations_limits_correlated_fixture_picks() -> None:
               recommendation_score
             )
             VALUES ('m5', ?, ?, ?, ?, 0.55, 2.00, 0.50,
-                    ?, 0.05, 'Bet365', '2026-06-10T01:00:00+00:00',
-                    '2026-06-10T02:00:00+00:00', 2, '',
-                    ?)
+                    ?, 0.05, 'Bet365', ?, ?, 2, '', ?)
             """,
-            (edge_run_id, MODEL_VERSION, market, selection, edge, score),
+            (
+                edge_run_id,
+                MODEL_VERSION,
+                market,
+                selection,
+                edge,
+                FUTURE_CAPTURED_UTC,
+                FUTURE_GENERATED_UTC,
+                score,
+            ),
         )
 
     summary = generate_recommendations(conn)
@@ -238,7 +251,8 @@ def test_generate_recommendations_excludes_low_recommendation_score() -> None:
     conn = _conn()
     edge_run_id = _run(conn, "compute-edge")
     conn.execute(
-        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m8', '2026-06-11 13:00 UTC-6')"
+        "INSERT INTO fixture (fixture_id, kickoff_local) VALUES ('m8', ?)",
+        (FUTURE_KICKOFF_LOCAL,),
     )
     conn.execute(
         """
@@ -249,10 +263,9 @@ def test_generate_recommendations_excludes_low_recommendation_score() -> None:
           recommendation_score
         )
         VALUES ('m8', ?, ?, '1X2', 'home', 0.45, 2.00, 0.10,
-                0.05, 'Bet365', '2026-06-10T01:00:00+00:00',
-                '2026-06-10T02:00:00+00:00', 2, '', 0.04)
+                0.05, 0.35, 'Bet365', ?, ?, 2, '', 0.04)
         """,
-        (edge_run_id, MODEL_VERSION),
+        (edge_run_id, MODEL_VERSION, FUTURE_CAPTURED_UTC, FUTURE_GENERATED_UTC),
     )
 
     summary = generate_recommendations(conn, min_score=0.05)
@@ -268,9 +281,9 @@ def test_generate_recommendations_limits_daily_volume() -> None:
         conn.execute(
             """
             INSERT INTO fixture (fixture_id, kickoff_utc)
-            VALUES (?, '2026-06-11T18:00:00+00:00')
+            VALUES (?, ?)
             """,
-            (fixture_id,),
+            (fixture_id, FUTURE_KICKOFF_UTC),
         )
         conn.execute(
             """
@@ -281,10 +294,16 @@ def test_generate_recommendations_limits_daily_volume() -> None:
               recommendation_score
             )
             VALUES (?, ?, ?, '1X2', 'home', 0.45, 2.00, 0.10,
-                    0.05, 'Bet365', '2026-06-10T01:00:00+00:00',
-                    '2026-06-10T02:00:00+00:00', 2, '', ?)
+                    0.05, 0.35, 'Bet365', ?, ?, 2, '', ?)
             """,
-            (fixture_id, edge_run_id, MODEL_VERSION, score),
+            (
+                fixture_id,
+                edge_run_id,
+                MODEL_VERSION,
+                FUTURE_CAPTURED_UTC,
+                FUTURE_GENERATED_UTC,
+                score,
+            ),
         )
 
     summary = generate_recommendations(conn, max_picks_per_day=1)

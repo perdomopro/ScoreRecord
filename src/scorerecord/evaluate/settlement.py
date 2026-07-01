@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import json
-import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scorerecord.evaluate.scoring import binary_brier, binary_logloss, multiclass_logloss
 from scorerecord.runs import ingest_run, record_quality
 from scorerecord.time_utils import parse_datetime_utc, parse_kickoff_utc
 
 
-_EPS = 1e-12
 _SUPPORTED_MARKET_PREFIXES = ("OU",)
 _SUPPORTED_MARKETS = {"1X2", "BTTS", "double_chance"}
 
@@ -81,8 +80,8 @@ def settle_fixtures(
                 unsupported_predictions += 1
                 continue
             prob = float(row["prob"])
-            brier = (prob - label) ** 2
-            logloss = _binary_logloss(prob, label)
+            brier = binary_brier(prob, label)
+            logloss = binary_logloss(prob, label)
             cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO prediction_result (
@@ -276,7 +275,12 @@ def _aggregate_market_metrics(
             briers.append(sum(float(row["brier"]) for row in fixture_rows))
             actual_rows = [row for row in fixture_rows if int(row["label"]) == 1]
             if actual_rows:
-                loglosses.append(-math.log(max(float(actual_rows[0]["predicted_prob"]), _EPS)))
+                loglosses.append(
+                    multiclass_logloss(
+                        _ordered_1x2_probabilities(fixture_rows),
+                        _actual_1x2_label(fixture_rows),
+                    )
+                )
         return sum(briers) / len(briers), sum(loglosses) / len(loglosses), len(briers)
 
     brier = sum(float(row["brier"]) for row in rows) / len(rows)
@@ -339,9 +343,17 @@ def _missing_prediction_fixture_count(conn: sqlite3.Connection) -> int:
     )
 
 
-def _binary_logloss(prob: float, label: int) -> float:
-    p = min(max(prob, _EPS), 1.0 - _EPS)
-    return -(label * math.log(p) + (1 - label) * math.log(1.0 - p))
+def _ordered_1x2_probabilities(rows: list[sqlite3.Row]) -> list[float]:
+    by_selection = {str(row["selection"]): float(row["predicted_prob"]) for row in rows}
+    return [by_selection.get(selection, 0.0) for selection in ("home", "draw", "away")]
+
+
+def _actual_1x2_label(rows: list[sqlite3.Row]) -> int:
+    by_selection = {str(row["selection"]): int(row["label"]) for row in rows}
+    for index, selection in enumerate(("home", "draw", "away")):
+        if by_selection.get(selection) == 1:
+            return index
+    raise ValueError("Cannot score 1X2 fixture without a winning selection")
 
 
 def _row_kickoff_utc(row: sqlite3.Row) -> datetime | None:

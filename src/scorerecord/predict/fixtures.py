@@ -14,7 +14,7 @@ from scorerecord.models.calibration import PlattCalibrator
 from scorerecord.models.dixon_coles import DixonColes
 from scorerecord.models.manifest import (
     MODEL_VERSION,
-    TRAINED_UNTIL,
+    TRAINING_POLICY,
     build_model_manifest,
     build_model_artifact,
     persist_model_artifact,
@@ -25,7 +25,6 @@ from scorerecord.models.markets import (
     one_x_two_probabilities,
     over_probability,
     top_exact_scores,
-    under_probability,
 )
 from scorerecord.runs import ingest_run, record_quality
 from scorerecord.time_utils import parse_kickoff_utc
@@ -78,7 +77,9 @@ def publish_fixture_predictions(
     cwd: Path | None = None,
 ) -> FixturePublishSummary:
     training_matches = [
-        match for match in load_match_features(conn) if match.match_date < TRAINED_UNTIL
+        match
+        for match in load_match_features(conn)
+        if match.match_date < TRAINING_POLICY.trained_until
     ]
     model = DixonColes().fit(training_matches)
     calibrators = _fit_goal_market_calibrators(training_matches, ou_lines=ou_lines)
@@ -165,7 +166,7 @@ def publish_fixture_predictions(
                     "inserted_predictions": inserted_predictions,
                     "model_version": MODEL_VERSION,
                     "model_artifact_id": model_artifact.artifact_id,
-                    "trained_until": TRAINED_UNTIL,
+                    "training_policy": TRAINING_POLICY.as_dict(),
                     "training_rows": len(training_matches),
                     "publish_policy": "forward_only_unstarted_fixtures",
                 },

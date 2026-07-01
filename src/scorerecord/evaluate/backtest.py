@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import csv
 import json
-import math
 import sqlite3
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
@@ -27,6 +26,16 @@ from scorerecord.evaluate.recommendations import (
     capped_real_stake,
     kelly_stake,
 )
+from scorerecord.evaluate.scoring import (
+    EPS,
+    binary_logloss,
+    block_bootstrap_mean,
+    club_week_block,
+    multiclass_brier,
+    multiclass_expected_calibration_error,
+    multiclass_logloss,
+    normalize_probabilities,
+)
 from scorerecord.features.build import OUTCOME_LABELS, MatchFeature, load_match_features
 from scorerecord.ingest.football_data import normalize_season, resolve_league_code
 from scorerecord.models.calibration import PlattCalibrator
@@ -36,7 +45,7 @@ from scorerecord.runs import ingest_run, record_quality
 
 
 DEFAULT_OU_LINES = (1.5, 2.5, 3.5)
-_EPS = 1e-12
+_EPS = EPS
 
 
 @dataclass(frozen=True)
@@ -174,6 +183,40 @@ class RealOddsPrediction:
     @property
     def score_bucket(self) -> str:
         return score_bucket(self.recommendation_score)
+
+
+@dataclass(frozen=True)
+class BenchmarkUnit:
+    match: HistoricalOddsMatch
+    market: str
+    scoring_unit: str
+    outcome: str
+    label: int
+    model_probs: tuple[float, ...]
+    market_probs: tuple[float, ...]
+    model_prob: float
+    market_prob: float
+    entry_odds: float
+    market_overround: float
+    model_logloss: float
+    market_logloss: float
+    model_brier: float
+    market_brier: float
+    model_top_selection: str
+    market_top_selection: str
+    num_selection_rows: int
+
+    @property
+    def prob_bucket(self) -> str:
+        return prob_bucket(self.model_prob)
+
+    @property
+    def market_prob_bucket(self) -> str:
+        return prob_bucket(self.market_prob)
+
+    @property
+    def odds_bucket(self) -> str:
+        return odds_bucket(self.entry_odds)
 
 
 @dataclass(frozen=True)
@@ -1865,42 +1908,163 @@ def _market_benchmark_detail_rows(predictions: list[RealOddsPrediction]) -> list
 def _market_benchmark_summary_rows(
     predictions: list[RealOddsPrediction],
 ) -> list[dict[str, object]]:
-    groupers: list[tuple[str, Callable[[RealOddsPrediction], str]]] = [
+    units = _market_benchmark_units(predictions)
+    groupers: list[tuple[str, Callable[[BenchmarkUnit], str]]] = [
         ("overall", lambda row: "all"),
-        ("selection", lambda row: row.selection),
+        ("selection", lambda row: row.outcome),
         ("model_prob_bucket", lambda row: row.prob_bucket),
-        ("market_prob_bucket", lambda row: prob_bucket(row.market_prob)),
-        ("selection_model_prob_bucket", lambda row: f"{row.selection}:{row.prob_bucket}"),
+        ("market_prob_bucket", lambda row: row.market_prob_bucket),
+        ("selection_model_prob_bucket", lambda row: f"{row.outcome}:{row.prob_bucket}"),
         ("odds_bucket", lambda row: row.odds_bucket),
     ]
     output: list[dict[str, object]] = []
     for group_type, key_fn in groupers:
-        grouped: dict[str, list[RealOddsPrediction]] = {}
-        for row in predictions:
+        grouped: dict[str, list[BenchmarkUnit]] = {}
+        for row in units:
             grouped.setdefault(key_fn(row), []).append(row)
         for group, rows in sorted(grouped.items()):
             output.append(_market_benchmark_metric_row(group_type, group, rows))
     return output
 
 
+def _market_benchmark_units(predictions: list[RealOddsPrediction]) -> list[BenchmarkUnit]:
+    grouped: dict[tuple[str, str], list[RealOddsPrediction]] = {}
+    for row in predictions:
+        grouped.setdefault((row.match.source_event_id, row.market), []).append(row)
+
+    units: list[BenchmarkUnit] = []
+    for (_event_id, market), rows in sorted(grouped.items()):
+        if market == "1X2":
+            unit = _one_x_two_benchmark_unit(rows)
+            if unit is not None:
+                units.append(unit)
+            continue
+        units.extend(_binary_benchmark_units(rows))
+    return units
+
+
+def _one_x_two_benchmark_unit(rows: list[RealOddsPrediction]) -> BenchmarkUnit | None:
+    by_selection = {row.selection: row for row in rows}
+    if any(selection not in by_selection for selection in OUTCOME_LABELS):
+        return None
+    sample = rows[0]
+    label = OUTCOME_LABELS.index(sample.match.result_1x2)
+    model_probs = tuple(
+        normalize_probabilities(
+            [by_selection[selection].model_prob for selection in OUTCOME_LABELS]
+        )
+    )
+    market_probs = tuple(
+        normalize_probabilities(
+            [by_selection[selection].market_prob for selection in OUTCOME_LABELS]
+        )
+    )
+    outcome = sample.match.result_1x2
+    outcome_row = by_selection[outcome]
+    return BenchmarkUnit(
+        match=sample.match,
+        market="1X2",
+        scoring_unit="match_multiclass",
+        outcome=outcome,
+        label=label,
+        model_probs=model_probs,
+        market_probs=market_probs,
+        model_prob=model_probs[label],
+        market_prob=market_probs[label],
+        entry_odds=outcome_row.entry_odds,
+        market_overround=outcome_row.market_overround,
+        model_logloss=multiclass_logloss(model_probs, label),
+        market_logloss=multiclass_logloss(market_probs, label),
+        model_brier=multiclass_brier(model_probs, label),
+        market_brier=multiclass_brier(market_probs, label),
+        model_top_selection=OUTCOME_LABELS[_argmax(model_probs)],
+        market_top_selection=OUTCOME_LABELS[_argmax(market_probs)],
+        num_selection_rows=len(rows),
+    )
+
+
+def _binary_benchmark_units(rows: list[RealOddsPrediction]) -> list[BenchmarkUnit]:
+    by_selection = {row.selection: row for row in rows}
+    positive_selection = (
+        "over" if "over" in by_selection else "yes" if "yes" in by_selection else None
+    )
+    if positive_selection is None:
+        return [_single_binary_benchmark_unit(row, num_selection_rows=1) for row in rows]
+    positive = by_selection[positive_selection]
+    return [
+        _single_binary_benchmark_unit(
+            positive,
+            num_selection_rows=len(rows),
+            negative_selection="under" if positive_selection == "over" else "no",
+        )
+    ]
+
+
+def _single_binary_benchmark_unit(
+    row: RealOddsPrediction,
+    *,
+    num_selection_rows: int,
+    negative_selection: str | None = None,
+) -> BenchmarkUnit:
+    label = int(row.won)
+    model_prob = row.model_prob
+    market_prob = row.market_prob
+    model_top = row.selection if model_prob >= 0.5 else negative_selection or f"not_{row.selection}"
+    market_top = (
+        row.selection if market_prob >= 0.5 else negative_selection or f"not_{row.selection}"
+    )
+    outcome = row.selection if label else negative_selection or f"not_{row.selection}"
+    return BenchmarkUnit(
+        match=row.match,
+        market=row.market,
+        scoring_unit="match_binary",
+        outcome=outcome,
+        label=label,
+        model_probs=(model_prob,),
+        market_probs=(market_prob,),
+        model_prob=model_prob,
+        market_prob=market_prob,
+        entry_odds=row.entry_odds,
+        market_overround=row.market_overround,
+        model_logloss=_binary_logloss(model_prob, label),
+        market_logloss=_binary_logloss(market_prob, label),
+        model_brier=(model_prob - label) ** 2,
+        market_brier=(market_prob - label) ** 2,
+        model_top_selection=model_top,
+        market_top_selection=market_top,
+        num_selection_rows=num_selection_rows,
+    )
+
+
 def _market_benchmark_metric_row(
     group_type: str,
     group: str,
-    rows: list[RealOddsPrediction],
+    rows: list[BenchmarkUnit],
 ) -> dict[str, object]:
-    model_logloss = _mean([_binary_logloss(row.model_prob, row.won) for row in rows])
-    market_logloss = _mean([_binary_logloss(row.market_prob, row.won) for row in rows])
-    model_brier = _mean([(row.model_prob - row.won) ** 2 for row in rows])
-    market_brier = _mean([(row.market_prob - row.won) ** 2 for row in rows])
-    hit_rate = _mean([row.won for row in rows])
+    model_logloss = _mean([row.model_logloss for row in rows])
+    market_logloss = _mean([row.market_logloss for row in rows])
+    model_brier = _mean([row.model_brier for row in rows])
+    market_brier = _mean([row.market_brier for row in rows])
+    hit_rate = _mean([int(row.model_top_selection == row.outcome) for row in rows])
     avg_model_prob = _mean([row.model_prob for row in rows])
     avg_market_prob = _mean([row.market_prob for row in rows])
+    logloss_gap_bootstrap = _logloss_gap_bootstrap(rows)
+    benchmark_state = _benchmark_state(
+        model_logloss - market_logloss,
+        logloss_gap_bootstrap["lower"],
+        logloss_gap_bootstrap["upper"],
+        len(rows),
+    )
     return {
         "group_type": group_type,
         "group": group,
+        "scoring_unit": _scoring_unit_label(rows),
         "num_rows": len(rows),
+        "num_matches": len({row.match.source_event_id for row in rows}),
+        "num_selection_rows": sum(row.num_selection_rows for row in rows),
         "sample_size_tier": sample_size_tier(len(rows)),
         "decision_gate": decision_gate(len(rows)),
+        "benchmark_state": benchmark_state,
         "hit_rate": hit_rate,
         "avg_model_prob": avg_model_prob,
         "avg_market_prob": avg_market_prob,
@@ -1909,6 +2073,12 @@ def _market_benchmark_metric_row(
         "model_logloss": model_logloss,
         "market_logloss": market_logloss,
         "model_minus_market_logloss": model_logloss - market_logloss,
+        "model_minus_market_logloss_ci_low": logloss_gap_bootstrap["lower"],
+        "model_minus_market_logloss_ci_high": logloss_gap_bootstrap["upper"],
+        "model_minus_market_logloss_bootstrap_blocks": logloss_gap_bootstrap["n_blocks"],
+        "model_minus_market_logloss_bootstrap_iterations": logloss_gap_bootstrap[
+            "iterations"
+        ],
         "model_brier": model_brier,
         "market_brier": market_brier,
         "model_minus_market_brier": model_brier - market_brier,
@@ -1916,17 +2086,95 @@ def _market_benchmark_metric_row(
         "market_calibration_error": hit_rate - avg_market_prob,
         "model_abs_calibration_error": abs(hit_rate - avg_model_prob),
         "market_abs_calibration_error": abs(hit_rate - avg_market_prob),
-        "model_ece": _expected_calibration_error_for_probs(
-            rows,
-            lambda row: row.model_prob,
-        ),
-        "market_ece": _expected_calibration_error_for_probs(
-            rows,
-            lambda row: row.market_prob,
-        ),
+        "model_ece": _benchmark_ece(rows, source="model"),
+        "market_ece": _benchmark_ece(rows, source="market"),
         "model_better_logloss": int(model_logloss < market_logloss),
         "model_better_brier": int(model_brier < market_brier),
     }
+
+
+def _logloss_gap_bootstrap(rows: list[BenchmarkUnit]) -> dict[str, object]:
+    by_block: dict[str, list[float]] = {}
+    for row in rows:
+        key = club_week_block(row.match.match_date, row.match.league_code)
+        by_block.setdefault(key, []).append(row.model_logloss - row.market_logloss)
+    if len(by_block) < 2:
+        return {"lower": "", "upper": "", "n_blocks": len(by_block), "iterations": 0}
+    interval = block_bootstrap_mean(by_block, iterations=2000, seed=2026)
+    return {
+        "lower": interval.lower,
+        "upper": interval.upper,
+        "n_blocks": interval.n_blocks,
+        "iterations": interval.iterations,
+    }
+
+
+def _benchmark_state(
+    gap: float,
+    ci_low: object,
+    ci_high: object,
+    num_matches: int,
+) -> str:
+    if num_matches < 300 or ci_low == "" or ci_high == "":
+        return "INCONCLUSIVE"
+    if float(ci_high) < 0.0:
+        return "PROMISING"
+    if float(ci_low) > 0.0:
+        return "REJECTED_FOR_INDEPENDENT_VALUE"
+    if gap > 0.0 and num_matches >= 1000:
+        return "REJECTED_FOR_INDEPENDENT_VALUE"
+    return "INCONCLUSIVE"
+
+
+def _benchmark_ece(rows: list[BenchmarkUnit], *, source: str) -> float:
+    if not rows:
+        return 0.0
+    if all(row.scoring_unit == "match_multiclass" for row in rows):
+        return multiclass_expected_calibration_error(
+            [
+                (row.model_probs if source == "model" else row.market_probs, row.label)
+                for row in rows
+            ]
+        )
+    probability_getter = (
+        (lambda row: row.model_prob) if source == "model" else (lambda row: row.market_prob)
+    )
+    return _binary_unit_ece(rows, probability_getter)
+
+
+def _binary_unit_ece(
+    rows: list[BenchmarkUnit],
+    probability_getter: Callable[[BenchmarkUnit], float],
+    *,
+    n_bins: int = 10,
+) -> float:
+    total = len(rows)
+    ece = 0.0
+    for index in range(n_bins):
+        lower = index / n_bins
+        upper = (index + 1) / n_bins
+        selected = [
+            row
+            for row in rows
+            if probability_getter(row) >= lower
+            and (probability_getter(row) < upper or index == n_bins - 1)
+        ]
+        if not selected:
+            continue
+        ece += (len(selected) / total) * abs(
+            _mean([probability_getter(row) for row in selected])
+            - _mean([row.label for row in selected])
+        )
+    return ece
+
+
+def _scoring_unit_label(rows: list[BenchmarkUnit]) -> str:
+    labels = sorted({row.scoring_unit for row in rows})
+    return labels[0] if len(labels) == 1 else "mixed"
+
+
+def _argmax(values: tuple[float, ...]) -> int:
+    return max(range(len(values)), key=lambda index: values[index])
 
 
 def _calibration_market_rows(predictions: list[HistoricalPrediction]) -> list[dict[str, object]]:
@@ -2105,8 +2353,7 @@ def _historical_team_key(value: str) -> str:
 
 
 def _binary_logloss(prob: float, label: int) -> float:
-    p = min(max(prob, _EPS), 1.0 - _EPS)
-    return -(label * math.log(p) + (1 - label) * math.log(1.0 - p))
+    return binary_logloss(prob, label)
 
 
 def _mean(values: Iterable[float | int]) -> float:

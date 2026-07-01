@@ -68,28 +68,32 @@ def _prediction(
 
 def _real_prediction(
     *,
+    event_id: str = "e1",
+    market: str = "1X2",
     selection: str = "home",
     model_prob: float = 0.60,
     market_prob: float = 0.50,
     entry_odds: float = 2.0,
     won: int = 1,
+    match_date: str = "2024-01-01",
+    result_1x2: str = "home",
 ) -> RealOddsPrediction:
     return RealOddsPrediction(
         match=HistoricalOddsMatch(
             source="football-data",
-            source_event_id="e1",
+            source_event_id=event_id,
             league_code="E0",
             season="2023-2024",
-            match_date="2024-01-01",
+            match_date=match_date,
             home_team="A",
             away_team="B",
             home_goals=1,
             away_goals=0,
-            result_1x2="home",
+            result_1x2=result_1x2,
             home_id=1,
             away_id=2,
         ),
-        market="1X2",
+        market=market,
         selection=selection,
         bookmaker="Avg",
         entry_odds=entry_odds,
@@ -199,10 +203,40 @@ def test_market_shrink_recomputes_edge_and_score_from_fair_market_prob() -> None
 
 
 def test_market_benchmark_reports_model_minus_market_metrics() -> None:
-    rows = [
-        _real_prediction(model_prob=0.80, market_prob=0.50, won=1),
-        _real_prediction(selection="away", model_prob=0.20, market_prob=0.50, won=0),
-    ]
+    rows = []
+    for selection, model_prob, market_prob, entry_odds in [
+        ("home", 0.80, 0.50, 2.0),
+        ("draw", 0.10, 0.25, 4.0),
+        ("away", 0.10, 0.25, 4.0),
+    ]:
+        rows.append(
+            _real_prediction(
+                event_id="e1",
+                selection=selection,
+                model_prob=model_prob,
+                market_prob=market_prob,
+                entry_odds=entry_odds,
+                won=int(selection == "home"),
+                result_1x2="home",
+            )
+        )
+    for selection, model_prob, market_prob, entry_odds in [
+        ("home", 0.10, 0.25, 4.0),
+        ("draw", 0.10, 0.25, 4.0),
+        ("away", 0.80, 0.50, 2.0),
+    ]:
+        rows.append(
+            _real_prediction(
+                event_id="e2",
+                selection=selection,
+                model_prob=model_prob,
+                market_prob=market_prob,
+                entry_odds=entry_odds,
+                won=int(selection == "away"),
+                match_date="2024-01-15",
+                result_1x2="away",
+            )
+        )
 
     overall = [
         row
@@ -212,8 +246,45 @@ def test_market_benchmark_reports_model_minus_market_metrics() -> None:
 
     assert overall["model_logloss"] < overall["market_logloss"]
     assert overall["model_better_logloss"] == 1
+    assert overall["scoring_unit"] == "match_multiclass"
+    assert overall["num_matches"] == 2
+    assert overall["num_selection_rows"] == 6
     assert "model_ece" in overall
     assert "market_ece" in overall
+    assert overall["model_minus_market_logloss_bootstrap_blocks"] == 2
+    assert overall["model_minus_market_logloss_bootstrap_iterations"] == 2000
+
+
+def test_market_benchmark_scores_two_way_market_once_per_match() -> None:
+    rows = [
+        _real_prediction(
+            market="OU2.5",
+            selection="over",
+            model_prob=0.60,
+            market_prob=0.55,
+            entry_odds=1.82,
+            won=1,
+        ),
+        _real_prediction(
+            market="OU2.5",
+            selection="under",
+            model_prob=0.40,
+            market_prob=0.45,
+            entry_odds=2.20,
+            won=0,
+        ),
+    ]
+
+    overall = [
+        row
+        for row in _market_benchmark_summary_rows(rows)
+        if row["group_type"] == "overall"
+    ][0]
+
+    assert overall["scoring_unit"] == "match_binary"
+    assert overall["num_matches"] == 1
+    assert overall["num_selection_rows"] == 2
+    assert overall["num_rows"] == 1
 
 
 def test_real_odds_backtest_writes_real_profit_and_clv_outputs(tmp_path) -> None:

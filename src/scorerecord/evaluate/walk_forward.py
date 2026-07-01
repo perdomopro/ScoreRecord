@@ -3,21 +3,24 @@
 from __future__ import annotations
 
 import json
-import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Protocol
 
+from scorerecord.evaluate.scoring import (
+    ONE_X_TWO_LABELS,
+    multiclass_brier,
+    multiclass_logloss,
+)
 from scorerecord.features.build import OUTCOME_LABELS, MatchFeature, load_match_features
 from scorerecord.models.baseline import MarginalBaseline, OneXTwoBaseline, UniformBaseline
 from scorerecord.models.dixon_coles import DixonColes
 from scorerecord.runs import ingest_run, record_quality
 
 
-N_CLASSES = 3
-_EPS = 1e-12
+N_CLASSES = len(ONE_X_TWO_LABELS)
 
 
 class Model(Protocol):
@@ -63,19 +66,6 @@ class WalkForwardResult:
 class PredictionRecord:
     match: MatchFeature
     prob: list[float]
-
-
-def multiclass_brier(prob: list[float], label: int) -> float:
-    total = 0.0
-    for class_index in range(N_CLASSES):
-        target = 1.0 if class_index == label else 0.0
-        total += (prob[class_index] - target) ** 2
-    return total
-
-
-def multiclass_logloss(prob: list[float], label: int) -> float:
-    p = min(max(prob[label], _EPS), 1.0)
-    return -math.log(p)
 
 
 def expected_calibration_error(

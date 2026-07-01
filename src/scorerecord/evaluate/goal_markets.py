@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from scorerecord.evaluate.scoring import binary_brier, binary_logloss
 from scorerecord.evaluate.walk_forward import _is_friendly
 from scorerecord.features.build import MatchFeature, load_match_features
 from scorerecord.models.calibration import PlattCalibrator
@@ -18,7 +18,6 @@ from scorerecord.models.markets import btts_probability, over_probability
 from scorerecord.runs import ingest_run, record_quality
 
 
-_EPS = 1e-12
 DEFAULT_OU_LINES = (1.5, 2.5, 3.5)
 
 
@@ -227,8 +226,8 @@ def _summarize_predictions(
 ) -> GoalMarketResult:
     if not rows:
         raise ValueError(f"No predictions for {model} {market}")
-    brier = sum((row.prob - row.label) ** 2 for row in rows) / len(rows)
-    logloss = sum(_binary_logloss(row.prob, row.label) for row in rows) / len(rows)
+    brier = sum(binary_brier(row.prob, row.label) for row in rows) / len(rows)
+    logloss = sum(binary_logloss(row.prob, row.label) for row in rows) / len(rows)
     ece, _ = binary_ece(rows)
     close_logloss, close_n = _segment_logloss(
         rows,
@@ -256,11 +255,6 @@ def _summarize_predictions(
         friendly_n=friendly_n,
         friendly_logloss=friendly_logloss,
     )
-
-
-def _binary_logloss(prob: float, label: int) -> float:
-    p = min(max(prob, _EPS), 1.0 - _EPS)
-    return -(label * math.log(p) + (1 - label) * math.log(1.0 - p))
 
 
 def binary_ece(
@@ -310,7 +304,7 @@ def _segment_logloss(
     selected = [row for row in rows if predicate(row)]
     if not selected:
         return None, 0
-    return sum(_binary_logloss(row.prob, row.label) for row in selected) / len(selected), len(
+    return sum(binary_logloss(row.prob, row.label) for row in selected) / len(selected), len(
         selected
     )
 

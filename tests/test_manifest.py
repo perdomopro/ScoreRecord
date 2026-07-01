@@ -15,4 +15,6 @@ def test_manifest_declares_run_ids_are_database_local() -> None:
     assert manifest["predictive_validation_run_id"] is None
     assert manifest["market_validation_status"] == "NOT_TESTED"
     assert manifest["trained_until"] == "2026-06-11"
+    assert manifest["training_policy"]["policy_id"] == "worldcup-2026-pre-tournament-v1"
+    assert manifest["training_policy"]["cutoff_rule"] == "match_history.date < trained_until"
     assert "model_artifact_id" in manifest
