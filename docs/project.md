@@ -569,6 +569,12 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Changed `recommend` to recompute odds age at recommendation time, preventing stale historical edge runs from emitting new paper picks.
 - Local validation: `compileall` passed; a direct CLV harness produced derived ratio CLV, log CLV, and fair-EV CLV from a complete OU2.5 snapshot; `db-health` is OK for schema, integrity, FKs, kickoff UTC, latest artifact coverage, and latest forward-only predictions.
 - Local warnings remaining are expected and informative: no local live snapshots and one recent failed run; legacy predictions remain recorded and are reported separately from the latest operational run.
+- Homeserver pre-deploy backup: `/home/adrian/scorerecord/backups/scorerecord-db-predeploy-20260701.tgz`, SHA-256 `c3e64c4e913de368b7a345763714153fb55589c4a721a353727af61d8f316852`.
+- Homeserver deployment verified: migrations at schema version 3; `db-health` OK for integrity, FKs, kickoff UTC, latest forward-only prediction run, legacy closing flags, and odds snapshots. One recent failed run remains as a warning to inspect, not a blocker.
+- Homeserver latest `predict-fixtures` run inserted 0 rows because no resolved fixtures remain unstarted as of July 1, 2026; this is the intended forward-only behavior.
+- Homeserver `compute-edge --dry-run` and `recommend --dry-run` both returned 0 rows, confirming old predictions/edges are not reused for new paper picks.
+- Homeserver timers left active: `scorerecord-odds.timer`, `scorerecord-postmatch.timer`, and `scorerecord-weekly.timer`. `scorerecord-daily.timer` and `scorerecord-preplay-odds.timer` are disabled/inactive pending manual review.
+- Homeserver GUI remained active after deploy on port `8765`, around 31 MB RSS under `MemoryMax=350M`.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
