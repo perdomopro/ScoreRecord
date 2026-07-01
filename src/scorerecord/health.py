@@ -76,19 +76,9 @@ def _fixture_kickoff_check(conn: sqlite3.Connection) -> HealthCheck:
 
 
 def _prediction_artifact_check(conn: sqlite3.Connection) -> HealthCheck:
-    row = conn.execute(
-        """
-        SELECT
-          COUNT(*) AS predictions,
-          SUM(CASE WHEN artifact_id IS NULL THEN 1 ELSE 0 END) AS missing,
-          MAX(run_id) AS latest_run_id
-        FROM prediction
-        """
-    ).fetchone()
-    predictions = int(row["predictions"] or 0)
-    if predictions == 0:
-        return HealthCheck("prediction_artifact_id", "OK", "no_predictions")
-    latest_run_id = row["latest_run_id"]
+    latest_run_id = _latest_predict_fixture_run(conn)
+    if latest_run_id is None:
+        return HealthCheck("prediction_artifact_id", "OK", "no_prediction_runs")
     latest = conn.execute(
         """
         SELECT
@@ -101,24 +91,27 @@ def _prediction_artifact_check(conn: sqlite3.Connection) -> HealthCheck:
     ).fetchone()
     latest_predictions = int(latest["predictions"] or 0)
     latest_missing = int(latest["missing"] or 0)
+    row = conn.execute(
+        """
+        SELECT
+          COUNT(*) AS predictions,
+          SUM(CASE WHEN artifact_id IS NULL THEN 1 ELSE 0 END) AS missing
+        FROM prediction
+        """
+    ).fetchone()
+    predictions = int(row["predictions"] or 0)
     return HealthCheck(
         "prediction_artifact_id",
         "OK" if latest_missing == 0 else "WARNING",
-        f"latest_run_missing={latest_missing}/{latest_predictions}",
+        f"latest_run={latest_run_id} missing={latest_missing}/{latest_predictions}",
         f"legacy_missing={int(row['missing'] or 0)}/{predictions}",
     )
 
 
 def _prediction_forward_check(conn: sqlite3.Connection) -> HealthCheck:
-    latest = conn.execute(
-        """
-        SELECT MAX(run_id) AS latest_run_id
-        FROM prediction
-        """
-    ).fetchone()
-    latest_run_id = latest["latest_run_id"]
+    latest_run_id = _latest_predict_fixture_run(conn)
     if latest_run_id is None:
-        return HealthCheck("prediction_generated_before_kickoff", "OK", "no_predictions")
+        return HealthCheck("prediction_generated_before_kickoff", "OK", "no_prediction_runs")
     latest_row = conn.execute(
         """
         SELECT COUNT(*) AS late_predictions
@@ -144,9 +137,23 @@ def _prediction_forward_check(conn: sqlite3.Connection) -> HealthCheck:
     return HealthCheck(
         "prediction_generated_before_kickoff",
         "OK" if late == 0 else "WARNING",
-        f"latest_run_late={late}",
+        f"latest_run={latest_run_id} late={late}",
         f"legacy_late={legacy_late}",
     )
+
+
+def _latest_predict_fixture_run(conn: sqlite3.Connection) -> int | None:
+    row = conn.execute(
+        """
+        SELECT run_id
+        FROM ingest_run
+        WHERE job_name = 'predict-fixtures'
+          AND status = 'succeeded'
+        ORDER BY run_id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    return int(row["run_id"]) if row else None
 
 
 def _odds_closing_flag_check(conn: sqlite3.Connection) -> HealthCheck:
