@@ -12,12 +12,13 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 1 - Repo and DB stabilization | Code ready; formal gate still pending remote `pytest` plus `ruff`. |
 | 2 - Evaluation and scoring | Code ready; quarantined until the formal gate is green. |
 | 3 - Club OU2.5 benchmark | Coverage prep implemented; blocked until coverage readout and green gate. |
-| 4 - Today forecast web | Slim forecast-only GUI implemented; deploy and verify with live fixture/prediction state. |
+| 4 - Today forecast web | Slim forecast-only GUI deployed and verified; blocked for fresh cards by 0 future resolved fixtures. |
 | 5-9 | Pending. |
 
 Open loops that close Phase 0/1 when remote execution is available:
 
-- Run full `pytest` and `ruff` on the homeserver.
+- Full `pytest` is green on the homeserver as of 2026-07-04: 84 passed.
+- Full-repo `ruff` is still open with legacy style findings; touched GUI files pass targeted `ruff`.
 - Run `fixture-summary` and confirm remaining World Cup fixtures have `kickoff_utc`.
 - Run `db-failures --days 7` and explain the recent failed run.
 - Confirm the homeserver `.venv` has dev tools or install `.[dev]`.

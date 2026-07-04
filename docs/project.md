@@ -627,6 +627,9 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added `resolve-fixture-teams --fixture-id ... --home ... --away ...` to manually resolve bracket placeholders to existing team aliases without auto-creating teams.
 - Added tests for the forecast GUI contract, match detail rendering, OU monotonicity hiding, manual fixture resolution, and persisted prediction-sanity metrics.
 - Hardened lightweight DB column migrations against benign concurrent startup races by ignoring only the specific SQLite `duplicate column name` condition after a second process already added the same column.
+- Deployed the forecast-only GUI to the homeserver and restarted `scorerecord-gui.service`. Remote `/healthz` returned `ok`; `/today` contains `FORECAST_ONLY`; `/audit` still contains the operational paper/audit dashboard.
+- Remote validation after deploy: full `pytest` passed with 84 tests; targeted `ruff` over the touched files passed. Full-repo `ruff` remains a separate cleanup gate with 81 legacy style findings outside this GUI change.
+- Remote fixture summary after deploy: 104 fixtures, 54 finished, 0 missing kickoff UTC, 0 future resolved, 14 future unresolved, and 36 past unscored. The GUI is therefore live and honest, but it cannot show new forecast cards until bracket placeholders are resolved or the fixture feed is refreshed with future resolved teams.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
