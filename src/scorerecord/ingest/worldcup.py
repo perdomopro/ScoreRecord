@@ -5,10 +5,14 @@ import re
 import sqlite3
 from pathlib import Path
 
-from scorerecord.aliases import get_or_create_team, normalize_name, seed_team_aliases
+from scorerecord.aliases import (
+    get_or_create_team,
+    normalize_key,
+    normalize_name,
+    seed_team_aliases,
+)
 from scorerecord.sources import OPENFOOTBALL_2026_URL, fetch_text
 from scorerecord.time_utils import format_utc, parse_kickoff_utc
-
 
 _PLACEHOLDER_RE = re.compile(r"^(?:[WL]\d+|[12][A-L]|3[A-L](?:/(?:3?[A-L]))+)$")
 
@@ -83,10 +87,63 @@ def ingest_worldcup_2026(
     return upserts
 
 
+def resolve_fixture_teams(
+    conn: sqlite3.Connection,
+    *,
+    fixture_id: str,
+    home: str,
+    away: str,
+) -> None:
+    home_id = _existing_team_id(conn, home)
+    away_id = _existing_team_id(conn, away)
+    missing = []
+    if home_id is None:
+        missing.append(home)
+    if away_id is None:
+        missing.append(away)
+    if missing:
+        raise ValueError(f"Unknown team alias(es): {', '.join(missing)}")
+
+    cursor = conn.execute(
+        """
+        UPDATE fixture
+        SET home_id = ?,
+            away_id = ?,
+            updated_utc = CURRENT_TIMESTAMP
+        WHERE fixture_id = ?
+        """,
+        (home_id, away_id, fixture_id),
+    )
+    if cursor.rowcount == 0:
+        raise ValueError(f"Unknown fixture_id: {fixture_id}")
+    conn.commit()
+
+
 def _team_id_or_none(conn: sqlite3.Connection, name: str | None) -> int | None:
     if not name or _is_placeholder(name):
         return None
     return get_or_create_team(conn, name)
+
+
+def _existing_team_id(conn: sqlite3.Connection, name: str) -> int | None:
+    key = normalize_key(name)
+    if not key:
+        return None
+    row = conn.execute(
+        """
+        SELECT team_id
+        FROM team
+        WHERE canonical_key = ?
+        UNION
+        SELECT team_id
+        FROM team_alias
+        WHERE alias_key = ?
+        ORDER BY team_id
+        LIMIT 1
+        """,
+        (key, key),
+    ).fetchone()
+    return int(row["team_id"]) if row else None
 
 
 def _is_placeholder(name: str) -> bool:

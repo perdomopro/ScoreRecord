@@ -1,7 +1,14 @@
 import sqlite3
+from datetime import UTC, datetime
 
 from scorerecord.db import init_db
-from scorerecord.gui import load_dashboard_data, render_dashboard
+from scorerecord.gui import (
+    load_dashboard_data,
+    load_forecast_data,
+    render_dashboard,
+    render_match_forecast,
+    render_today_forecast,
+)
 from scorerecord.models.manifest import MODEL_VERSION
 
 
@@ -18,6 +25,61 @@ def _run(conn: sqlite3.Connection, job_name: str) -> int:
         (job_name,),
     )
     return int(cursor.lastrowid)
+
+
+def _insert_forecast_fixture(conn: sqlite3.Connection) -> int:
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (1, 'Mexico', 'mexico')"
+    )
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (2, 'Canada', 'canada')"
+    )
+    conn.execute(
+        """
+        INSERT INTO fixture (
+          fixture_id, kickoff_local, kickoff_utc, stage, group_name, home_id, away_id, ground
+        )
+        VALUES (
+          'm-forecast', '2026-07-04 14:00 UTC-6', '2026-07-04T20:00:00+00:00',
+          'Quarter-finals', NULL, 1, 2, 'Azteca'
+        )
+        """
+    )
+    run_id = _run(conn, "predict-fixtures")
+    conn.execute(
+        """
+        INSERT INTO model_artifact (
+          artifact_id, model_version, market_validation_status, trained_until,
+          training_rows, params_json
+        )
+        VALUES ('artifact-forecast-1', ?, 'NOT_TESTED', '2026-06-11', 5730, '{}')
+        """,
+        (MODEL_VERSION,),
+    )
+    for market, selection, prob in [
+        ("OU1.5", "over", 0.74),
+        ("OU1.5", "under", 0.26),
+        ("OU2.5", "over", 0.49),
+        ("OU2.5", "under", 0.51),
+        ("OU3.5", "over", 0.22),
+        ("OU3.5", "under", 0.78),
+        ("BTTS", "yes", 0.53),
+        ("BTTS", "no", 0.47),
+    ]:
+        conn.execute(
+            """
+            INSERT INTO prediction (
+              run_id, fixture_id, artifact_id, model, market, selection, prob,
+              fair_odds, generated_utc, model_version
+            )
+            VALUES (
+              ?, 'm-forecast', 'artifact-forecast-1', 'dixon_coles',
+              ?, ?, ?, ?, '2026-07-04T12:00:00+00:00', ?
+            )
+            """,
+            (run_id, market, selection, prob, 1 / prob, MODEL_VERSION),
+        )
+    return run_id
 
 
 def test_dashboard_uses_latest_post_guardrail_recommendation_run() -> None:
@@ -252,3 +314,72 @@ def test_dashboard_deduplicates_audit_rows_by_logical_pick() -> None:
     assert data.audit_rows[0]["duplicate_rows"] == 2
     assert data.audit_rows[0]["bookmaker"] == "Unibet"
     assert "Raw Rows" in html
+
+
+def test_forecast_today_reads_predictions_not_recommendations() -> None:
+    conn = _conn()
+    run_id = _insert_forecast_fixture(conn)
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    html = render_today_forecast(data, refresh_seconds=60)
+
+    assert data.latest_run_id == run_id
+    assert data.forecastable_count == 1
+    assert data.fixtures[0].primary is not None
+    assert data.fixtures[0].primary.market == "OU3.5"
+    assert data.fixtures[0].primary.selection == "under"
+    assert "FORECAST_ONLY" in html
+    assert "No es recomendacion de apuesta" in html
+    assert "Mexico" in html
+    assert "Canada" in html
+    assert "Under 3.5 goles" in html
+    assert "Actionable Recommendations" not in html
+    assert "No usa EV" in html
+
+
+def test_forecast_match_renders_goal_market_detail() -> None:
+    conn = _conn()
+    _insert_forecast_fixture(conn)
+
+    data = load_forecast_data(
+        conn,
+        fixture_id="m-forecast",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    html = render_match_forecast(data, "m-forecast")
+
+    assert "Mexico" in html
+    assert "Canada" in html
+    assert "Cuota justa" in html
+    assert "OU2.5" in html
+    assert "Ambos anotan: si" in html
+
+
+def test_forecast_hides_ou_when_monotonicity_is_broken() -> None:
+    conn = _conn()
+    _insert_forecast_fixture(conn)
+    conn.execute(
+        """
+        UPDATE prediction
+        SET prob = 0.80, fair_odds = 1.25
+        WHERE fixture_id = 'm-forecast'
+          AND market = 'OU2.5'
+          AND selection = 'over'
+        """
+    )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    html = render_today_forecast(data, refresh_seconds=60)
+
+    assert data.inconsistent_count == 1
+    assert data.fixtures[0].primary is None
+    assert data.fixtures[0].state_label == "DATOS INCONSISTENTES"
+    assert "Over 1.5 goles" not in html

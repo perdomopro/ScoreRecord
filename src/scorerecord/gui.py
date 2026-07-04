@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from scorerecord.db import connect, init_db
-
+from scorerecord.time_utils import parse_kickoff_utc
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -22,6 +24,9 @@ DEFAULT_MAX_EDGE = 0.25
 DEFAULT_MIN_PROB = 0.15
 DEFAULT_MAX_ODDS_AGE_MINUTES = 180.0
 DEFAULT_MIN_BOOKS = 2
+DEFAULT_DISPLAY_TZ = "America/Mexico_City"
+FORECAST_MARKETS = ("OU1.5", "OU2.5", "OU3.5", "BTTS")
+FORECAST_MIN_PROB = 0.60
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,60 @@ class DashboardData:
     edge_sanity: dict[str, Any]
     legacy_warning_count: int
     generated_utc: str
+
+
+@dataclass(frozen=True)
+class ForecastMarket:
+    market: str
+    selection: str
+    prob: float
+    fair_odds: float
+    model_version: str
+    artifact_id: str | None
+    market_validation_status: str
+
+
+@dataclass(frozen=True)
+class ForecastFixture:
+    fixture_id: str
+    kickoff_utc: str | None
+    kickoff_local: str
+    display_date: str | None
+    display_time: str
+    stage: str | None
+    group_name: str | None
+    ground: str | None
+    home: str
+    away: str
+    is_resolved: bool
+    is_started: bool
+    state: str
+    state_label: str
+    primary: ForecastMarket | None
+    markets: list[ForecastMarket]
+    artifact_id: str | None
+    model_version: str | None
+    market_validation_status: str
+    ou_monotonicity_ok: bool
+
+
+@dataclass(frozen=True)
+class ForecastData:
+    target_date: str
+    previous_date: str
+    next_date: str
+    display_tz: str
+    latest_run_id: int | None
+    generated_utc: str
+    fixtures: list[ForecastFixture]
+    all_fixture_count: int
+    forecastable_count: int
+    pending_definition_count: int
+    inconsistent_count: int
+    model_version: str | None
+    artifact_id: str | None
+    market_validation_status: str
+    empty_state: str | None
 
 
 def serve_dashboard(
@@ -55,11 +114,44 @@ def serve_dashboard(
             if parsed.path == "/healthz":
                 self._write("ok\n", content_type="text/plain; charset=utf-8")
                 return
-            if parsed.path not in {"/", "/index.html"}:
-                self.send_error(404)
-                return
 
             params = parse_qs(parsed.query)
+            mode = str(params.get("mode", [""])[0]).strip().lower()
+            if parsed.path in {"/", "/index.html"} and mode != "audit":
+                self._render_today(params)
+                return
+            if parsed.path == "/today":
+                self._render_today(params)
+                return
+            if parsed.path.startswith("/match/"):
+                fixture_id = parsed.path.removeprefix("/match/").strip("/")
+                self._render_match(fixture_id)
+                return
+            if parsed.path == "/audit" or mode == "audit":
+                self._render_audit(params)
+                return
+            self.send_error(404)
+
+        def _render_today(self, params: dict[str, list[str]]) -> None:
+            date_filter = _parse_date(params.get("date", [""])[0])
+            try:
+                with connect(db_path) as conn:
+                    data = load_forecast_data(conn, target_date=date_filter)
+                body = render_today_forecast(data, refresh_seconds=refresh_seconds)
+            except Exception as exc:  # pragma: no cover - defensive web path
+                body = render_error(exc)
+            self._write(body)
+
+        def _render_match(self, fixture_id: str) -> None:
+            try:
+                with connect(db_path) as conn:
+                    data = load_forecast_data(conn, fixture_id=fixture_id)
+                body = render_match_forecast(data, fixture_id)
+            except Exception as exc:  # pragma: no cover - defensive web path
+                body = render_error(exc)
+            self._write(body)
+
+        def _render_audit(self, params: dict[str, list[str]]) -> None:
             selected_run_id = _parse_int(params.get("run_id", [""])[0])
             date_filter = _parse_date(params.get("date", [""])[0])
             market_filter = _parse_market(params.get("market", [""])[0])
@@ -99,6 +191,133 @@ def serve_dashboard(
         server.serve_forever()
     finally:
         server.server_close()
+
+
+def load_forecast_data(
+    conn: sqlite3.Connection,
+    *,
+    target_date: str | None = None,
+    fixture_id: str | None = None,
+    display_tz_name: str | None = None,
+    now_utc: datetime | None = None,
+) -> ForecastData:
+    display_tz = _display_tz(display_tz_name)
+    now = now_utc or datetime.now(UTC)
+    now_local = now.astimezone(display_tz)
+    selected_date = target_date or now_local.date().isoformat()
+    previous_date = (date.fromisoformat(selected_date) - timedelta(days=1)).isoformat()
+    next_date = (date.fromisoformat(selected_date) + timedelta(days=1)).isoformat()
+    latest_run_id = _latest_prediction_run_id(conn)
+    prediction_rows = _forecast_prediction_rows(conn, latest_run_id)
+    predictions_by_fixture = _group_forecast_predictions(prediction_rows)
+    rows = _forecast_fixture_rows(conn, fixture_id=fixture_id)
+    fixtures: list[ForecastFixture] = []
+    for row in rows:
+        fixture = _forecast_fixture_from_row(
+            row,
+            predictions_by_fixture.get(str(row["fixture_id"]), []),
+            display_tz=display_tz,
+            selected_date=selected_date if fixture_id is None else None,
+            now_utc=now,
+        )
+        if fixture is not None:
+            fixtures.append(fixture)
+
+    model_version = next(
+        (fixture.model_version for fixture in fixtures if fixture.model_version),
+        None,
+    )
+    artifact_id = next((fixture.artifact_id for fixture in fixtures if fixture.artifact_id), None)
+    validation_status = next(
+        (
+            fixture.market_validation_status
+            for fixture in fixtures
+            if fixture.market_validation_status != "NOT_TESTED"
+        ),
+        "NOT_TESTED",
+    )
+    empty_state = None
+    if latest_run_id is None:
+        empty_state = "SIN DATOS"
+    elif not fixtures:
+        empty_state = "SIN PARTIDOS"
+    elif not any(fixture.markets for fixture in fixtures):
+        empty_state = "SIN PREDICCIONES"
+    return ForecastData(
+        target_date=selected_date,
+        previous_date=previous_date,
+        next_date=next_date,
+        display_tz=getattr(display_tz, "key", str(display_tz)),
+        latest_run_id=latest_run_id,
+        generated_utc=now.isoformat(timespec="seconds"),
+        fixtures=fixtures,
+        all_fixture_count=len(fixtures),
+        forecastable_count=sum(1 for fixture in fixtures if fixture.primary is not None),
+        pending_definition_count=sum(1 for fixture in fixtures if not fixture.is_resolved),
+        inconsistent_count=sum(1 for fixture in fixtures if not fixture.ou_monotonicity_ok),
+        model_version=model_version,
+        artifact_id=artifact_id,
+        market_validation_status=validation_status,
+        empty_state=empty_state,
+    )
+
+
+def render_today_forecast(data: ForecastData, *, refresh_seconds: int) -> str:
+    cards = "".join(_forecast_card(fixture) for fixture in data.fixtures)
+    if not cards:
+        cards = _empty_forecast_state(data.empty_state or "SIN PARTIDOS")
+    return f"""<!doctype html>
+<html lang="es" data-theme="scorerecord">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="{int(refresh_seconds)}">
+  <title>ScoreRecord Forecast</title>
+  <style>{_forecast_css()}</style>
+</head>
+<body class="forecast-page">
+  {_forecast_nav(data)}
+  <main class="forecast-shell">
+    {_forecast_warning_banner(data)}
+    {_forecast_stats(data)}
+    <section class="forecast-toolbar">
+      <a class="btn ghost" href="/today?date={_e(data.previous_date)}">Anterior</a>
+      <form method="get" action="/today" class="date-form">
+        <label for="date">Fecha</label>
+        <input id="date" name="date" type="date" value="{_e(data.target_date)}">
+        <button class="btn" type="submit">Ver</button>
+      </form>
+      <a class="btn ghost" href="/today?date={_e(data.next_date)}">Siguiente</a>
+      <a class="btn ghost" href="/audit">Auditoria</a>
+    </section>
+    <section class="match-grid">{cards}</section>
+  </main>
+</body>
+</html>"""
+
+
+def render_match_forecast(data: ForecastData, fixture_id: str) -> str:
+    fixture = next((item for item in data.fixtures if item.fixture_id == fixture_id), None)
+    if fixture is None:
+        content = _empty_forecast_state("PARTIDO NO ENCONTRADO")
+    else:
+        content = _match_detail(fixture)
+    return f"""<!doctype html>
+<html lang="es" data-theme="scorerecord">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ScoreRecord Match</title>
+  <style>{_forecast_css()}</style>
+</head>
+<body class="forecast-page">
+  {_forecast_nav(data)}
+  <main class="forecast-shell">
+    {_forecast_warning_banner(data)}
+    {content}
+  </main>
+</body>
+</html>"""
 
 
 def load_dashboard_data(
@@ -149,7 +368,7 @@ def load_dashboard_data(
         kpis=kpis,
         edge_sanity=edge_sanity,
         legacy_warning_count=legacy_warning_count,
-        generated_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        generated_utc=datetime.now(UTC).isoformat(timespec="seconds"),
     )
 
 
@@ -161,7 +380,7 @@ def render_dashboard(data: DashboardData, *, refresh_seconds: int) -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="refresh" content="{int(refresh_seconds)}">
-  <title>{title}</title>
+  <title>{title} Audit</title>
   <style>{_css()}</style>
 </head>
 <body>
@@ -169,8 +388,9 @@ def render_dashboard(data: DashboardData, *, refresh_seconds: int) -> str:
     <div>
       <div class="brand">ScoreRecord</div>
       <div class="subline">Read-only paper / audit mode</div>
+      <a class="button ghost" href="/today">Forecast</a>
     </div>
-    <form class="run-form" method="get" action="/">
+    <form class="run-form" method="get" action="/audit">
       <label for="run_id">Recommend Run</label>
       <select id="run_id" name="run_id">{_run_options(data)}</select>
       <label for="date">Date</label>
@@ -221,6 +441,374 @@ def render_error(exc: Exception) -> str:
 <section class="section error"><h1>Dashboard Error</h1><pre>{_e(str(exc))}</pre></section>
 </main></body>
 </html>"""
+
+
+def _display_tz(display_tz_name: str | None = None) -> ZoneInfo:
+    name = display_tz_name or os.getenv("SCORERECORD_DISPLAY_TZ", DEFAULT_DISPLAY_TZ)
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo(DEFAULT_DISPLAY_TZ)
+
+
+def _latest_prediction_run_id(conn: sqlite3.Connection) -> int | None:
+    row = conn.execute(
+        """
+        SELECT ir.run_id
+        FROM ingest_run ir
+        JOIN prediction p ON p.run_id = ir.run_id
+        WHERE ir.job_name = 'predict-fixtures'
+          AND ir.status = 'succeeded'
+        GROUP BY ir.run_id
+        ORDER BY ir.run_id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    if row:
+        return int(row["run_id"])
+    fallback = conn.execute(
+        "SELECT MAX(run_id) AS run_id FROM prediction WHERE run_id IS NOT NULL"
+    ).fetchone()
+    return int(fallback["run_id"]) if fallback and fallback["run_id"] is not None else None
+
+
+def _forecast_prediction_rows(
+    conn: sqlite3.Connection,
+    run_id: int | None,
+) -> list[sqlite3.Row]:
+    if run_id is None:
+        return []
+    placeholders = ",".join("?" for _ in FORECAST_MARKETS)
+    return conn.execute(
+        f"""
+        SELECT
+          p.fixture_id,
+          p.artifact_id,
+          p.market,
+          p.selection,
+          p.prob,
+          p.fair_odds,
+          p.model_version,
+          COALESCE(ma.market_validation_status, 'NOT_TESTED') AS market_validation_status
+        FROM prediction p
+        LEFT JOIN model_artifact ma ON ma.artifact_id = p.artifact_id
+        WHERE p.run_id = ?
+          AND p.market IN ({placeholders})
+        ORDER BY p.fixture_id, p.market, p.selection
+        """,
+        (run_id, *FORECAST_MARKETS),
+    ).fetchall()
+
+
+def _forecast_fixture_rows(
+    conn: sqlite3.Connection,
+    *,
+    fixture_id: str | None,
+) -> list[sqlite3.Row]:
+    fixture_filter = "AND f.fixture_id = ?" if fixture_id else ""
+    params = (fixture_id,) if fixture_id else ()
+    return conn.execute(
+        f"""
+        SELECT
+          f.fixture_id,
+          f.kickoff_local,
+          f.kickoff_utc,
+          f.stage,
+          f.group_name,
+          f.ground,
+          f.home_id,
+          f.away_id,
+          f.home_placeholder,
+          f.away_placeholder,
+          ht.canonical AS home,
+          at.canonical AS away
+        FROM fixture f
+        LEFT JOIN team ht ON ht.team_id = f.home_id
+        LEFT JOIN team at ON at.team_id = f.away_id
+        WHERE f.home_score IS NULL
+          AND f.away_score IS NULL
+          {fixture_filter}
+        ORDER BY COALESCE(f.kickoff_utc, f.kickoff_local), f.fixture_id
+        """,
+        params,
+    ).fetchall()
+
+
+def _group_forecast_predictions(
+    rows: list[sqlite3.Row],
+) -> dict[str, list[ForecastMarket]]:
+    grouped: dict[str, list[ForecastMarket]] = {}
+    for row in rows:
+        fixture_id = str(row["fixture_id"])
+        grouped.setdefault(fixture_id, []).append(
+            ForecastMarket(
+                market=str(row["market"]),
+                selection=str(row["selection"]),
+                prob=float(row["prob"]),
+                fair_odds=float(row["fair_odds"]),
+                model_version=str(row["model_version"]),
+                artifact_id=row["artifact_id"],
+                market_validation_status=str(row["market_validation_status"] or "NOT_TESTED"),
+            )
+        )
+    return grouped
+
+
+def _forecast_fixture_from_row(
+    row: sqlite3.Row,
+    predictions: list[ForecastMarket],
+    *,
+    display_tz: ZoneInfo,
+    selected_date: str | None,
+    now_utc: datetime,
+) -> ForecastFixture | None:
+    kickoff_utc = parse_kickoff_utc(
+        kickoff_utc=row["kickoff_utc"],
+        kickoff_local=row["kickoff_local"],
+    )
+    local_dt = kickoff_utc.astimezone(display_tz) if kickoff_utc else None
+    display_date = local_dt.date().isoformat() if local_dt else None
+    if selected_date is not None and display_date != selected_date:
+        return None
+    is_resolved = row["home_id"] is not None and row["away_id"] is not None
+    is_started = bool(kickoff_utc and now_utc >= kickoff_utc)
+    monotonicity_ok = _ou_monotonicity_ok(predictions)
+    visible_markets = predictions if is_resolved and monotonicity_ok else []
+    primary = None if is_started else _select_primary_forecast(visible_markets)
+    state, state_label = _forecast_state(
+        is_resolved=is_resolved,
+        is_started=is_started,
+        has_predictions=bool(predictions),
+        monotonicity_ok=monotonicity_ok,
+        primary=primary,
+    )
+    return ForecastFixture(
+        fixture_id=str(row["fixture_id"]),
+        kickoff_utc=row["kickoff_utc"],
+        kickoff_local=str(row["kickoff_local"] or ""),
+        display_date=display_date,
+        display_time=local_dt.strftime("%H:%M") if local_dt else "hora por definir",
+        stage=row["stage"],
+        group_name=row["group_name"],
+        ground=row["ground"],
+        home=str(row["home"] or row["home_placeholder"] or "Por definir"),
+        away=str(row["away"] or row["away_placeholder"] or "Por definir"),
+        is_resolved=is_resolved,
+        is_started=is_started,
+        state=state,
+        state_label=state_label,
+        primary=primary,
+        markets=visible_markets,
+        artifact_id=visible_markets[0].artifact_id if visible_markets else None,
+        model_version=visible_markets[0].model_version if visible_markets else None,
+        market_validation_status=(
+            visible_markets[0].market_validation_status if visible_markets else "NOT_TESTED"
+        ),
+        ou_monotonicity_ok=monotonicity_ok,
+    )
+
+
+def _ou_monotonicity_ok(markets: list[ForecastMarket]) -> bool:
+    over = {
+        market.market: market.prob
+        for market in markets
+        if market.selection == "over" and market.market in {"OU1.5", "OU2.5", "OU3.5"}
+    }
+    if not {"OU1.5", "OU2.5", "OU3.5"}.issubset(over):
+        return True
+    return over["OU1.5"] + 1e-9 >= over["OU2.5"] >= over["OU3.5"] - 1e-9
+
+
+def _select_primary_forecast(markets: list[ForecastMarket]) -> ForecastMarket | None:
+    candidates = [market for market in markets if market.prob >= FORECAST_MIN_PROB]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda market: (market.prob, _market_rank(market.market)))
+
+
+def _forecast_state(
+    *,
+    is_resolved: bool,
+    is_started: bool,
+    has_predictions: bool,
+    monotonicity_ok: bool,
+    primary: ForecastMarket | None,
+) -> tuple[str, str]:
+    if not is_resolved:
+        return "pending", "POR DEFINIR"
+    if not has_predictions:
+        return "nodata", "SIN DATOS"
+    if not monotonicity_ok:
+        return "bad", "DATOS INCONSISTENTES"
+    if is_started:
+        return "stale", "KICKOFF PASADO"
+    if primary is None:
+        return "quiet", "SIN PRONOSTICO"
+    return "forecast", "FORECAST_ONLY"
+
+
+def _forecast_nav(data: ForecastData) -> str:
+    return f"""
+    <header class="forecast-nav">
+      <div>
+        <div class="brand">ScoreRecord</div>
+        <div class="subline">Mundial / selecciones - pronostico estadistico</div>
+      </div>
+      <nav>
+        <a href="/today?date={_e(data.target_date)}">Hoy</a>
+        <a href="/audit">Auditoria</a>
+        <span class="badge forecast">FORECAST_ONLY</span>
+      </nav>
+    </header>
+    """
+
+
+def _forecast_warning_banner(data: ForecastData) -> str:
+    artifact = _short_id(data.artifact_id)
+    return f"""
+    <section class="forecast-alert">
+      <strong>FORECAST_ONLY</strong>
+      <span>No es recomendacion de apuesta. No usa EV, Kelly ni edge.</span>
+      <span>Market validation: {_e(data.market_validation_status or 'NOT_TESTED')}</span>
+      <span>Modelo: {_e(data.model_version or 'sin prediccion')}</span>
+      <span>Artifact: {_e(artifact or 'n/a')}</span>
+      <span>TZ: {_e(data.display_tz)}</span>
+    </section>
+    """
+
+
+def _forecast_stats(data: ForecastData) -> str:
+    items = [
+        ("Fecha", data.target_date),
+        ("Partidos", data.all_fixture_count),
+        ("Con pronostico", data.forecastable_count),
+        ("Por definir", data.pending_definition_count),
+        ("Datos inconsistentes", data.inconsistent_count),
+        ("Prediction run", data.latest_run_id),
+    ]
+    cells = "".join(
+        f'<div class="stat"><span>{_e(label)}</span><strong>{_v(value)}</strong></div>'
+        for label, value in items
+    )
+    return f'<section class="forecast-stats">{cells}</section>'
+
+
+def _forecast_card(fixture: ForecastFixture) -> str:
+    primary = (
+        f"""
+        <div class="primary-forecast">
+          <span>Pronostico principal</span>
+          <strong>{_forecast_label(fixture.primary)}</strong>
+          <em>{_pct(fixture.primary.prob)}</em>
+        </div>
+        """
+        if fixture.primary
+        else f'<div class="primary-forecast empty">{_e(fixture.state_label)}</div>'
+    )
+    markets = _forecast_market_chips(fixture.markets[:8])
+    return f"""
+    <article class="match-card {fixture.state}">
+      <div class="match-card-head">
+        <div>
+          <div class="kickoff">{_e(fixture.display_time)} - {_e(fixture.display_date or '')}</div>
+          <h2>{_e(fixture.home)} <span>vs</span> {_e(fixture.away)}</h2>
+          <p>{_e(_fixture_context(fixture))}</p>
+        </div>
+        <span class="state {fixture.state}">{_e(fixture.state_label)}</span>
+      </div>
+      {primary}
+      <div class="market-chips">{markets}</div>
+      <div class="card-actions">
+        <a class="btn" href="/match/{_e(fixture.fixture_id)}">Detalle</a>
+      </div>
+    </article>
+    """
+
+
+def _match_detail(fixture: ForecastFixture) -> str:
+    rows = "".join(
+        f"""
+        <tr>
+          <td>{_e(market.market)}</td>
+          <td>{_e(_forecast_label(market))}</td>
+          <td>{_pct(market.prob)}</td>
+          <td>{_num(market.fair_odds)}</td>
+          <td>{_e(_short_id(market.artifact_id) or 'n/a')}</td>
+        </tr>
+        """
+        for market in fixture.markets
+    )
+    if not rows:
+        rows = '<tr><td colspan="5" class="empty">No hay mercados de goles para mostrar.</td></tr>'
+    return f"""
+    <section class="match-detail">
+      <a class="btn ghost" href="/today?date={_e(fixture.display_date or '')}">Volver</a>
+      <div class="detail-head">
+        <div>
+          <div class="kickoff">{_e(fixture.display_time)} - {_e(fixture.display_date or '')}</div>
+          <h1>{_e(fixture.home)} <span>vs</span> {_e(fixture.away)}</h1>
+          <p>{_e(_fixture_context(fixture))}</p>
+        </div>
+        <span class="state {fixture.state}">{_e(fixture.state_label)}</span>
+      </div>
+      <table class="forecast-table">
+        <thead>
+          <tr>
+            <th>Mercado</th><th>Seleccion</th><th>Probabilidad</th>
+            <th>Cuota justa</th><th>Artifact</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+    """
+
+
+def _forecast_market_chips(markets: list[ForecastMarket]) -> str:
+    if not markets:
+        return '<span class="muted">Sin mercados visibles.</span>'
+    return "".join(
+        f'<span class="chip"><b>{_e(_forecast_label(market))}</b> {_pct(market.prob)}</span>'
+        for market in markets
+    )
+
+
+def _empty_forecast_state(label: str) -> str:
+    return f"""
+    <section class="empty-forecast">
+      <h1>{_e(label)}</h1>
+      <p>No hay fixtures pronosticables para esta vista. Revisa fixture-summary,
+      ingest-worldcup y predict-fixtures antes de interpretar la pantalla.</p>
+    </section>
+    """
+
+
+def _forecast_label(market: ForecastMarket | None) -> str:
+    if market is None:
+        return "Sin pronostico"
+    if market.market.startswith("OU"):
+        line = market.market.removeprefix("OU")
+        direction = "Over" if market.selection == "over" else "Under"
+        return f"{direction} {line} goles"
+    if market.market == "BTTS":
+        return "Ambos anotan: si" if market.selection == "yes" else "Ambos anotan: no"
+    return f"{market.market} {market.selection}"
+
+
+def _fixture_context(fixture: ForecastFixture) -> str:
+    parts = [part for part in [fixture.stage, fixture.group_name, fixture.ground] if part]
+    return " - ".join(str(part) for part in parts) or "Fixture mundialista"
+
+
+def _market_rank(market: str) -> int:
+    order = {market_name: index for index, market_name in enumerate(FORECAST_MARKETS)}
+    return -order.get(market, 999)
+
+
+def _short_id(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value[:12]
 
 
 def _recommendation_runs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -844,7 +1432,7 @@ def _query_url(data: DashboardData, *, latest: bool = False) -> str:
     if data.market_filter:
         params["market"] = data.market_filter
     query = urlencode(params)
-    return "/" if not query else f"/?{query}"
+    return "/audit" if not query else f"/audit?{query}"
 
 
 def _max_timestamp(*values: Any) -> str | None:
@@ -856,7 +1444,195 @@ def _is_today(value: Any) -> bool:
     text = str(value or "")
     if len(text) < 10:
         return False
-    return text[:10] == datetime.now(timezone.utc).date().isoformat()
+    return text[:10] == datetime.now(UTC).date().isoformat()
+
+
+def _forecast_css() -> str:
+    return """
+:root {
+  color-scheme: light;
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --surface-2: #eef2f6;
+  --ink: #101820;
+  --muted: #64717d;
+  --line: #d8e0e7;
+  --green: #0f7a55;
+  --blue: #2563eb;
+  --amber: #b7791f;
+  --red: #b42318;
+  --purple: #6d28d9;
+}
+* { box-sizing: border-box; }
+body.forecast-page {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.forecast-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 22px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.forecast-nav nav { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.forecast-nav a, .btn {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 11px;
+  min-height: 38px;
+  color: var(--ink);
+  background: var(--surface);
+  text-decoration: none;
+  font-weight: 700;
+}
+.forecast-nav a:hover, .btn:hover { border-color: var(--blue); color: var(--blue); }
+.brand { font-size: 22px; font-weight: 850; letter-spacing: 0; }
+.subline { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.forecast-shell { width: min(1180px, 100%); margin: 0 auto; padding: 18px; }
+.forecast-alert {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: center;
+  padding: 12px 14px;
+  background: #ecfdf5;
+  border: 1px solid #b7dfc7;
+  border-left: 6px solid var(--green);
+  border-radius: 10px;
+}
+.forecast-alert strong { color: var(--green); }
+.forecast-alert span { color: #1f3d31; }
+.forecast-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(130px, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+.stat {
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-height: 74px;
+}
+.stat span { display: block; color: var(--muted); font-size: 12px; }
+.stat strong { display: block; margin-top: 8px; font-size: 20px; }
+.forecast-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.date-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.date-form label { color: var(--muted); font-size: 13px; }
+.date-form input {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+.btn { cursor: pointer; }
+.ghost { color: var(--blue); }
+.badge, .state {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.badge.forecast { color: var(--green); border-color: #b7dfc7; background: #ecfdf5; }
+.match-grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
+.match-card, .match-detail, .empty-forecast {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+}
+.match-card { min-height: 260px; display: flex; flex-direction: column; gap: 12px; }
+.match-card.forecast { border-left: 6px solid var(--green); }
+.match-card.quiet { border-left: 6px solid var(--blue); }
+.match-card.pending { border-left: 6px solid var(--amber); }
+.match-card.bad { border-left: 6px solid var(--red); }
+.match-card.stale, .match-card.nodata { border-left: 6px solid var(--muted); }
+.match-card-head, .detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.kickoff { color: var(--muted); font-weight: 750; font-size: 13px; }
+h1, h2 { margin: 4px 0; letter-spacing: 0; }
+h1 { font-size: 28px; }
+h2 { font-size: 21px; }
+h1 span, h2 span { color: var(--muted); font-weight: 600; }
+p { color: var(--muted); margin: 4px 0 0; }
+.state.forecast { color: var(--green); background: #ecfdf5; border-color: #b7dfc7; }
+.state.quiet { color: var(--blue); background: #eff6ff; border-color: #bfd1ff; }
+.state.pending { color: var(--amber); background: #fff8ed; border-color: #f1c27d; }
+.state.bad { color: var(--red); background: #fff4f3; border-color: #f2aaa4; }
+.state.stale, .state.nodata { color: var(--muted); background: #f7f8fa; }
+.primary-forecast {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid #b7dfc7;
+  background: #f4fbf7;
+}
+.primary-forecast span { color: var(--muted); display: block; font-size: 12px; }
+.primary-forecast strong { display: block; font-size: 22px; margin-top: 5px; }
+.primary-forecast em {
+  display: block;
+  font-style: normal;
+  color: var(--green);
+  font-weight: 850;
+  font-size: 18px;
+  margin-top: 2px;
+}
+.primary-forecast.empty { color: var(--muted); border-color: var(--line); background: #fafafa; }
+.market-chips { display: flex; gap: 7px; flex-wrap: wrap; }
+.chip {
+  display: inline-flex;
+  gap: 7px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 6px 9px;
+  font-size: 13px;
+}
+.chip b { font-weight: 750; }
+.card-actions { margin-top: auto; }
+.forecast-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 14px;
+}
+.forecast-table th, .forecast-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 10px;
+  text-align: left;
+}
+.forecast-table th { color: var(--muted); font-size: 12px; background: #fbfcfd; }
+.empty-forecast { text-align: center; padding: 36px 18px; }
+.empty-forecast h1 { margin: 0 0 8px; }
+.muted, .empty { color: var(--muted); }
+@media (max-width: 900px) {
+  .forecast-nav, .match-card-head, .detail-head { flex-direction: column; }
+  .forecast-stats { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+  .match-grid { grid-template-columns: 1fr; }
+}
+"""
 
 
 def _css() -> str:

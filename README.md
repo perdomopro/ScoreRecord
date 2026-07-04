@@ -61,11 +61,21 @@ scorerecord gui --host 127.0.0.1 --port 8765
 scorerecord db-summary
 ```
 
-The read-only dashboard also supports lightweight filters:
+The read-only GUI opens on a forecast-only World Cup view. It reads from
+`fixture`, `prediction`, `team`, and `model_artifact`, not from paper
+recommendations:
 
 ```text
-http://127.0.0.1:8765/?date=2026-06-27&market=1X2
+http://127.0.0.1:8765/today?date=2026-07-04
+http://127.0.0.1:8765/match/<fixture_id>
+http://127.0.0.1:8765/audit
 ```
+
+The forecast view is deliberately `FORECAST_ONLY`: it shows calibrated goal-market
+probabilities and fair odds, but no EV, Kelly, stake, edge, or value language. The
+older paper/edge dashboard remains available at `/audit` for operational review.
+Use `SCORERECORD_DISPLAY_TZ` to change the display timezone; it defaults to
+`America/Mexico_City`.
 
 Backtest CSVs are written to `outputs/backtests/`. Until historical bookmaker odds are
 available, those reports use a training-window marginal probability as a market proxy, so
@@ -110,7 +120,7 @@ The strongest early path is:
 4. Frozen model manifests and settlement metrics for finished fixtures.
 5. Raw odds ingestion, de-vig, and edge analysis.
 6. Paper-only recommendations with small capped Kelly.
-7. Read-only GUI for post-guardrail paper picks, audit-only high-edge rows, and operational KPIs.
+7. Forecast-only GUI for World Cup probabilities; paper/edge rows stay in `/audit`.
 8. CLV tracking before any real-money staking.
 9. Props, corners, cards, and player shots only after confidence badges and coverage checks exist.
 

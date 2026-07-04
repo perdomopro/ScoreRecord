@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from scorerecord.evaluate.goal_markets import _walk_forward_predictions, build_goal_markets
@@ -15,8 +15,8 @@ from scorerecord.models.dixon_coles import DixonColes
 from scorerecord.models.manifest import (
     MODEL_VERSION,
     TRAINING_POLICY,
-    build_model_manifest,
     build_model_artifact,
+    build_model_manifest,
     persist_model_artifact,
 )
 from scorerecord.models.markets import (
@@ -28,7 +28,6 @@ from scorerecord.models.markets import (
 )
 from scorerecord.runs import ingest_run, record_quality
 from scorerecord.time_utils import parse_kickoff_utc
-
 
 DEFAULT_OU_LINES = (1.5, 2.5, 3.5)
 
@@ -83,7 +82,7 @@ def publish_fixture_predictions(
     ]
     model = DixonColes().fit(training_matches)
     calibrators = _fit_goal_market_calibrators(training_matches, ou_lines=ou_lines)
-    generated_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    generated_utc = datetime.now(UTC).isoformat(timespec="seconds")
 
     with ingest_run(conn, "predict-fixtures", source="fixture", cwd=cwd) as run_id:
         model_artifact = build_model_artifact(
@@ -174,6 +173,7 @@ def publish_fixture_predictions(
             ),
         )
         _record_fixture_elo_quality(conn, run_id, fixtures)
+        _record_prediction_sanity(conn, run_id)
         conn.commit()
     return summary
 
@@ -250,7 +250,11 @@ def _prediction_rows(
 ) -> list[tuple[str, str, float]]:
     del fixture_id
     rows: list[tuple[str, str, float]] = []
-    for selection, prob in zip(("home", "draw", "away"), one_x_two_probabilities(score_grid)):
+    for selection, prob in zip(
+        ("home", "draw", "away"),
+        one_x_two_probabilities(score_grid),
+        strict=True,
+    ):
         rows.append(("1X2", selection, prob))
     for line in ou_lines:
         market = f"OU{line}"
@@ -409,3 +413,43 @@ def _record_fixture_elo_quality(
             float(value),
             json.dumps(details, sort_keys=True),
         )
+
+
+def _record_prediction_sanity(conn: sqlite3.Connection, run_id: int) -> None:
+    rows = conn.execute(
+        """
+        SELECT fixture_id,
+               MAX(CASE WHEN market = 'OU1.5' AND selection = 'over' THEN prob END) AS o15,
+               MAX(CASE WHEN market = 'OU2.5' AND selection = 'over' THEN prob END) AS o25,
+               MAX(CASE WHEN market = 'OU3.5' AND selection = 'over' THEN prob END) AS o35
+        FROM prediction
+        WHERE run_id = ?
+        GROUP BY fixture_id
+        HAVING o15 IS NOT NULL
+           AND o25 IS NOT NULL
+           AND o35 IS NOT NULL
+           AND (o15 < o25 OR o25 < o35)
+        """,
+        (run_id,),
+    ).fetchall()
+    details = {
+        "model_version": MODEL_VERSION,
+        "policy": "hide_ou_markets_in_gui_when_monotonicity_fails",
+        "violations": [
+            {
+                "fixture_id": row["fixture_id"],
+                "over_1_5": row["o15"],
+                "over_2_5": row["o25"],
+                "over_3_5": row["o35"],
+            }
+            for row in rows
+        ],
+    }
+    record_quality(
+        conn,
+        run_id,
+        "prediction_sanity",
+        "ou_monotonicity_violations",
+        float(len(rows)),
+        json.dumps(details, sort_keys=True),
+    )

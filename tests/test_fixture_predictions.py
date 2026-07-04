@@ -1,7 +1,11 @@
 import sqlite3
 
 from scorerecord.db import init_db
-from scorerecord.predict.fixtures import _fixture_as_match_feature, _latest_elo
+from scorerecord.predict.fixtures import (
+    _fixture_as_match_feature,
+    _latest_elo,
+    _record_prediction_sanity,
+)
 
 
 def _conn() -> sqlite3.Connection:
@@ -60,3 +64,43 @@ def test_fixture_feature_falls_back_to_1500_when_elo_missing() -> None:
 
     assert match.elo_home_pre == 1500.0
     assert match.elo_away_pre == 1500.0
+
+
+def test_prediction_sanity_records_ou_monotonicity_violations() -> None:
+    conn = _conn()
+    conn.execute("INSERT INTO team (team_id, canonical, canonical_key) VALUES (1, 'A', 'a')")
+    conn.execute("INSERT INTO team (team_id, canonical, canonical_key) VALUES (2, 'B', 'b')")
+    conn.execute(
+        """
+        INSERT INTO fixture (fixture_id, kickoff_utc, home_id, away_id)
+        VALUES ('f1', '2026-07-04T20:00:00+00:00', 1, 2)
+        """
+    )
+    run_id = conn.execute(
+        "INSERT INTO ingest_run (job_name, status) VALUES ('predict-fixtures', 'succeeded')"
+    ).lastrowid
+    for market, prob in [("OU1.5", 0.61), ("OU2.5", 0.70), ("OU3.5", 0.30)]:
+        conn.execute(
+            """
+            INSERT INTO prediction (
+              run_id, fixture_id, model, market, selection, prob,
+              fair_odds, generated_utc, model_version
+            )
+            VALUES (?, 'f1', 'dixon_coles', ?, 'over', ?, ?, '2026-07-04T12:00:00+00:00', 'v')
+            """,
+            (run_id, market, prob, 1 / prob),
+        )
+
+    _record_prediction_sanity(conn, int(run_id))
+
+    row = conn.execute(
+        """
+        SELECT metric_value
+        FROM data_quality
+        WHERE run_id = ?
+          AND check_name = 'prediction_sanity'
+          AND metric_name = 'ou_monotonicity_violations'
+        """,
+        (run_id,),
+    ).fetchone()
+    assert row["metric_value"] == 1.0

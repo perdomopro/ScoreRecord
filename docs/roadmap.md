@@ -4,7 +4,7 @@ Purpose: keep the project decomposable into small, safe increments. Each phase h
 objective, technical work, exit criteria, dependencies, and run-sized increments. Do not
 advance a phase as trusted until the previous phase exit criteria are actually met.
 
-## Current State - 2026-07-01
+## Current State - 2026-07-04
 
 | Phase | State |
 | --- | --- |
@@ -12,7 +12,8 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 1 - Repo and DB stabilization | Code ready; formal gate still pending remote `pytest` plus `ruff`. |
 | 2 - Evaluation and scoring | Code ready; quarantined until the formal gate is green. |
 | 3 - Club OU2.5 benchmark | Coverage prep implemented; blocked until coverage readout and green gate. |
-| 4-9 | Pending. |
+| 4 - Today forecast web | Slim forecast-only GUI implemented; deploy and verify with live fixture/prediction state. |
+| 5-9 | Pending. |
 
 Open loops that close Phase 0/1 when remote execution is available:
 
@@ -208,12 +209,20 @@ Objective: usable visual product that does not depend on financial validation.
 
 Technical work:
 
-- Add `daily_decision` and `daily_candidate`.
-- Add `build-daily-decisions --date <d> --mode forecast`.
-- Query from `fixture`, not `recommendation`.
-- Show forecast states: no data, no forecast, forecast only.
-- Use `SCORERECORD_DISPLAY_TZ=America/Mexico_City`.
-- Add `/today` and `/match/<fixture_id>`.
+- Current slim path:
+  - Query from `fixture`, `prediction`, `team`, and `model_artifact`, not `recommendation`.
+  - Show forecast states: `SIN DATOS`, `POR DEFINIR`, `SIN PRONOSTICO`,
+    `DATOS INCONSISTENTES`, and `FORECAST_ONLY`.
+  - Use `SCORERECORD_DISPLAY_TZ=America/Mexico_City` by default.
+  - Add `/today` and `/match/<fixture_id>`.
+  - Move the older paper/edge audit surface to `/audit`.
+  - Show only calibrated goal markets (`OU1.5`, `OU2.5`, `OU3.5`, `BTTS`).
+  - Hide goal markets when OU monotonicity fails.
+  - Avoid EV, Kelly, stake, edge, or recommendation language in the forecast view.
+- Later paper path:
+  - Add `daily_decision` and `daily_candidate`.
+  - Add `build-daily-decisions --date <d> --mode forecast`.
+  - Promote paper candidates only after the odds/CLV phases are ready.
 
 Exit criteria:
 

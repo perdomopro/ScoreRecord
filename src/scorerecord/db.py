@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable, Mapping, Sequence
 from importlib import resources
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
 
 from scorerecord.aliases import normalize_key
 from scorerecord.time_utils import format_utc, parse_kickoff_utc
-
 
 SCHEMA_VERSION = 4
 _MIGRATION_NAMES = {
@@ -125,7 +124,12 @@ def _run_lightweight_migrations(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "recommendation", "bookmaker", "TEXT")
     _add_column_if_missing(conn, "recommendation", "model_version", "TEXT NOT NULL DEFAULT 'dev'")
     _add_column_if_missing(conn, "recommendation", "odds_captured_utc", "TEXT")
-    _add_column_if_missing(conn, "recommendation", "edge_run_id", "INTEGER REFERENCES ingest_run(run_id)")
+    _add_column_if_missing(
+        conn,
+        "recommendation",
+        "edge_run_id",
+        "INTEGER REFERENCES ingest_run(run_id)",
+    )
     _add_column_if_missing(conn, "recommendation", "recommendation_score", "REAL")
     _add_column_if_missing(conn, "recommendation", "odds_quality_flags", "TEXT")
     _add_column_if_missing(conn, "recommendation", "high_edge_reason", "TEXT")
@@ -254,4 +258,9 @@ def _add_column_if_missing(
 ) -> None:
     columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})")}
     if column_name not in columns:
-        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+        try:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" in str(exc).lower():
+                return
+            raise

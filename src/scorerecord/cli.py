@@ -16,13 +16,13 @@ from scorerecord.db import (
     table_count,
 )
 from scorerecord.evaluate.backtest import (
-    run_market_benchmark_report,
     run_calibration_report,
     run_historical_backtest,
+    run_market_benchmark_report,
     run_real_odds_policy_grid,
 )
-from scorerecord.evaluate.calibrator_drift import monitor_calibrator_drift
 from scorerecord.evaluate.calibration_diagnostics import run_calibration_diagnostics
+from scorerecord.evaluate.calibrator_drift import monitor_calibrator_drift
 from scorerecord.evaluate.edge import compute_edges
 from scorerecord.evaluate.goal_markets import run_goal_market_walk_forward
 from scorerecord.evaluate.policy_analysis import analyze_policy_grids
@@ -43,7 +43,7 @@ from scorerecord.ingest.football_data import (
 )
 from scorerecord.ingest.history import ingest_history
 from scorerecord.ingest.odds import fetch_live_odds, odds_snapshot_coverage_report
-from scorerecord.ingest.worldcup import ingest_worldcup_2026
+from scorerecord.ingest.worldcup import ingest_worldcup_2026, resolve_fixture_teams
 from scorerecord.models.manifest import build_model_manifest
 from scorerecord.predict.fixtures import publish_fixture_predictions
 from scorerecord.quality import (
@@ -74,6 +74,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Print operational fixture coverage for prediction and odds capture.",
     )
     fixture_summary.add_argument("--limit", type=int, default=12)
+    resolve_fixture = subparsers.add_parser(
+        "resolve-fixture-teams",
+        help="Resolve a fixture placeholder to existing team aliases.",
+    )
+    resolve_fixture.add_argument("--fixture-id", required=True)
+    resolve_fixture.add_argument("--home", required=True)
+    resolve_fixture.add_argument("--away", required=True)
 
     worldcup = subparsers.add_parser("ingest-worldcup", help="Ingest World Cup 2026 fixtures.")
     worldcup.add_argument("--refresh", action="store_true", help="Refresh network cache.")
@@ -378,8 +385,26 @@ def main(argv: list[str] | None = None) -> int:
                 )
             return 0
 
+        if args.command == "resolve-fixture-teams":
+            resolve_fixture_teams(
+                conn,
+                fixture_id=args.fixture_id,
+                home=args.home,
+                away=args.away,
+            )
+            print(
+                "resolved_fixture: "
+                f"{args.fixture_id} home={args.home} away={args.away}"
+            )
+            return 0
+
         if args.command == "ingest-worldcup":
-            with ingest_run(conn, "ingest-worldcup", source="openfootball", cwd=Path.cwd()) as run_id:
+            with ingest_run(
+                conn,
+                "ingest-worldcup",
+                source="openfootball",
+                cwd=Path.cwd(),
+            ) as run_id:
                 count = ingest_worldcup_2026(conn, settings.raw_dir, refresh=args.refresh)
                 report = record_fixture_resolution_quality(conn, run_id)
             print(f"Upserted {count} fixtures")
@@ -474,7 +499,8 @@ def main(argv: list[str] | None = None) -> int:
             for row in report.unresolved_rows[:25]:
                 print(
                     "unresolved_fixture: "
-                    f"{row['fixture_id']} home={row['home_placeholder']} away={row['away_placeholder']}"
+                    f"{row['fixture_id']} home={row['home_placeholder']} "
+                    f"away={row['away_placeholder']}"
                 )
             if len(report.unresolved_rows) > 25:
                 print(f"... {len(report.unresolved_rows) - 25} more unresolved fixtures")

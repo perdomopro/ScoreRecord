@@ -616,6 +616,18 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Documented the acceptance rule: first run local/remote dry-run and `historical-odds-report` by league, then accept or reject each league for market validation based on complete odds coverage. Leagues without complete odds may still be useful for forecasting/product, but not for edge validation.
 - No homeserver deploy was performed for this change; the user requested local-only work until resources are available.
 
+### 2026-07-04 - Forecast-only World Cup GUI
+
+- Reworked `scorerecord gui` so `/` and `/today` are now a forecast-only World Cup view backed by `fixture`, `prediction`, `team`, and `model_artifact`; the old paper/edge dashboard moved to `/audit`.
+- Added `/match/<fixture_id>` for fixture detail across calibrated goal markets (`OU1.5`, `OU2.5`, `OU3.5`, and `BTTS`) with model probability, fair odds, artifact id, and market-validation status.
+- Kept the implementation dependency-light on the existing stdlib HTTP server for homeserver reliability. The UI uses server-rendered HTML/CSS with daisyUI/Pico-style components and can be upgraded to FastAPI/Jinja2/HTMX later without changing the data contract.
+- Added explicit product language: `FORECAST_ONLY`, `No es recomendacion de apuesta`, no EV/Kelly/edge wording in the forecast surface, and the display timezone from `SCORERECORD_DISPLAY_TZ` defaulting to `America/Mexico_City`.
+- Added forecast states for unresolved fixtures, missing predictions, already-started fixtures, quiet forecasts below the 60% display threshold, and inconsistent prediction data.
+- Added an OU monotonicity sanity check during fixture prediction publishing and in the GUI. If `P(Over 1.5) >= P(Over 2.5) >= P(Over 3.5)` is violated, the GUI hides the goal markets for that fixture and records/prints the inconsistency instead of showing a misleading forecast.
+- Added `resolve-fixture-teams --fixture-id ... --home ... --away ...` to manually resolve bracket placeholders to existing team aliases without auto-creating teams.
+- Added tests for the forecast GUI contract, match detail rendering, OU monotonicity hiding, manual fixture resolution, and persisted prediction-sanity metrics.
+- Hardened lightweight DB column migrations against benign concurrent startup races by ignoring only the specific SQLite `duplicate column name` condition after a second process already added the same column.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.
