@@ -38,9 +38,9 @@ def ingest_worldcup_2026(
         home_score = full_time[0] if full_time and len(full_time) == 2 else None
         away_score = full_time[1] if full_time and len(full_time) == 2 else None
         status = "finished" if home_score is not None and away_score is not None else "scheduled"
-        fixture_id = _fixture_id(match, index)
         kickoff_local = _kickoff_local(match)
         kickoff_utc = format_utc(parse_kickoff_utc(kickoff_local=kickoff_local))
+        fixture_id = _resolve_fixture_id(conn, match, index, kickoff_utc=kickoff_utc)
 
         conn.execute(
             """
@@ -51,18 +51,31 @@ def ingest_worldcup_2026(
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'openfootball', CURRENT_TIMESTAMP)
             ON CONFLICT(fixture_id) DO UPDATE SET
-              kickoff_local = excluded.kickoff_local,
-              kickoff_utc = excluded.kickoff_utc,
+              kickoff_local = COALESCE(excluded.kickoff_local, fixture.kickoff_local),
+              kickoff_utc = COALESCE(excluded.kickoff_utc, fixture.kickoff_utc),
               stage = excluded.stage,
               group_name = excluded.group_name,
-              home_id = excluded.home_id,
-              away_id = excluded.away_id,
-              home_placeholder = excluded.home_placeholder,
-              away_placeholder = excluded.away_placeholder,
-              status = excluded.status,
-              home_score = excluded.home_score,
-              away_score = excluded.away_score,
-              ground = excluded.ground,
+              home_id = COALESCE(excluded.home_id, fixture.home_id),
+              away_id = COALESCE(excluded.away_id, fixture.away_id),
+              home_placeholder = CASE
+                WHEN COALESCE(excluded.home_id, fixture.home_id) IS NULL
+                THEN excluded.home_placeholder
+                ELSE NULL
+              END,
+              away_placeholder = CASE
+                WHEN COALESCE(excluded.away_id, fixture.away_id) IS NULL
+                THEN excluded.away_placeholder
+                ELSE NULL
+              END,
+              status = CASE
+                WHEN COALESCE(excluded.home_score, fixture.home_score) IS NOT NULL
+                 AND COALESCE(excluded.away_score, fixture.away_score) IS NOT NULL
+                THEN 'finished'
+                ELSE excluded.status
+              END,
+              home_score = COALESCE(excluded.home_score, fixture.home_score),
+              away_score = COALESCE(excluded.away_score, fixture.away_score),
+              ground = COALESCE(excluded.ground, fixture.ground),
               updated_utc = CURRENT_TIMESTAMP
             """,
             (
@@ -109,6 +122,9 @@ def resolve_fixture_teams(
         UPDATE fixture
         SET home_id = ?,
             away_id = ?,
+            home_placeholder = NULL,
+            away_placeholder = NULL,
+            status = 'scheduled',
             updated_utc = CURRENT_TIMESTAMP
         WHERE fixture_id = ?
         """,
@@ -146,11 +162,99 @@ def _existing_team_id(conn: sqlite3.Connection, name: str) -> int | None:
     return int(row["team_id"]) if row else None
 
 
+def _resolve_fixture_id(
+    conn: sqlite3.Connection,
+    match: dict[str, object],
+    index: int,
+    *,
+    kickoff_utc: str | None,
+) -> str:
+    fixture_id = _fixture_id(match, index)
+    if _fixture_exists(conn, fixture_id):
+        return fixture_id
+
+    existing_id = _legacy_fixture_id(match, index)
+    if not _fixture_exists(conn, existing_id):
+        existing_id = _fixture_id_by_fingerprint(conn, match, kickoff_utc=kickoff_utc)
+    if existing_id is None:
+        return fixture_id
+
+    if not _fixture_has_references(conn, existing_id):
+        conn.execute(
+            "UPDATE fixture SET fixture_id = ? WHERE fixture_id = ?",
+            (fixture_id, existing_id),
+        )
+        return fixture_id
+    return existing_id
+
+
+def _fixture_exists(conn: sqlite3.Connection, fixture_id: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM fixture WHERE fixture_id = ?",
+        (fixture_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _fixture_id_by_fingerprint(
+    conn: sqlite3.Connection,
+    match: dict[str, object],
+    *,
+    kickoff_utc: str | None,
+) -> str | None:
+    row = conn.execute(
+        """
+        SELECT fixture_id
+        FROM fixture
+        WHERE source = 'openfootball'
+          AND COALESCE(kickoff_utc, '') = COALESCE(?, '')
+          AND COALESCE(stage, '') = COALESCE(?, '')
+          AND COALESCE(group_name, '') = COALESCE(?, '')
+          AND COALESCE(ground, '') = COALESCE(?, '')
+        ORDER BY fixture_id
+        LIMIT 1
+        """,
+        (kickoff_utc, match.get("round"), match.get("group"), match.get("ground")),
+    ).fetchone()
+    return str(row["fixture_id"]) if row else None
+
+
+def _fixture_has_references(conn: sqlite3.Connection, fixture_id: str) -> bool:
+    tables = (
+        "fixture_stats",
+        "odds",
+        "odds_snapshots",
+        "edge_analysis",
+        "player_prop",
+        "prediction",
+        "prediction_result",
+        "recommendation",
+        "recommendation_result",
+    )
+    for table in tables:
+        row = conn.execute(
+            f"SELECT 1 FROM {table} WHERE fixture_id = ? LIMIT 1",
+            (fixture_id,),
+        ).fetchone()
+        if row:
+            return True
+    return False
+
+
 def _is_placeholder(name: str) -> bool:
     return bool(_PLACEHOLDER_RE.match(name))
 
 
 def _fixture_id(match: dict[str, object], index: int) -> str:
+    raw_match_no = match.get("num") or match.get("number") or match.get("match")
+    try:
+        match_no = int(raw_match_no) if raw_match_no is not None else index
+    except (TypeError, ValueError):
+        match_no = index
+    return f"wc2026-match-{match_no:03d}"
+
+
+def _legacy_fixture_id(match: dict[str, object], index: int) -> str:
     parts = [
         "wc2026",
         str(match.get("date") or "unknown-date"),

@@ -52,7 +52,7 @@ from scorerecord.quality import (
     record_fixture_resolution_quality,
     record_historical_alias_quality,
 )
-from scorerecord.runs import ingest_run
+from scorerecord.runs import ingest_run, record_quality
 from scorerecord.settings import load_settings
 
 
@@ -386,12 +386,33 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "resolve-fixture-teams":
-            resolve_fixture_teams(
+            with ingest_run(
                 conn,
-                fixture_id=args.fixture_id,
-                home=args.home,
-                away=args.away,
-            )
+                "resolve-fixture-teams",
+                source="manual",
+                cwd=Path.cwd(),
+            ) as run_id:
+                resolve_fixture_teams(
+                    conn,
+                    fixture_id=args.fixture_id,
+                    home=args.home,
+                    away=args.away,
+                )
+                record_quality(
+                    conn,
+                    run_id,
+                    "fixture_resolution",
+                    "manual_resolve",
+                    1.0,
+                    json.dumps(
+                        {
+                            "fixture_id": args.fixture_id,
+                            "home": args.home,
+                            "away": args.away,
+                        },
+                        sort_keys=True,
+                    ),
+                )
             print(
                 "resolved_fixture: "
                 f"{args.fixture_id} home={args.home} away={args.away}"

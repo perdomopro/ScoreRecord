@@ -164,7 +164,9 @@ def test_dashboard_uses_latest_post_guardrail_recommendation_run() -> None:
     assert data.legacy_warning_count == 1
     assert "Service status:" in html
     assert "Data quality:" in html
-    assert "Actionable Recommendations" in html
+    assert "Legacy Paper Recommendations" in html
+    assert "LEGACY AUDIT MODE" in html
+    assert "Actionable Recommendations" not in html
     assert "Audit-only / Not Actionable" in html
     assert "Colombia" in html
     assert f"#{legacy_run_id} / edge" not in html
@@ -354,7 +356,9 @@ def test_forecast_match_renders_goal_market_detail() -> None:
 
     assert "Mexico" in html
     assert "Canada" in html
-    assert "Cuota justa" in html
+    assert "Precio teorico del modelo" in html
+    assert "90 min / tiempo reglamentario" in html
+    assert "No es una cuota real" in html
     assert "OU2.5" in html
     assert "Ambos anotan: si" in html
 

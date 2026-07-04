@@ -631,6 +631,16 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Remote validation after deploy: full `pytest` passed with 84 tests; targeted `ruff` over the touched files passed. Full-repo `ruff` remains a separate cleanup gate with 81 legacy style findings outside this GUI change.
 - Remote fixture summary after deploy: 104 fixtures, 54 finished, 0 missing kickoff UTC, 0 future resolved, 14 future unresolved, and 36 past unscored. The GUI is therefore live and honest, but it cannot show new forecast cards until bracket placeholders are resolved or the fixture feed is refreshed with future resolved teams.
 
+### 2026-07-04 - Fixture resolution and GUI safety hardening
+
+- Renamed the `/audit` recommendation section to `Legacy Paper Recommendations` and added a `LEGACY AUDIT MODE - NO BETTING RECOMMENDATIONS` banner so the old paper pipeline is not confused with the forecast product.
+- Renamed match-detail fair prices to `Precio teorico del modelo` and added explicit copy that the value is `1 / model probability`, not a real bookmaker quote or betting recommendation.
+- Added explicit `90 min / tiempo reglamentario` labeling for goal-market forecasts. Knockout forecasts should be read as regulation-time probabilities, not extra-time or penalty outcomes.
+- Hardened World Cup fixture ingestion with stable IDs for new ingests (`wc2026-match-###`) and compatibility reconciliation for existing legacy IDs. Existing rows are matched by stable id, legacy slug, or kickoff/stage/group/ground fingerprint; unreferenced legacy rows can be re-keyed safely, while referenced rows are reused to avoid breaking historical predictions/odds.
+- Changed World Cup fixture upserts so placeholder-only refreshes do not erase a manual team resolution. Manual `home_id`/`away_id` values are preserved when the provider still sends `W73`/`L101`, and placeholders are cleared once real teams exist.
+- Changed `resolve-fixture-teams` so it clears placeholders, marks the fixture scheduled, and records a manual `ingest_run` plus `data_quality` row with the resolved fixture and submitted team aliases.
+- Added tests for stable fixture IDs, placeholder-to-real reingestion, manual-resolution preservation across refreshes, cleared placeholders, and manual-run audit logging.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.

@@ -12,7 +12,7 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 1 - Repo and DB stabilization | Code ready; formal gate still pending remote `pytest` plus `ruff`. |
 | 2 - Evaluation and scoring | Code ready; quarantined until the formal gate is green. |
 | 3 - Club OU2.5 benchmark | Coverage prep implemented; blocked until coverage readout and green gate. |
-| 4 - Today forecast web | Slim forecast-only GUI deployed and verified; blocked for fresh cards by 0 future resolved fixtures. |
+| 4 - Today forecast web | Slim forecast-only GUI deployed; fixture-resolution hardening added; fresh cards still require officially resolved future fixtures. |
 | 5-9 | Pending. |
 
 Open loops that close Phase 0/1 when remote execution is available:
@@ -220,6 +220,9 @@ Technical work:
   - Show only calibrated goal markets (`OU1.5`, `OU2.5`, `OU3.5`, `BTTS`).
   - Hide goal markets when OU monotonicity fails.
   - Avoid EV, Kelly, stake, edge, or recommendation language in the forecast view.
+  - Label goal markets as 90-minute regulation-time forecasts.
+  - Keep `/audit` clearly marked as deprecated legacy paper/audit mode.
+  - Preserve manual fixture resolutions through placeholder-only reingests.
 - Later paper path:
   - Add `daily_decision` and `daily_candidate`.
   - Add `build-daily-decisions --date <d> --mode forecast`.

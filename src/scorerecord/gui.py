@@ -405,11 +405,18 @@ def render_dashboard(data: DashboardData, *, refresh_seconds: int) -> str:
   <main>
     {_status_band(data)}
     {_kpi_grid(data)}
+    <section class="legacy-alert">
+      <strong>LEGACY AUDIT MODE - NO BETTING RECOMMENDATIONS</strong>
+      <span>
+        This page is retained for traceability only. Do not use it as an actionable
+        betting screen.
+      </span>
+    </section>
     <section class="section">
       <div class="section-head">
         <div>
-          <h1>Actionable Recommendations</h1>
-          <p>Paper-only picks ranked by recommendation score.</p>
+          <h1>Legacy Paper Recommendations</h1>
+          <p>Deprecated audit view. Not actionable. Do not use for betting decisions.</p>
         </div>
         <span class="badge good">{len(data.picks)} rows</span>
       </div>
@@ -673,6 +680,7 @@ def _forecast_warning_banner(data: ForecastData) -> str:
       <span>Modelo: {_e(data.model_version or 'sin prediccion')}</span>
       <span>Artifact: {_e(artifact or 'n/a')}</span>
       <span>TZ: {_e(data.display_tz)}</span>
+      <span>Mercados de goles: 90 min / tiempo reglamentario.</span>
     </section>
     """
 
@@ -755,11 +763,15 @@ def _match_detail(fixture: ForecastFixture) -> str:
         <thead>
           <tr>
             <th>Mercado</th><th>Seleccion</th><th>Probabilidad</th>
-            <th>Cuota justa</th><th>Artifact</th>
+            <th>Precio teorico del modelo</th><th>Artifact</th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
       </table>
+      <p class="model-price-note">
+        El precio teorico sale de 1 / probabilidad del modelo. No es una cuota real,
+        no incluye prorroga ni penales, y no es recomendacion de apuesta.
+      </p>
     </section>
     """
 
@@ -1508,9 +1520,23 @@ body.forecast-page {
   border-left: 6px solid var(--green);
   border-radius: 10px;
 }
-.forecast-alert strong { color: var(--green); }
-.forecast-alert span { color: #1f3d31; }
-.forecast-stats {
+  .forecast-alert strong { color: var(--green); }
+  .forecast-alert span { color: #1f3d31; }
+  .legacy-alert {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    align-items: center;
+    margin: 14px 0;
+    padding: 12px 14px;
+    border: 1px solid #f2c6c6;
+    border-left: 6px solid var(--red);
+    border-radius: 8px;
+    background: #fff5f5;
+    color: #7f1d1d;
+  }
+  .legacy-alert strong { font-weight: 850; }
+  .forecast-stats {
   display: grid;
   grid-template-columns: repeat(6, minmax(130px, 1fr));
   gap: 10px;
@@ -1623,8 +1649,13 @@ p { color: var(--muted); margin: 4px 0 0; }
   padding: 10px;
   text-align: left;
 }
-.forecast-table th { color: var(--muted); font-size: 12px; background: #fbfcfd; }
-.empty-forecast { text-align: center; padding: 36px 18px; }
+  .forecast-table th { color: var(--muted); font-size: 12px; background: #fbfcfd; }
+  .model-price-note {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 12px 0 0;
+  }
+  .empty-forecast { text-align: center; padding: 36px 18px; }
 .empty-forecast h1 { margin: 0 0 8px; }
 .muted, .empty { color: var(--muted); }
 @media (max-width: 900px) {
