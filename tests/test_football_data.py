@@ -6,10 +6,14 @@ from scorerecord.db import init_db
 from scorerecord.ingest.football_data import (
     build_source_event_id,
     football_data_coverage_report,
+    football_data_requested_seasons,
     football_data_season_range,
+    football_data_url,
+    is_football_data_current_feed,
     normalize_identifier,
     normalize_season,
     parse_football_data_csv,
+    resolve_league_code,
     season_to_football_data_code,
 )
 
@@ -58,6 +62,43 @@ def test_football_data_season_and_event_id_are_stable() -> None:
     )
 
     assert event_id == "football-data:E0:2023-2024:2024-04-21:arsenal:chelsea"
+
+
+def test_football_data_resolves_current_feed_leagues_and_urls() -> None:
+    assert resolve_league_code("Mexico (Liga MX)") == "MEX"
+    assert resolve_league_code("USA (MLS)") == "USA"
+    assert resolve_league_code("Brasil (Serie A)") == "BRA"
+    assert resolve_league_code("Argentina (Liga Prof)") == "ARG"
+    assert resolve_league_code("Espana (LaLiga)") == "SP1"
+    assert is_football_data_current_feed("Liga MX") is True
+    assert is_football_data_current_feed("EPL") is False
+    assert football_data_url(league_code="MEX", season_code="2526") == (
+        "https://www.football-data.co.uk/new/MEX.csv"
+    )
+    assert football_data_url(league_code="mex", season_code="2526") == (
+        "https://www.football-data.co.uk/new/MEX.csv"
+    )
+    assert football_data_url(league_code="E0", season_code="2526") == (
+        "https://www.football-data.co.uk/mmz4281/2526/E0.csv"
+    )
+
+
+def test_football_data_current_feed_leagues_reject_season_ranges() -> None:
+    assert football_data_requested_seasons(
+        league="Mexico (Liga MX)",
+        season="2025-2026",
+    ) == ["2025-2026"]
+
+    try:
+        football_data_requested_seasons(
+            league="Mexico (Liga MX)",
+            from_season="2024-2025",
+            to_season="2025-2026",
+        )
+    except ValueError as exc:
+        assert "current-feed leagues require a single --season label" in str(exc)
+    else:
+        raise AssertionError("Expected current-feed season ranges to be rejected")
 
 
 def test_parse_football_data_csv_extracts_avg_open_and_close_1x2() -> None:

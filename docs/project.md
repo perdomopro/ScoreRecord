@@ -608,6 +608,14 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Documented `avg_close` as a Football-Data average closing consensus/fair-price proxy, not a single-bookmaker closing quote.
 - Added tests for incomplete two-way rejection, `BbAv` alias metadata, coverage completeness, and overround-health output. Phase 3 remains blocked until the formal gate and live coverage readout are green.
 
+### 2026-07-04 - Controlled Football-Data league expansion
+
+- Added controlled Football-Data aliases for Liga MX (`MEX`), MLS (`USA`), Brazil Serie A (`BRA`), and Argentina Liga Profesional (`ARG`) using the provider's `/new/*.csv` current-feed URLs.
+- Added robust league-alias normalization so labels such as `Mexico (Liga MX)`, `USA (MLS)`, `Brasil (Serie A)`, and `Argentina (Liga Prof)` resolve directly.
+- Guarded `/new/*.csv` leagues against season-range ingestion: they require a single `--season` label because the provider URL is a current feed, not a season-versioned archive.
+- Documented the acceptance rule: first run local/remote dry-run and `historical-odds-report` by league, then accept or reject each league for market validation based on complete odds coverage. Leagues without complete odds may still be useful for forecasting/product, but not for edge validation.
+- No homeserver deploy was performed for this change; the user requested local-only work until resources are available.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.

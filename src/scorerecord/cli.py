@@ -38,7 +38,7 @@ from scorerecord.gui import serve_dashboard
 from scorerecord.health import db_health_checks, fixture_ops_summary, recent_failed_runs
 from scorerecord.ingest.football_data import (
     football_data_coverage_report,
-    football_data_season_range,
+    football_data_requested_seasons,
     ingest_football_data,
 )
 from scorerecord.ingest.history import ingest_history
@@ -83,9 +83,13 @@ def main(argv: list[str] | None = None) -> int:
     history.add_argument("--start-date", default="2018-01-01", help="YYYY-MM-DD lower bound.")
     football_data = subparsers.add_parser(
         "ingest-football-data",
-        help="Ingest Football-Data historical results and 1X2 odds.",
+        help="Ingest Football-Data historical results and supported odds markets.",
     )
-    football_data.add_argument("--league", required=True, help="League alias/code, e.g. EPL or E0.")
+    football_data.add_argument(
+        "--league",
+        required=True,
+        help="League alias/code, e.g. EPL, E0, Liga MX, MLS, BRA, or ARG.",
+    )
     football_data.add_argument("--season", help="Single season, e.g. 2023-2024.")
     football_data.add_argument("--from-season", help="Inclusive season range start.")
     football_data.add_argument("--to-season", help="Inclusive season range end.")
@@ -400,14 +404,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "ingest-football-data":
-            if args.season and (args.from_season or args.to_season):
-                raise ValueError("Use either --season or --from-season/--to-season, not both")
-            if args.season:
-                seasons = [args.season]
-            elif args.from_season and args.to_season:
-                seasons = football_data_season_range(args.from_season, args.to_season)
-            else:
-                raise ValueError("Provide --season or both --from-season and --to-season")
+            seasons = football_data_requested_seasons(
+                league=args.league,
+                season=args.season,
+                from_season=args.from_season,
+                to_season=args.to_season,
+            )
             totals = {
                 "rows_seen": 0,
                 "events_upserted": 0,

@@ -146,6 +146,12 @@ Technical work:
   - Check close-complete rate separately.
   - Check entry and close overround ranges.
   - Treat suspicious overround warnings as ingest/parsing blockers.
+- Expand coverage carefully:
+  - Liga MX, MLS, Brazil Serie A, and Argentina Liga Profesional use Football-Data
+    `/new/*.csv` current feeds, not season-versioned archive URLs.
+  - Require one explicit `--season` label and reject season-range ingestion.
+  - Accept each league for market validation only if coverage is complete enough.
+  - Use leagues with poor odds coverage for forecasting/product only.
 - Generalize `market-benchmark-report` after coverage is verified.
 - Use one binary observation per match.
 - De-vig two-way odds from the same bookmaker/snapshot family.

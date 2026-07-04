@@ -22,23 +22,51 @@ FOOTBALL_DATA_SOURCE = "football-data"
 
 FOOTBALL_DATA_LEAGUES = {
     "EPL": "E0",
+    "ENGLAND_PREMIER_LEAGUE": "E0",
+    "INGLATERRA_PREMIER_LEAGUE": "E0",
     "CHAMPIONSHIP": "E1",
     "LEAGUE_ONE": "E2",
     "LEAGUE_TWO": "E3",
     "LA_LIGA": "SP1",
+    "LALIGA": "SP1",
+    "SPAIN_LALIGA": "SP1",
+    "ESPANA_LALIGA": "SP1",
     "SEGUNDA": "SP2",
     "BUNDESLIGA": "D1",
+    "GERMANY_BUNDESLIGA": "D1",
+    "ALEMANIA_BUNDESLIGA": "D1",
     "BUNDESLIGA_2": "D2",
     "SERIE_A": "I1",
+    "ITALY_SERIE_A": "I1",
+    "ITALIA_SERIE_A": "I1",
     "SERIE_B": "I2",
     "LIGUE_1": "F1",
+    "FRANCE_LIGUE_1": "F1",
+    "FRANCIA_LIGUE_1": "F1",
     "LIGUE_2": "F2",
     "EREDIVISIE": "N1",
     "BELGIUM": "B1",
     "PORTUGAL": "P1",
     "TURKEY": "T1",
     "GREECE": "G1",
+    "MEX": "MEX",
+    "MEXICO": "MEX",
+    "MEXICO_LIGA_MX": "MEX",
+    "LIGA_MX": "MEX",
+    "USA": "USA",
+    "USA_MLS": "USA",
+    "MLS": "USA",
+    "BRA": "BRA",
+    "BRASIL": "BRA",
+    "BRAZIL": "BRA",
+    "BRASIL_SERIE_A": "BRA",
+    "BRAZIL_SERIE_A": "BRA",
+    "ARG": "ARG",
+    "ARGENTINA": "ARG",
+    "ARGENTINA_LIGA_PROF": "ARG",
+    "ARGENTINA_LIGA_PROFESIONAL": "ARG",
 }
+FOOTBALL_DATA_CURRENT_FEED_LEAGUES = {"ARG", "BRA", "MEX", "USA"}
 
 SELECTION_COLUMNS = {
     "home": "H",
@@ -221,6 +249,33 @@ def football_data_season_range(from_season: str, to_season: str) -> list[str]:
     if end_year < start_year:
         raise ValueError("--to-season must be greater than or equal to --from-season")
     return [f"{year:04d}-{year + 1:04d}" for year in range(start_year, end_year + 1)]
+
+
+def football_data_requested_seasons(
+    *,
+    league: str,
+    season: str | None = None,
+    from_season: str | None = None,
+    to_season: str | None = None,
+) -> list[str]:
+    if season and (from_season or to_season):
+        raise ValueError("Use either --season or --from-season/--to-season, not both")
+    current_feed = is_football_data_current_feed(league)
+    if current_feed and (from_season or to_season):
+        raise ValueError(
+            "Football-Data /new current-feed leagues require a single --season label; "
+            "season ranges would reload the same CSV multiple times."
+        )
+    if current_feed and not season:
+        raise ValueError(
+            "Football-Data /new current-feed leagues require --season as the local "
+            "season label for the current CSV."
+        )
+    if season:
+        return [season]
+    if from_season and to_season:
+        return football_data_season_range(from_season, to_season)
+    raise ValueError("Provide --season or both --from-season and --to-season")
 
 
 def football_data_coverage_report(
@@ -626,17 +681,34 @@ def extract_ou25_quotes(
 
 
 def football_data_url(*, league_code: str, season_code: str) -> str:
-    return f"{FOOTBALL_DATA_BASE_URL}/{season_code}/{league_code}.csv"
+    normalized_code = league_code.upper()
+    if is_football_data_current_feed_code(normalized_code):
+        return f"https://www.football-data.co.uk/new/{normalized_code}.csv"
+    return f"{FOOTBALL_DATA_BASE_URL}/{season_code}/{normalized_code}.csv"
 
 
 def resolve_league_code(value: str) -> str:
-    key = value.strip().upper().replace("-", "_").replace(" ", "_")
+    key = normalize_league_alias(value)
     if key in FOOTBALL_DATA_LEAGUES:
         return FOOTBALL_DATA_LEAGUES[key]
     if re.fullmatch(r"[A-Z]{1,3}\d?", key):
         return key
     supported = ", ".join(sorted(FOOTBALL_DATA_LEAGUES))
     raise ValueError(f"Unsupported Football-Data league '{value}'. Supported aliases: {supported}")
+
+
+def normalize_league_alias(value: str) -> str:
+    raw = unicodedata.normalize("NFKD", value.strip())
+    ascii_text = raw.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^A-Z0-9]+", "_", ascii_text.upper()).strip("_")
+
+
+def is_football_data_current_feed(value: str) -> bool:
+    return is_football_data_current_feed_code(resolve_league_code(value))
+
+
+def is_football_data_current_feed_code(league_code: str) -> bool:
+    return league_code.upper() in FOOTBALL_DATA_CURRENT_FEED_LEAGUES
 
 
 def normalize_market(value: str) -> str:
