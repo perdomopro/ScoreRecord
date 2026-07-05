@@ -251,14 +251,22 @@ Technical work:
 - Keep the selector restricted to calibrated goal markets only: `OU1.5`, `OU2.5`,
   `OU3.5`, and `BTTS`. Do not let `1X2` or exact-score rows become principal
   forecasts.
-- Display `Confianza del modelo (no validada contra resultados)` as a probability
-  magnitude band, not as betting confidence or market edge.
+- Display signal strength as distance from 50%, not as betting confidence or
+  market edge.
+- Classify principal binary markets by distance from 50%:
+  `NO_SIGNAL` under 3 points, `LEAN` 3-8 points, `MODERATE` 8-15 points,
+  and `STRONG` at 15+ points. Always keep the side and probability visible as
+  diagnostics.
+- Show a compact model-quality panel from latest `data_quality`: calibration sanity,
+  OU monotonicity, fixture Elo coverage, and market-validation status.
 - Keep `market_validation_status` visible as `NOT_TESTED` until market validation
   genuinely changes.
 
 Exit criteria:
 
 - A fixture can show independent principal forecasts for goals and BTTS.
+- Probabilities close to 50% render as `Sin senal clara`, not as strong forecasts.
+- Calibration, OU monotonicity, Elo coverage, and market-validation status are visible.
 - No page uses EV, Kelly, stake, value, or betting recommendation language.
 - Tests prove that an uncalibrated `1X2` row cannot be selected by the forecast UI.
 

@@ -59,12 +59,12 @@ def _insert_forecast_fixture(conn: sqlite3.Connection) -> int:
     for market, selection, prob in [
         ("OU1.5", "over", 0.74),
         ("OU1.5", "under", 0.26),
-        ("OU2.5", "over", 0.49),
-        ("OU2.5", "under", 0.51),
+        ("OU2.5", "over", 0.52),
+        ("OU2.5", "under", 0.48),
         ("OU3.5", "over", 0.22),
         ("OU3.5", "under", 0.78),
-        ("BTTS", "yes", 0.63),
-        ("BTTS", "no", 0.37),
+        ("BTTS", "yes", 0.501),
+        ("BTTS", "no", 0.499),
     ]:
         conn.execute(
             """
@@ -80,6 +80,38 @@ def _insert_forecast_fixture(conn: sqlite3.Connection) -> int:
             (run_id, market, selection, prob, 1 / prob, MODEL_VERSION),
         )
     return run_id
+
+
+def _insert_forecast_quality(
+    conn: sqlite3.Connection,
+    *,
+    calibration_value: float,
+    ou_violations: int,
+    missing_elo_slots: int,
+) -> None:
+    run_id = _run(conn, "predict-fixtures")
+    for market in ["OU1.5", "OU2.5", "OU3.5", "BTTS"]:
+        conn.execute(
+            """
+            INSERT INTO data_quality (run_id, check_name, metric_name, metric_value)
+            VALUES (?, 'calibrator_sanity', ?, ?)
+            """,
+            (run_id, f"{market}_mean_calibration_improved", calibration_value),
+        )
+    conn.execute(
+        """
+        INSERT INTO data_quality (run_id, check_name, metric_name, metric_value)
+        VALUES (?, 'prediction_sanity', 'ou_monotonicity_violations', ?)
+        """,
+        (run_id, float(ou_violations)),
+    )
+    conn.execute(
+        """
+        INSERT INTO data_quality (run_id, check_name, metric_name, metric_value)
+        VALUES (?, 'fixture_elo', 'missing_team_rating_slots', ?)
+        """,
+        (run_id, float(missing_elo_slots)),
+    )
 
 
 def test_dashboard_uses_latest_post_guardrail_recommendation_run() -> None:
@@ -334,20 +366,93 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert data.fixtures[0].primary is not None
     assert len(data.fixtures[0].primary_markets) == 2
     assert data.fixtures[0].primary.market == "OU2.5"
-    assert data.fixtures[0].primary.selection == "under"
+    assert data.fixtures[0].primary.selection == "over"
     assert "FORECAST_ONLY" in html
     assert "Pronosticos principales del modelo" in html
     assert "Principal GOLES" in html
     assert "Principal BTTS" in html
-    assert "Confianza del modelo (no validada contra resultados)" in html
+    assert 'data-signal="NO_SIGNAL"' in html
+    assert html.count('data-signal="NO_SIGNAL"') >= 2
+    assert "Sin senal clara" in html
     assert "No es recomendacion de apuesta" in html
     assert "Mexico" in html
     assert "Canada" in html
-    assert "Under 2.5 goles" in html
-    assert "sin senal principal" in html
-    assert "Ambos anotan: si" in html
+    assert "OU2.5: Over 52.00%" in html
+    assert "BTTS: Si 50.10%" in html
     assert "Actionable Recommendations" not in html
     assert "No usa EV" in html
+
+
+def test_forecast_signal_strength_marks_ou25_moderate() -> None:
+    conn = _conn()
+    _insert_forecast_fixture(conn)
+    conn.execute(
+        """
+        UPDATE prediction
+        SET prob = CASE selection WHEN 'over' THEN 0.59 ELSE 0.41 END,
+            fair_odds = CASE selection WHEN 'over' THEN 1.0 / 0.59 ELSE 1.0 / 0.41 END
+        WHERE fixture_id = 'm-forecast'
+          AND market = 'OU2.5'
+        """
+    )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    html = render_today_forecast(data, refresh_seconds=60)
+
+    assert data.fixtures[0].primary.market == "OU2.5"
+    assert data.fixtures[0].primary.selection == "over"
+    assert "OU2.5: Over 59.00%" in html
+    assert 'data-signal="MODERATE"' in html
+    assert "Tendencia moderada" in html
+
+
+def test_forecast_quality_panel_renders_ok_and_warn() -> None:
+    conn = _conn()
+    _insert_forecast_fixture(conn)
+    _insert_forecast_quality(
+        conn,
+        calibration_value=1.0,
+        ou_violations=0,
+        missing_elo_slots=0,
+    )
+
+    ok_data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    ok_html = render_today_forecast(ok_data, refresh_seconds=60)
+
+    assert "Model quality panel" in ok_html
+    assert "Calibration" in ok_html
+    assert "OU monotonicity" in ok_html
+    assert "Elo coverage" in ok_html
+    assert ok_html.count("<strong>OK</strong>") >= 3
+    assert "Market validation" in ok_html
+    assert "NOT_TESTED" in ok_html
+
+    _insert_forecast_quality(
+        conn,
+        calibration_value=0.0,
+        ou_violations=2,
+        missing_elo_slots=1,
+    )
+
+    warn_data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    warn_html = render_today_forecast(warn_data, refresh_seconds=60)
+
+    assert warn_html.count("<strong>WARN</strong>") >= 3
+    assert "0/4 checks" in warn_html
+    assert "2 violations" in warn_html
+    assert "1 missing rating slots" in warn_html
 
 
 def test_forecast_selector_ignores_uncalibrated_1x2_rows() -> None:
@@ -394,7 +499,7 @@ def test_forecast_match_renders_goal_market_detail() -> None:
     assert "Mexico" in html
     assert "Canada" in html
     assert "Precio teorico del modelo" in html
-    assert "Confianza modelo (no validada)" in html
+    assert "Fuerza de senal" in html
     assert "90 min / tiempo reglamentario" in html
     assert "No es una cuota real" in html
     assert "OU2.5" in html

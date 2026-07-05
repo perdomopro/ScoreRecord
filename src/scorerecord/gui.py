@@ -26,7 +26,10 @@ DEFAULT_MAX_ODDS_AGE_MINUTES = 180.0
 DEFAULT_MIN_BOOKS = 2
 DEFAULT_DISPLAY_TZ = "America/Mexico_City"
 FORECAST_MARKETS = ("OU1.5", "OU2.5", "OU3.5", "BTTS")
-FORECAST_MIN_PROB = 0.60
+SIGNAL_NO_SIGNAL = "NO_SIGNAL"
+SIGNAL_LEAN = "LEAN"
+SIGNAL_MODERATE = "MODERATE"
+SIGNAL_STRONG = "STRONG"
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,20 @@ class ForecastMarket:
     model_version: str
     artifact_id: str | None
     market_validation_status: str
+
+
+@dataclass(frozen=True)
+class SignalStrength:
+    code: str
+    label: str
+    css_class: str
+
+
+@dataclass(frozen=True)
+class ForecastQualityItem:
+    label: str
+    status: str
+    detail: str
 
 
 @dataclass(frozen=True)
@@ -96,6 +113,7 @@ class ForecastData:
     model_version: str | None
     artifact_id: str | None
     market_validation_status: str
+    quality_items: list[ForecastQualityItem]
     empty_state: str | None
 
 
@@ -211,6 +229,7 @@ def load_forecast_data(
     latest_run_id = _latest_prediction_run_id(conn)
     prediction_rows = _forecast_prediction_rows(conn, latest_run_id)
     predictions_by_fixture = _group_forecast_predictions(prediction_rows)
+    quality_items = _forecast_quality_items(conn)
     rows = _forecast_fixture_rows(conn, fixture_id=fixture_id)
     fixtures: list[ForecastFixture] = []
     for row in rows:
@@ -259,6 +278,7 @@ def load_forecast_data(
         model_version=model_version,
         artifact_id=artifact_id,
         market_validation_status=validation_status,
+        quality_items=quality_items,
         empty_state=empty_state,
     )
 
@@ -280,6 +300,7 @@ def render_today_forecast(data: ForecastData, *, refresh_seconds: int) -> str:
   {_forecast_nav(data)}
   <main class="forecast-shell">
     {_forecast_warning_banner(data)}
+    {_forecast_quality_panel(data)}
     {_forecast_stats(data)}
     <section class="forecast-toolbar">
       <a class="btn ghost" href="/today?date={_e(data.previous_date)}">Anterior</a>
@@ -315,6 +336,7 @@ def render_match_forecast(data: ForecastData, fixture_id: str) -> str:
   {_forecast_nav(data)}
   <main class="forecast-shell">
     {_forecast_warning_banner(data)}
+    {_forecast_quality_panel(data)}
     {content}
   </main>
 </body>
@@ -508,6 +530,66 @@ def _forecast_prediction_rows(
     ).fetchall()
 
 
+def _forecast_quality_items(conn: sqlite3.Connection) -> list[ForecastQualityItem]:
+    return [
+        _calibration_quality(conn),
+        _ou_monotonicity_quality(conn),
+        _elo_coverage_quality(conn),
+    ]
+
+
+def _calibration_quality(conn: sqlite3.Connection) -> ForecastQualityItem:
+    rows = [
+        _latest_quality_metric(
+            conn,
+            "calibrator_sanity",
+            f"{market}_mean_calibration_improved",
+        )
+        for market in FORECAST_MARKETS
+    ]
+    ok_count = sum(1 for row in rows if row is not None and float(row["metric_value"] or 0) >= 1)
+    status = "OK" if ok_count == len(FORECAST_MARKETS) else "WARN"
+    return ForecastQualityItem("Calibration", status, f"{ok_count}/{len(FORECAST_MARKETS)} checks")
+
+
+def _ou_monotonicity_quality(conn: sqlite3.Connection) -> ForecastQualityItem:
+    row = _latest_quality_metric(
+        conn,
+        "prediction_sanity",
+        "ou_monotonicity_violations",
+    )
+    violations = int(float(row["metric_value"] or 0)) if row is not None else -1
+    status = "OK" if violations == 0 else "WARN"
+    detail = "missing" if violations < 0 else f"{violations} violations"
+    return ForecastQualityItem("OU monotonicity", status, detail)
+
+
+def _elo_coverage_quality(conn: sqlite3.Connection) -> ForecastQualityItem:
+    row = _latest_quality_metric(conn, "fixture_elo", "missing_team_rating_slots")
+    missing = int(float(row["metric_value"] or 0)) if row is not None else -1
+    status = "OK" if missing == 0 else "WARN"
+    detail = "missing" if missing < 0 else f"{missing} missing rating slots"
+    return ForecastQualityItem("Elo coverage", status, detail)
+
+
+def _latest_quality_metric(
+    conn: sqlite3.Connection,
+    check_name: str,
+    metric_name: str,
+) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT run_id, metric_value, details_json
+        FROM data_quality
+        WHERE check_name = ?
+          AND metric_name = ?
+        ORDER BY quality_id DESC
+        LIMIT 1
+        """,
+        (check_name, metric_name),
+    ).fetchone()
+
+
 def _forecast_fixture_rows(
     conn: sqlite3.Connection,
     *,
@@ -698,6 +780,32 @@ def _forecast_warning_banner(data: ForecastData) -> str:
     """
 
 
+def _forecast_quality_panel(data: ForecastData) -> str:
+    items = [
+        *data.quality_items,
+        ForecastQualityItem(
+            "Market validation",
+            data.market_validation_status or "NOT_TESTED",
+            "Model vs market benchmark not completed",
+        ),
+    ]
+    rendered = "".join(
+        f"""
+        <div class="quality-item {_quality_class(item.status)}">
+          <span>{_e(item.label)}</span>
+          <strong>{_e(item.status)}</strong>
+          <small>{_e(item.detail)}</small>
+        </div>
+        """
+        for item in items
+    )
+    return f"""
+    <section class="quality-panel" aria-label="Model quality panel">
+      {rendered}
+    </section>
+    """
+
+
 def _forecast_stats(data: ForecastData) -> str:
     items = [
         ("Fecha", data.target_date),
@@ -740,17 +848,7 @@ def _primary_forecasts_block(fixture: ForecastFixture) -> str:
     if not fixture.primary_markets:
         return f'<div class="primary-forecast empty">{_e(fixture.state_label)}</div>'
     items = "".join(
-        f"""
-        <div class="primary-pick">
-          <span>Principal {_e(_forecast_family_label(market))}</span>
-          <strong>{_forecast_label(market)}</strong>
-          <em>{_pct(market.prob)}</em>
-          <small>
-            Confianza del modelo (no validada contra resultados):
-            {_e(_confidence_band(market.prob))}
-          </small>
-        </div>
-        """
+        _primary_forecast_item(market)
         for market in fixture.primary_markets
     )
     return f"""
@@ -761,6 +859,50 @@ def _primary_forecasts_block(fixture: ForecastFixture) -> str:
     """
 
 
+def _primary_forecast_item(market: ForecastMarket) -> str:
+    signal = _signal_strength(market.prob)
+    return f"""
+        <div class="primary-pick {signal.css_class}" data-signal="{_e(signal.code)}">
+          <span>Principal {_e(_forecast_family_label(market))}</span>
+          <strong>{_e(signal.label)}</strong>
+          <em>{_e(_forecast_diagnostic_label(market))}</em>
+          <small>
+            Fuerza de senal: distancia a 50%, no validada contra resultados.
+          </small>
+        </div>
+        """
+
+
+def _forecast_diagnostic_label(market: ForecastMarket) -> str:
+    if market.market.startswith("OU"):
+        side = "Over" if market.selection == "over" else "Under"
+        return f"{market.market}: {side} {_pct(market.prob)}"
+    if market.market == "BTTS":
+        side = "Si" if market.selection == "yes" else "No"
+        return f"BTTS: {side} {_pct(market.prob)}"
+    return f"{market.market}: {market.selection} {_pct(market.prob)}"
+
+
+def _signal_strength(prob: float) -> SignalStrength:
+    delta = abs(prob - 0.50)
+    if delta < 0.03:
+        return SignalStrength(SIGNAL_NO_SIGNAL, "Sin senal clara", "signal-no-signal")
+    if delta < 0.08:
+        return SignalStrength(SIGNAL_LEAN, "Tendencia leve", "signal-lean")
+    if delta < 0.15:
+        return SignalStrength(SIGNAL_MODERATE, "Tendencia moderada", "signal-moderate")
+    return SignalStrength(SIGNAL_STRONG, "Senal fuerte", "signal-strong")
+
+
+def _signal_label(prob: float) -> str:
+    signal = _signal_strength(prob)
+    return f"{signal.label} ({signal.code})"
+
+
+def _quality_class(status: str) -> str:
+    return f"quality-{status.lower().replace('_', '-')}"
+
+
 def _match_detail(fixture: ForecastFixture) -> str:
     rows = "".join(
         f"""
@@ -768,7 +910,7 @@ def _match_detail(fixture: ForecastFixture) -> str:
           <td>{_e(market.market)}</td>
           <td>{_e(_forecast_label(market))}</td>
           <td>{_pct(market.prob)}</td>
-          <td>{_e(_confidence_band(market.prob))}</td>
+          <td>{_e(_signal_label(market.prob))}</td>
           <td>{_num(market.fair_odds)}</td>
           <td>{_e(_short_id(market.artifact_id) or 'n/a')}</td>
         </tr>
@@ -792,7 +934,7 @@ def _match_detail(fixture: ForecastFixture) -> str:
         <thead>
           <tr>
             <th>Mercado</th><th>Seleccion</th><th>Probabilidad</th>
-            <th>Confianza modelo (no validada)</th>
+            <th>Fuerza de senal</th>
             <th>Precio teorico del modelo</th><th>Artifact</th>
           </tr>
         </thead>
@@ -843,16 +985,6 @@ def _forecast_family_label(market: ForecastMarket) -> str:
     if market.market == "BTTS":
         return "BTTS"
     return market.market
-
-
-def _confidence_band(prob: float) -> str:
-    if prob >= 0.75:
-        return "alta"
-    if prob >= 0.65:
-        return "media"
-    if prob >= FORECAST_MIN_PROB:
-        return "baja"
-    return "sin senal principal"
 
 
 def _fixture_context(fixture: ForecastFixture) -> str:
@@ -1570,6 +1702,31 @@ body.forecast-page {
 }
 .forecast-alert strong { color: var(--green); }
 .forecast-alert span { color: #1f3d31; }
+.quality-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(145px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.quality-item {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+}
+.quality-item span, .quality-item small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.quality-item strong {
+  display: block;
+  margin: 5px 0;
+  font-size: 16px;
+}
+.quality-ok { border-left: 5px solid var(--green); }
+.quality-warn { border-left: 5px solid var(--amber); }
+.quality-not-tested { border-left: 5px solid var(--muted); }
 .legacy-alert {
   display: flex;
   flex-wrap: wrap;
@@ -1693,6 +1850,17 @@ p { color: var(--muted); margin: 4px 0 0; }
   border-radius: 8px;
   padding: 10px;
 }
+.primary-pick.signal-no-signal {
+  border-color: var(--line);
+  background: #fafafa;
+}
+.primary-pick.signal-no-signal strong,
+.primary-pick.signal-no-signal em {
+  color: var(--muted);
+}
+.primary-pick.signal-lean { border-color: #bfd1ff; }
+.primary-pick.signal-moderate { border-color: #f1c27d; }
+.primary-pick.signal-strong { border-color: #b7dfc7; }
 .primary-pick small {
   display: block;
   color: var(--muted);
@@ -1732,6 +1900,7 @@ p { color: var(--muted); margin: 4px 0 0; }
 .muted, .empty { color: var(--muted); }
 @media (max-width: 900px) {
   .forecast-nav, .match-card-head, .detail-head { flex-direction: column; }
+  .quality-panel { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
   .forecast-stats { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
   .match-grid { grid-template-columns: 1fr; }
   .primary-list { grid-template-columns: 1fr; }
