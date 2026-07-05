@@ -13,7 +13,7 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 2 - Evaluation and scoring | Code ready; quarantined until the formal gate is green. |
 | 3 - Club OU2.5 benchmark | Coverage prep implemented; run in parallel and close before Phase 6 paper EV. |
 | 4 - Today forecast web | Forecast GUI deployed and verified with 6 future resolved fixtures and clean forecast quality gates. |
-| 4.5 - Forecast recommendation UX | Principal-by-family forecast display in progress; still no odds or value language. |
+| 4.5 - Forecast recommendation UX | Implemented and deployed: principal-by-family forecasts, still no odds or value language. |
 | 5-9 | Pending. |
 
 Open loops that close Phase 0/1 when remote execution is available:
