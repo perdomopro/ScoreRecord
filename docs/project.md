@@ -650,6 +650,7 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 ### 2026-07-05 - Phase 4.5 forecast recommendation UX
 
 - Changed the forecast card from one global principal pick to principal forecasts by family: one `GOLES` candidate from calibrated OU markets and one `BTTS` candidate from calibrated BTTS yes/no probabilities.
+- Refined the `GOLES` principal forecast to use `OU2.5` specifically instead of the highest-probability OU side, avoiding trivial `Over 1.5` / `Under 3.5` headlines.
 - Added `Confianza del modelo (no validada contra resultados)` as a probability-magnitude label, not a betting confidence score.
 - Kept the forecast selector restricted to calibrated goal markets (`OU1.5`, `OU2.5`, `OU3.5`, `BTTS`). Added a regression test that inserts a synthetic `1X2` row with 99% probability and verifies it cannot become a principal forecast or appear on `/today`.
 - Updated the roadmap to insert Phase 4.5 before odds/paper work and to require the Phase 3 OU2.5 benchmark readout before Phase 6 paper EV is shown.

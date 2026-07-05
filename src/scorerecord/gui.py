@@ -630,15 +630,14 @@ def _ou_monotonicity_ok(markets: list[ForecastMarket]) -> bool:
 
 
 def _select_primary_forecast(markets: list[ForecastMarket]) -> ForecastMarket | None:
-    candidates = [market for market in markets if market.prob >= FORECAST_MIN_PROB]
-    if not candidates:
+    if not markets:
         return None
-    return max(candidates, key=lambda market: (market.prob, _market_rank(market.market)))
+    return max(markets, key=lambda market: (market.prob, _market_rank(market.market)))
 
 
 def _select_primary_forecasts(markets: list[ForecastMarket]) -> list[ForecastMarket]:
     goal_primary = _select_primary_forecast(
-        [market for market in markets if market.market.startswith("OU")]
+        [market for market in markets if market.market == "OU2.5"]
     )
     btts_primary = _select_primary_forecast(
         [market for market in markets if market.market == "BTTS"]

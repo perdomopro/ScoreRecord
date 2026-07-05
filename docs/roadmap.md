@@ -245,7 +245,8 @@ Technical work:
 
 - Show `Pronosticos principales del modelo`, never `Apuesta recomendada`.
 - Select one principal per forecast family:
-  - `GOLES`: best calibrated OU side across `OU1.5`, `OU2.5`, and `OU3.5`.
+  - `GOLES`: best calibrated side on `OU2.5`, the line tied to the Phase 3
+    benchmark, not the easiest high-probability OU line.
   - `BTTS`: best calibrated yes/no side.
 - Keep the selector restricted to calibrated goal markets only: `OU1.5`, `OU2.5`,
   `OU3.5`, and `BTTS`. Do not let `1X2` or exact-score rows become principal

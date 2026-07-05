@@ -333,7 +333,7 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert data.forecastable_count == 1
     assert data.fixtures[0].primary is not None
     assert len(data.fixtures[0].primary_markets) == 2
-    assert data.fixtures[0].primary.market == "OU3.5"
+    assert data.fixtures[0].primary.market == "OU2.5"
     assert data.fixtures[0].primary.selection == "under"
     assert "FORECAST_ONLY" in html
     assert "Pronosticos principales del modelo" in html
@@ -343,7 +343,8 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert "No es recomendacion de apuesta" in html
     assert "Mexico" in html
     assert "Canada" in html
-    assert "Under 3.5 goles" in html
+    assert "Under 2.5 goles" in html
+    assert "sin senal principal" in html
     assert "Ambos anotan: si" in html
     assert "Actionable Recommendations" not in html
     assert "No usa EV" in html
