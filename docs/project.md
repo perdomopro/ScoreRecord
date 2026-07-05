@@ -640,6 +640,12 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Changed World Cup fixture upserts so placeholder-only refreshes do not erase a manual team resolution. Manual `home_id`/`away_id` values are preserved when the provider still sends `W73`/`L101`, and placeholders are cleared once real teams exist.
 - Changed `resolve-fixture-teams` so it clears placeholders, marks the fixture scheduled, and records a manual `ingest_run` plus `data_quality` row with the resolved fixture and submitted team aliases.
 - Added tests for stable fixture IDs, placeholder-to-real reingestion, manual-resolution preservation across refreshes, cleared placeholders, and manual-run audit logging.
+- Homeserver verification after refresh: `ingest-worldcup --refresh` kept 104 fixtures, improved fixture resolution to 96/104, and produced `future_resolved=6`, `future_unresolved=8`, `past_unfinished=0`.
+- Duplicate natural-slot check after the stable fixture-id change: `fixtures_total=104`, `duplicate_natural_slots=0`.
+- Homeserver prediction publish after `build-elo`: `predicted_fixtures=6`, `skipped_fixtures=98`, `inserted_predictions=114`, latest prediction run `285`.
+- Forecast quality gate after publish: all four Platt calibrator sanity metrics (`OU1.5`, `OU2.5`, `OU3.5`, `BTTS`) have `metric_value=1.0`; `prediction_sanity.ou_monotonicity_violations=0`; `fixture_elo.missing_team_rating_slots=0`.
+- Homeserver validation after this hardening: focused GUI/World Cup/fixture tests passed `17 passed`; full suite passed `88 passed`; targeted `ruff` over touched files passed.
+- GUI smoke after restart: `/healthz` returned `ok`; `/today?date=2026-07-05` contains `FORECAST_ONLY`; `/audit` contains `LEGACY AUDIT MODE - NO BETTING RECOMMENDATIONS`; `/match/wc2026-match-091` contains `Precio teorico del modelo` and `90 min / tiempo reglamentario`.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
