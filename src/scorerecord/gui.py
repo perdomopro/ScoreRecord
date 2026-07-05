@@ -72,6 +72,7 @@ class ForecastFixture:
     state: str
     state_label: str
     primary: ForecastMarket | None
+    primary_markets: list[ForecastMarket]
     markets: list[ForecastMarket]
     artifact_id: str | None
     model_version: str | None
@@ -581,13 +582,14 @@ def _forecast_fixture_from_row(
     is_started = bool(kickoff_utc and now_utc >= kickoff_utc)
     monotonicity_ok = _ou_monotonicity_ok(predictions)
     visible_markets = predictions if is_resolved and monotonicity_ok else []
-    primary = None if is_started else _select_primary_forecast(visible_markets)
+    primary_markets = [] if is_started else _select_primary_forecasts(visible_markets)
+    primary = primary_markets[0] if primary_markets else None
     state, state_label = _forecast_state(
         is_resolved=is_resolved,
         is_started=is_started,
         has_predictions=bool(predictions),
         monotonicity_ok=monotonicity_ok,
-        primary=primary,
+        has_primary_forecast=bool(primary_markets),
     )
     return ForecastFixture(
         fixture_id=str(row["fixture_id"]),
@@ -605,6 +607,7 @@ def _forecast_fixture_from_row(
         state=state,
         state_label=state_label,
         primary=primary,
+        primary_markets=primary_markets,
         markets=visible_markets,
         artifact_id=visible_markets[0].artifact_id if visible_markets else None,
         model_version=visible_markets[0].model_version if visible_markets else None,
@@ -633,13 +636,23 @@ def _select_primary_forecast(markets: list[ForecastMarket]) -> ForecastMarket | 
     return max(candidates, key=lambda market: (market.prob, _market_rank(market.market)))
 
 
+def _select_primary_forecasts(markets: list[ForecastMarket]) -> list[ForecastMarket]:
+    goal_primary = _select_primary_forecast(
+        [market for market in markets if market.market.startswith("OU")]
+    )
+    btts_primary = _select_primary_forecast(
+        [market for market in markets if market.market == "BTTS"]
+    )
+    return [market for market in [goal_primary, btts_primary] if market is not None]
+
+
 def _forecast_state(
     *,
     is_resolved: bool,
     is_started: bool,
     has_predictions: bool,
     monotonicity_ok: bool,
-    primary: ForecastMarket | None,
+    has_primary_forecast: bool,
 ) -> tuple[str, str]:
     if not is_resolved:
         return "pending", "POR DEFINIR"
@@ -649,7 +662,7 @@ def _forecast_state(
         return "bad", "DATOS INCONSISTENTES"
     if is_started:
         return "stale", "KICKOFF PASADO"
-    if primary is None:
+    if not has_primary_forecast:
         return "quiet", "SIN PRONOSTICO"
     return "forecast", "FORECAST_ONLY"
 
@@ -681,6 +694,7 @@ def _forecast_warning_banner(data: ForecastData) -> str:
       <span>Artifact: {_e(artifact or 'n/a')}</span>
       <span>TZ: {_e(data.display_tz)}</span>
       <span>Mercados de goles: 90 min / tiempo reglamentario.</span>
+      <span>Selector: solo OU/BTTS calibrados.</span>
     </section>
     """
 
@@ -702,17 +716,7 @@ def _forecast_stats(data: ForecastData) -> str:
 
 
 def _forecast_card(fixture: ForecastFixture) -> str:
-    primary = (
-        f"""
-        <div class="primary-forecast">
-          <span>Pronostico principal</span>
-          <strong>{_forecast_label(fixture.primary)}</strong>
-          <em>{_pct(fixture.primary.prob)}</em>
-        </div>
-        """
-        if fixture.primary
-        else f'<div class="primary-forecast empty">{_e(fixture.state_label)}</div>'
-    )
+    primary = _primary_forecasts_block(fixture)
     markets = _forecast_market_chips(fixture.markets[:8])
     return f"""
     <article class="match-card {fixture.state}">
@@ -733,6 +737,31 @@ def _forecast_card(fixture: ForecastFixture) -> str:
     """
 
 
+def _primary_forecasts_block(fixture: ForecastFixture) -> str:
+    if not fixture.primary_markets:
+        return f'<div class="primary-forecast empty">{_e(fixture.state_label)}</div>'
+    items = "".join(
+        f"""
+        <div class="primary-pick">
+          <span>Principal {_e(_forecast_family_label(market))}</span>
+          <strong>{_forecast_label(market)}</strong>
+          <em>{_pct(market.prob)}</em>
+          <small>
+            Confianza del modelo (no validada contra resultados):
+            {_e(_confidence_band(market.prob))}
+          </small>
+        </div>
+        """
+        for market in fixture.primary_markets
+    )
+    return f"""
+    <div class="primary-forecast multi">
+      <div class="primary-title">Pronosticos principales del modelo</div>
+      <div class="primary-list">{items}</div>
+    </div>
+    """
+
+
 def _match_detail(fixture: ForecastFixture) -> str:
     rows = "".join(
         f"""
@@ -740,6 +769,7 @@ def _match_detail(fixture: ForecastFixture) -> str:
           <td>{_e(market.market)}</td>
           <td>{_e(_forecast_label(market))}</td>
           <td>{_pct(market.prob)}</td>
+          <td>{_e(_confidence_band(market.prob))}</td>
           <td>{_num(market.fair_odds)}</td>
           <td>{_e(_short_id(market.artifact_id) or 'n/a')}</td>
         </tr>
@@ -747,7 +777,7 @@ def _match_detail(fixture: ForecastFixture) -> str:
         for market in fixture.markets
     )
     if not rows:
-        rows = '<tr><td colspan="5" class="empty">No hay mercados de goles para mostrar.</td></tr>'
+        rows = '<tr><td colspan="6" class="empty">No hay mercados de goles para mostrar.</td></tr>'
     return f"""
     <section class="match-detail">
       <a class="btn ghost" href="/today?date={_e(fixture.display_date or '')}">Volver</a>
@@ -763,6 +793,7 @@ def _match_detail(fixture: ForecastFixture) -> str:
         <thead>
           <tr>
             <th>Mercado</th><th>Seleccion</th><th>Probabilidad</th>
+            <th>Confianza modelo (no validada)</th>
             <th>Precio teorico del modelo</th><th>Artifact</th>
           </tr>
         </thead>
@@ -805,6 +836,24 @@ def _forecast_label(market: ForecastMarket | None) -> str:
     if market.market == "BTTS":
         return "Ambos anotan: si" if market.selection == "yes" else "Ambos anotan: no"
     return f"{market.market} {market.selection}"
+
+
+def _forecast_family_label(market: ForecastMarket) -> str:
+    if market.market.startswith("OU"):
+        return "GOLES"
+    if market.market == "BTTS":
+        return "BTTS"
+    return market.market
+
+
+def _confidence_band(prob: float) -> str:
+    if prob >= 0.75:
+        return "alta"
+    if prob >= 0.65:
+        return "media"
+    if prob >= FORECAST_MIN_PROB:
+        return "baja"
+    return "sin senal principal"
 
 
 def _fixture_context(fixture: ForecastFixture) -> str:
@@ -1520,23 +1569,23 @@ body.forecast-page {
   border-left: 6px solid var(--green);
   border-radius: 10px;
 }
-  .forecast-alert strong { color: var(--green); }
-  .forecast-alert span { color: #1f3d31; }
-  .legacy-alert {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 14px;
-    align-items: center;
-    margin: 14px 0;
-    padding: 12px 14px;
-    border: 1px solid #f2c6c6;
-    border-left: 6px solid var(--red);
-    border-radius: 8px;
-    background: #fff5f5;
-    color: #7f1d1d;
-  }
-  .legacy-alert strong { font-weight: 850; }
-  .forecast-stats {
+.forecast-alert strong { color: var(--green); }
+.forecast-alert span { color: #1f3d31; }
+.legacy-alert {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  margin: 14px 0;
+  padding: 12px 14px;
+  border: 1px solid #f2c6c6;
+  border-left: 6px solid var(--red);
+  border-radius: 8px;
+  background: #fff5f5;
+  color: #7f1d1d;
+}
+.legacy-alert strong { font-weight: 850; }
+.forecast-stats {
   display: grid;
   grid-template-columns: repeat(6, minmax(130px, 1fr));
   gap: 10px;
@@ -1627,6 +1676,30 @@ p { color: var(--muted); margin: 4px 0 0; }
   margin-top: 2px;
 }
 .primary-forecast.empty { color: var(--muted); border-color: var(--line); background: #fafafa; }
+.primary-title {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.primary-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(190px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+.primary-pick {
+  background: var(--surface);
+  border: 1px solid #d6eadc;
+  border-radius: 8px;
+  padding: 10px;
+}
+.primary-pick small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 7px;
+}
 .market-chips { display: flex; gap: 7px; flex-wrap: wrap; }
 .chip {
   display: inline-flex;
@@ -1649,19 +1722,20 @@ p { color: var(--muted); margin: 4px 0 0; }
   padding: 10px;
   text-align: left;
 }
-  .forecast-table th { color: var(--muted); font-size: 12px; background: #fbfcfd; }
-  .model-price-note {
-    color: var(--muted);
-    font-size: 13px;
-    margin: 12px 0 0;
-  }
-  .empty-forecast { text-align: center; padding: 36px 18px; }
+.forecast-table th { color: var(--muted); font-size: 12px; background: #fbfcfd; }
+.model-price-note {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 12px 0 0;
+}
+.empty-forecast { text-align: center; padding: 36px 18px; }
 .empty-forecast h1 { margin: 0 0 8px; }
 .muted, .empty { color: var(--muted); }
 @media (max-width: 900px) {
   .forecast-nav, .match-card-head, .detail-head { flex-direction: column; }
   .forecast-stats { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
   .match-grid { grid-template-columns: 1fr; }
+  .primary-list { grid-template-columns: 1fr; }
 }
 """
 

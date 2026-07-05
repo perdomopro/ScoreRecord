@@ -11,8 +11,9 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 0 - Forward capture | Code ready; verify future fixtures with `kickoff_utc` before relying on timers. |
 | 1 - Repo and DB stabilization | Code ready; formal gate still pending remote `pytest` plus `ruff`. |
 | 2 - Evaluation and scoring | Code ready; quarantined until the formal gate is green. |
-| 3 - Club OU2.5 benchmark | Coverage prep implemented; blocked until coverage readout and green gate. |
+| 3 - Club OU2.5 benchmark | Coverage prep implemented; run in parallel and close before Phase 6 paper EV. |
 | 4 - Today forecast web | Forecast GUI deployed and verified with 6 future resolved fixtures and clean forecast quality gates. |
+| 4.5 - Forecast recommendation UX | Principal-by-family forecast display in progress; still no odds or value language. |
 | 5-9 | Pending. |
 
 Open loops that close Phase 0/1 when remote execution is available:
@@ -235,6 +236,31 @@ Exit criteria:
 - Local kickoff time is correct.
 - It does not imply a validated bet.
 
+## Phase 4.5 - Forecast Recommendation UX
+
+Objective: make the forecast web useful without crossing into betting recommendation
+language.
+
+Technical work:
+
+- Show `Pronosticos principales del modelo`, never `Apuesta recomendada`.
+- Select one principal per forecast family:
+  - `GOLES`: best calibrated OU side across `OU1.5`, `OU2.5`, and `OU3.5`.
+  - `BTTS`: best calibrated yes/no side.
+- Keep the selector restricted to calibrated goal markets only: `OU1.5`, `OU2.5`,
+  `OU3.5`, and `BTTS`. Do not let `1X2` or exact-score rows become principal
+  forecasts.
+- Display `Confianza del modelo (no validada contra resultados)` as a probability
+  magnitude band, not as betting confidence or market edge.
+- Keep `market_validation_status` visible as `NOT_TESTED` until market validation
+  genuinely changes.
+
+Exit criteria:
+
+- A fixture can show independent principal forecasts for goals and BTTS.
+- No page uses EV, Kelly, stake, value, or betting recommendation language.
+- Tests prove that an uncalibrated `1X2` row cannot be selected by the forecast UI.
+
 ## Phase 5 - Serious Odds Layer
 
 Objective: reliable, de-viggable snapshots.
@@ -254,6 +280,12 @@ Exit criteria:
 ## Phase 6 - `daily-goals-v1` Paper Engine
 
 Objective: turn forecasts and prices into deterministic paper candidates.
+
+Dependency:
+
+- Phase 3 OU2.5 benchmark must be read before Phase 6 shows paper EV. Phase 5 can
+  collect quotes in parallel, but `daily-goals-v1` should not present edge on top of
+  an unbenchmarked independent model.
 
 Frozen initial policy:
 
@@ -334,10 +366,11 @@ Technical work:
 3. Scoring contract
 4. Club OU2.5 benchmark
 5. Forecast web
-6. Odds coverage and consensus
-7. daily-goals-v1 paper
-8. Forward validation
-9. Residual market model / corners
+6. Forecast recommendation UX
+7. Odds coverage and consensus
+8. daily-goals-v1 paper, only after Phase 3 readout
+9. Forward validation
+10. Residual market model / corners
 ```
 
 Golden rule: keep infrastructure reusable, ship the useful forecast view early, and do

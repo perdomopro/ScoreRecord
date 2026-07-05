@@ -63,8 +63,8 @@ def _insert_forecast_fixture(conn: sqlite3.Connection) -> int:
         ("OU2.5", "under", 0.51),
         ("OU3.5", "over", 0.22),
         ("OU3.5", "under", 0.78),
-        ("BTTS", "yes", 0.53),
-        ("BTTS", "no", 0.47),
+        ("BTTS", "yes", 0.63),
+        ("BTTS", "no", 0.37),
     ]:
         conn.execute(
             """
@@ -332,15 +332,51 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert data.latest_run_id == run_id
     assert data.forecastable_count == 1
     assert data.fixtures[0].primary is not None
+    assert len(data.fixtures[0].primary_markets) == 2
     assert data.fixtures[0].primary.market == "OU3.5"
     assert data.fixtures[0].primary.selection == "under"
     assert "FORECAST_ONLY" in html
+    assert "Pronosticos principales del modelo" in html
+    assert "Principal GOLES" in html
+    assert "Principal BTTS" in html
+    assert "Confianza del modelo (no validada contra resultados)" in html
     assert "No es recomendacion de apuesta" in html
     assert "Mexico" in html
     assert "Canada" in html
     assert "Under 3.5 goles" in html
+    assert "Ambos anotan: si" in html
     assert "Actionable Recommendations" not in html
     assert "No usa EV" in html
+
+
+def test_forecast_selector_ignores_uncalibrated_1x2_rows() -> None:
+    conn = _conn()
+    run_id = _insert_forecast_fixture(conn)
+    conn.execute(
+        """
+        INSERT INTO prediction (
+          run_id, fixture_id, artifact_id, model, market, selection, prob,
+          fair_odds, generated_utc, model_version
+        )
+        VALUES (
+          ?, 'm-forecast', 'artifact-forecast-1', 'dixon_coles',
+          '1X2', 'home', 0.99, 1.01, '2026-07-04T12:00:00+00:00', ?
+        )
+        """,
+        (run_id, MODEL_VERSION),
+    )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    html = render_today_forecast(data, refresh_seconds=60)
+
+    assert all(market.market != "1X2" for market in data.fixtures[0].markets)
+    assert all(market.market != "1X2" for market in data.fixtures[0].primary_markets)
+    assert "Selector: solo OU/BTTS calibrados" in html
+    assert "1X2" not in html
 
 
 def test_forecast_match_renders_goal_market_detail() -> None:
@@ -357,6 +393,7 @@ def test_forecast_match_renders_goal_market_detail() -> None:
     assert "Mexico" in html
     assert "Canada" in html
     assert "Precio teorico del modelo" in html
+    assert "Confianza modelo (no validada)" in html
     assert "90 min / tiempo reglamentario" in html
     assert "No es una cuota real" in html
     assert "OU2.5" in html

@@ -647,6 +647,13 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Homeserver validation after this hardening: focused GUI/World Cup/fixture tests passed `17 passed`; full suite passed `88 passed`; targeted `ruff` over touched files passed.
 - GUI smoke after restart: `/healthz` returned `ok`; `/today?date=2026-07-05` contains `FORECAST_ONLY`; `/audit` contains `LEGACY AUDIT MODE - NO BETTING RECOMMENDATIONS`; `/match/wc2026-match-091` contains `Precio teorico del modelo` and `90 min / tiempo reglamentario`.
 
+### 2026-07-05 - Phase 4.5 forecast recommendation UX
+
+- Changed the forecast card from one global principal pick to principal forecasts by family: one `GOLES` candidate from calibrated OU markets and one `BTTS` candidate from calibrated BTTS yes/no probabilities.
+- Added `Confianza del modelo (no validada contra resultados)` as a probability-magnitude label, not a betting confidence score.
+- Kept the forecast selector restricted to calibrated goal markets (`OU1.5`, `OU2.5`, `OU3.5`, `BTTS`). Added a regression test that inserts a synthetic `1X2` row with 99% probability and verifies it cannot become a principal forecast or appear on `/today`.
+- Updated the roadmap to insert Phase 4.5 before odds/paper work and to require the Phase 3 OU2.5 benchmark readout before Phase 6 paper EV is shown.
+
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
 - Added `team_rating_history` with pre/post Elo by historical match.
