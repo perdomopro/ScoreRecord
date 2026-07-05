@@ -658,6 +658,7 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Updated the roadmap to insert Phase 4.5 before odds/paper work and to require the Phase 3 OU2.5 benchmark readout before Phase 6 paper EV is shown.
 - Homeserver validation after deploy: focused GUI/World Cup/fixture tests passed `18 passed`; full suite passed `89 passed`; targeted `ruff` over touched Python files passed; GUI smoke passed for `/healthz`, `/today?date=2026-07-05`, and `/match/wc2026-match-091`.
 - Homeserver validation after the `OU2.5` principal refinement: focused tests passed `18 passed`; full suite passed `89 passed`; targeted `ruff` passed; GUI smoke passed; direct forecast-data inspection confirmed `GOLES` primaries use `OU2.5` for the resolved July 5 fixtures.
+- Homeserver validation after the signal-strength and quality-panel layer: focused GUI/World Cup/fixture tests passed `20 passed`; full suite passed `91 passed`; targeted `ruff` passed; GUI smoke confirmed the model quality panel and `Fuerza de senal` appear on `/today?date=2026-07-05` and `/match/wc2026-match-091`.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
