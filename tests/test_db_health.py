@@ -10,7 +10,7 @@ def test_schema_version_is_recorded_by_init_db() -> None:
 
     init_db(conn)
 
-    assert schema_version(conn) >= 4
+    assert schema_version(conn) >= 5
 
 
 def test_db_health_reports_ok_for_empty_initialized_database() -> None:

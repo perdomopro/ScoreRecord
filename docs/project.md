@@ -51,6 +51,7 @@ Important tables:
 - `edge_analysis`: model probability versus de-vigged market probability, raw implied probability, overround, odds quality diagnostics, EV edge, fixture Elo difference, close-match flag, high-edge reason, and conservative recommendation score.
 - `model_artifact`: reproducible model artifact manifest with training cutoff, training rows, parameters, calibrators, validation run provenance, market-validation status, and git SHA.
 - `prediction`: future model outputs for tournament fixtures.
+- `forecast_snapshot`: frozen forecast-only GUI principals before kickoff, later settled against final scores without odds or staking language.
 - `prediction_result`: settled prediction labels and scoring metrics for finished fixtures.
 - `recommendation`: future value-bet recommendations.
 - `recommendation_result`: paper-recommendation CLV against closing odds.
@@ -654,6 +655,7 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Replaced the old high/medium/low confidence wording with explicit signal-strength labels so near-50% probabilities do not look like strong forecasts.
 - Added the forecast signal layer for binary goal markets: `NO_SIGNAL`, `LEAN`, `MODERATE`, and `STRONG` are derived from distance to 50%, while the actual side and probability remain visible as diagnostics.
 - Added a compact model quality panel sourced from latest `data_quality` rows for calibration sanity, OU monotonicity, fixture Elo coverage, and market-validation status.
+- Added `forecast_snapshot` plus `freeze-forecast-snapshot`, `settle-forecast-snapshots`, and `forecast-report` to freeze the GUI's OU2.5/BTTS principals before kickoff, settle them against final scores, and report accuracy, Brier, and log-loss by market and signal code.
 - Kept the forecast selector restricted to calibrated goal markets (`OU1.5`, `OU2.5`, `OU3.5`, `BTTS`). Added a regression test that inserts a synthetic `1X2` row with 99% probability and verifies it cannot become a principal forecast or appear on `/today`.
 - Updated the roadmap to insert Phase 4.5 before odds/paper work and to require the Phase 3 OU2.5 benchmark readout before Phase 6 paper EV is shown.
 - Homeserver validation after deploy: focused GUI/World Cup/fixture tests passed `18 passed`; full suite passed `89 passed`; targeted `ruff` over touched Python files passed; GUI smoke passed for `/healthz`, `/today?date=2026-07-05`, and `/match/wc2026-match-091`.

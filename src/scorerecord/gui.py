@@ -59,6 +59,19 @@ class ForecastMarket:
 
 
 @dataclass(frozen=True)
+class ForecastSnapshotView:
+    market: str
+    selection: str
+    prob: float
+    signal_code: str
+    as_of_utc: str
+    settled: bool
+    result_label: int | None
+    correct: int | None
+    settled_utc: str | None
+
+
+@dataclass(frozen=True)
 class SignalStrength:
     code: str
     label: str
@@ -95,6 +108,7 @@ class ForecastFixture:
     model_version: str | None
     market_validation_status: str
     ou_monotonicity_ok: bool
+    snapshots: list[ForecastSnapshotView]
 
 
 @dataclass(frozen=True)
@@ -231,11 +245,15 @@ def load_forecast_data(
     predictions_by_fixture = _group_forecast_predictions(prediction_rows)
     quality_items = _forecast_quality_items(conn)
     rows = _forecast_fixture_rows(conn, fixture_id=fixture_id)
+    snapshots_by_fixture = _group_forecast_snapshots(
+        _forecast_snapshot_rows(conn, [str(row["fixture_id"]) for row in rows])
+    )
     fixtures: list[ForecastFixture] = []
     for row in rows:
         fixture = _forecast_fixture_from_row(
             row,
             predictions_by_fixture.get(str(row["fixture_id"]), []),
+            snapshots_by_fixture.get(str(row["fixture_id"]), []),
             display_tz=display_tz,
             selected_date=selected_date if fixture_id is None else None,
             now_utc=now,
@@ -530,6 +548,25 @@ def _forecast_prediction_rows(
     ).fetchall()
 
 
+def _forecast_snapshot_rows(
+    conn: sqlite3.Connection,
+    fixture_ids: list[str],
+) -> list[sqlite3.Row]:
+    if not fixture_ids:
+        return []
+    placeholders = ",".join("?" for _ in fixture_ids)
+    return conn.execute(
+        f"""
+        SELECT fixture_id, market, selection, prob, signal_code, as_of_utc,
+               settled, result_label, correct, settled_utc
+        FROM forecast_snapshot
+        WHERE fixture_id IN ({placeholders})
+        ORDER BY fixture_id, snapshot_id
+        """,
+        tuple(fixture_ids),
+    ).fetchall()
+
+
 def _forecast_quality_items(conn: sqlite3.Connection) -> list[ForecastQualityItem]:
     return [
         _calibration_quality(conn),
@@ -596,6 +633,7 @@ def _forecast_fixture_rows(
     fixture_id: str | None,
 ) -> list[sqlite3.Row]:
     fixture_filter = "AND f.fixture_id = ?" if fixture_id else ""
+    score_filter = "" if fixture_id else "AND f.home_score IS NULL AND f.away_score IS NULL"
     params = (fixture_id,) if fixture_id else ()
     return conn.execute(
         f"""
@@ -615,8 +653,8 @@ def _forecast_fixture_rows(
         FROM fixture f
         LEFT JOIN team ht ON ht.team_id = f.home_id
         LEFT JOIN team at ON at.team_id = f.away_id
-        WHERE f.home_score IS NULL
-          AND f.away_score IS NULL
+        WHERE 1 = 1
+          {score_filter}
           {fixture_filter}
         ORDER BY COALESCE(f.kickoff_utc, f.kickoff_local), f.fixture_id
         """,
@@ -644,9 +682,33 @@ def _group_forecast_predictions(
     return grouped
 
 
+def _group_forecast_snapshots(
+    rows: list[sqlite3.Row],
+) -> dict[str, list[ForecastSnapshotView]]:
+    grouped: dict[str, list[ForecastSnapshotView]] = {}
+    for row in rows:
+        grouped.setdefault(str(row["fixture_id"]), []).append(
+            ForecastSnapshotView(
+                market=str(row["market"]),
+                selection=str(row["selection"]),
+                prob=float(row["prob"]),
+                signal_code=str(row["signal_code"]),
+                as_of_utc=str(row["as_of_utc"]),
+                settled=bool(row["settled"]),
+                result_label=(
+                    int(row["result_label"]) if row["result_label"] is not None else None
+                ),
+                correct=int(row["correct"]) if row["correct"] is not None else None,
+                settled_utc=str(row["settled_utc"]) if row["settled_utc"] else None,
+            )
+        )
+    return grouped
+
+
 def _forecast_fixture_from_row(
     row: sqlite3.Row,
     predictions: list[ForecastMarket],
+    snapshots: list[ForecastSnapshotView],
     *,
     display_tz: ZoneInfo,
     selected_date: str | None,
@@ -697,6 +759,7 @@ def _forecast_fixture_from_row(
             visible_markets[0].market_validation_status if visible_markets else "NOT_TESTED"
         ),
         ou_monotonicity_ok=monotonicity_ok,
+        snapshots=snapshots,
     )
 
 
@@ -904,6 +967,7 @@ def _quality_class(status: str) -> str:
 
 
 def _match_detail(fixture: ForecastFixture) -> str:
+    snapshots = _forecast_snapshot_section(fixture)
     rows = "".join(
         f"""
         <tr>
@@ -930,6 +994,7 @@ def _match_detail(fixture: ForecastFixture) -> str:
         </div>
         <span class="state {fixture.state}">{_e(fixture.state_label)}</span>
       </div>
+      {snapshots}
       <table class="forecast-table">
         <thead>
           <tr>
@@ -946,6 +1011,70 @@ def _match_detail(fixture: ForecastFixture) -> str:
       </p>
     </section>
     """
+
+
+def _forecast_snapshot_section(fixture: ForecastFixture) -> str:
+    if not fixture.snapshots:
+        return ""
+    rows = "".join(
+        f"""
+        <tr>
+          <td>{_e(snapshot.as_of_utc)}</td>
+          <td>{_e(snapshot.market)}</td>
+          <td>{_e(_snapshot_selection_label(snapshot))}</td>
+          <td>{_pct(snapshot.prob)}</td>
+          <td>{_e(snapshot.signal_code)}</td>
+          <td>{_e(_snapshot_result_label(snapshot))}</td>
+        </tr>
+        """
+        for snapshot in fixture.snapshots
+    )
+    return f"""
+    <section class="snapshot-panel" aria-label="Forecast congelado">
+      <h2>Forecast congelado</h2>
+      <p>Registro de lo que mostraba la GUI forecast-only antes del kickoff.</p>
+      <table class="forecast-table">
+        <thead>
+          <tr>
+            <th>As of UTC</th><th>Mercado</th><th>Seleccion</th>
+            <th>Probabilidad</th><th>Senal</th><th>Resultado</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+    """
+
+
+def _snapshot_selection_label(snapshot: ForecastSnapshotView) -> str:
+    market = ForecastMarket(
+        market=snapshot.market,
+        selection=snapshot.selection,
+        prob=snapshot.prob,
+        fair_odds=1.0 / snapshot.prob,
+        model_version="snapshot",
+        artifact_id=None,
+        market_validation_status="snapshot",
+    )
+    return _forecast_label(market)
+
+
+def _snapshot_result_label(snapshot: ForecastSnapshotView) -> str:
+    if not snapshot.settled:
+        return "Pendiente"
+    outcome = "Correcto" if snapshot.correct else "Incorrecto"
+    result = _settled_result_text(snapshot)
+    return f"{outcome} ({result})"
+
+
+def _settled_result_text(snapshot: ForecastSnapshotView) -> str:
+    if snapshot.result_label is None:
+        return "sin resultado"
+    if snapshot.market == "OU2.5":
+        return "over" if snapshot.result_label == 1 else "under"
+    if snapshot.market == "BTTS":
+        return "yes" if snapshot.result_label == 1 else "no"
+    return str(snapshot.result_label)
 
 
 def _forecast_market_chips(markets: list[ForecastMarket]) -> str:
@@ -1792,6 +1921,15 @@ body.forecast-page {
   border-radius: 10px;
   padding: 14px;
 }
+.snapshot-panel {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--blue);
+  border-radius: 8px;
+  background: #fbfcff;
+}
+.snapshot-panel h2 { font-size: 18px; margin: 0 0 4px; }
 .match-card { min-height: 260px; display: flex; flex-direction: column; gap: 12px; }
 .match-card.forecast { border-left: 6px solid var(--green); }
 .match-card.quiet { border-left: 6px solid var(--blue); }

@@ -14,6 +14,7 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 3 - Club OU2.5 benchmark | Coverage prep implemented; run in parallel and close before Phase 6 paper EV. |
 | 4 - Today forecast web | Forecast GUI deployed and verified with 6 future resolved fixtures and clean forecast quality gates. |
 | 4.5 - Forecast recommendation UX | Implemented and deployed: principal-by-family forecasts, still no odds or value language. |
+| 4.6 - Forecast snapshots | Implemented locally: freeze GUI principals, settle final scores, and report forecast metrics without odds language. |
 | 5-9 | Pending. |
 
 Open loops that close Phase 0/1 when remote execution is available:
@@ -269,6 +270,34 @@ Exit criteria:
 - Calibration, OU monotonicity, Elo coverage, and market-validation status are visible.
 - No page uses EV, Kelly, stake, value, or betting recommendation language.
 - Tests prove that an uncalibrated `1X2` row cannot be selected by the forecast UI.
+
+## Phase 4.6 - Forecast Snapshot And Settlement
+
+Objective: freeze what the forecast-only GUI showed before kickoff and settle it
+later against final scores.
+
+Technical work:
+
+- Add `forecast_snapshot` with the frozen fixture, prediction run, artifact, market,
+  selection, probability, signal code, model version, validation status, and
+  settlement fields.
+- Add `freeze-forecast-snapshot --date YYYY-MM-DD` and `--today`.
+- Use the same GUI selection rules: `OU2.5` for `GOLES` and `BTTS` yes/no. Do not
+  freeze `1X2`, double chance, exact score, `OU1.5`, or `OU3.5`.
+- Only freeze resolved, unstarted fixtures and keep snapshots idempotent by
+  `fixture_id + prediction_run_id + market`.
+- Add `settle-forecast-snapshots` for OU2.5 and BTTS final-score settlement.
+- Add `forecast-report` with totals, pending rows, accuracy, Brier, and log-loss by
+  market and signal code.
+- Show frozen forecast rows in `/match`, including settlement outcome when present.
+
+Exit criteria:
+
+- Freeze creates exactly OU2.5 and BTTS rows for forecastable fixtures.
+- Freeze skips started fixtures and is idempotent.
+- Settlement handles OU2.5 over/under and BTTS yes/no.
+- Report groups metrics by market and signal code.
+- No odds, EV, Kelly, stake, value, or betting recommendation language is introduced.
 
 ## Phase 5 - Serious Odds Layer
 

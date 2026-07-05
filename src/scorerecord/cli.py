@@ -34,6 +34,11 @@ from scorerecord.evaluate.settlement import settle_fixtures
 from scorerecord.evaluate.tune_decay import run_decay_sweep
 from scorerecord.evaluate.walk_forward import run_walk_forward
 from scorerecord.features.elo import rebuild_elo
+from scorerecord.forecast_snapshots import (
+    forecast_snapshot_report,
+    freeze_forecast_snapshot,
+    settle_forecast_snapshots,
+)
 from scorerecord.gui import serve_dashboard
 from scorerecord.health import db_health_checks, fixture_ops_summary, recent_failed_runs
 from scorerecord.ingest.football_data import (
@@ -141,6 +146,21 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma-separated over/under lines.",
     )
     predict_fixtures.add_argument("--exact-top-n", type=int, default=5)
+    freeze_forecast = subparsers.add_parser(
+        "freeze-forecast-snapshot",
+        help="Freeze forecast-only GUI principals before kickoff.",
+    )
+    freeze_date = freeze_forecast.add_mutually_exclusive_group(required=True)
+    freeze_date.add_argument("--date", help="Forecast date to freeze, YYYY-MM-DD.")
+    freeze_date.add_argument("--today", action="store_true", help="Freeze today's forecast date.")
+    subparsers.add_parser(
+        "settle-forecast-snapshots",
+        help="Settle frozen forecast-only snapshots against final scores.",
+    )
+    subparsers.add_parser(
+        "forecast-report",
+        help="Report frozen forecast snapshot settlement metrics.",
+    )
     subparsers.add_parser("model-manifest", help="Print the frozen model manifest.")
     settle = subparsers.add_parser("settle-fixtures", help="Settle finished fixtures.")
     settle.add_argument("--as-of", help="Settlement timestamp override.")
@@ -583,6 +603,30 @@ def main(argv: list[str] | None = None) -> int:
             print(summary.as_row())
             return 0
 
+        if args.command == "freeze-forecast-snapshot":
+            target_date = args.date
+            if target_date is not None:
+                date.fromisoformat(target_date)
+            summary = freeze_forecast_snapshot(
+                conn,
+                target_date=target_date,
+                today=args.today,
+                cwd=Path.cwd(),
+            )
+            print(summary.as_row())
+            return 0
+
+        if args.command == "settle-forecast-snapshots":
+            summary = settle_forecast_snapshots(conn, cwd=Path.cwd())
+            print(summary.as_row())
+            return 0
+
+        if args.command == "forecast-report":
+            report = forecast_snapshot_report(conn)
+            for row in report.as_rows():
+                print(row)
+            return 0
+
         if args.command == "model-manifest":
             print(json.dumps(build_model_manifest(conn).as_dict(), indent=2, sort_keys=True))
             return 0
@@ -808,6 +852,7 @@ def main(argv: list[str] | None = None) -> int:
                 "edge_analysis",
                 "model_artifact",
                 "prediction",
+                "forecast_snapshot",
                 "prediction_result",
                 "team_rating",
                 "team_rating_history",

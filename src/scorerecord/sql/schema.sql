@@ -204,6 +204,30 @@ CREATE TABLE IF NOT EXISTS prediction (
   PRIMARY KEY (fixture_id, model, market, selection, generated_utc)
 );
 
+CREATE TABLE IF NOT EXISTS forecast_snapshot (
+  snapshot_id INTEGER PRIMARY KEY,
+  fixture_id TEXT NOT NULL REFERENCES fixture(fixture_id),
+  prediction_run_id INTEGER NOT NULL REFERENCES ingest_run(run_id),
+  artifact_id TEXT,
+  as_of_utc TEXT NOT NULL,
+  market TEXT NOT NULL,
+  selection TEXT NOT NULL,
+  prob REAL NOT NULL,
+  fair_odds REAL NOT NULL,
+  signal_code TEXT NOT NULL,
+  model_version TEXT NOT NULL,
+  market_validation_status TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'forecast_gui',
+  settled INTEGER NOT NULL DEFAULT 0,
+  result_label INTEGER,
+  correct INTEGER,
+  settled_utc TEXT,
+  UNIQUE(fixture_id, prediction_run_id, market)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_snapshot_fixture
+  ON forecast_snapshot(fixture_id, settled);
+
 CREATE TABLE IF NOT EXISTS prediction_result (
   result_id INTEGER PRIMARY KEY,
   settlement_run_id INTEGER NOT NULL REFERENCES ingest_run(run_id),

@@ -8,12 +8,13 @@ from pathlib import Path
 from scorerecord.aliases import normalize_key
 from scorerecord.time_utils import format_utc, parse_kickoff_utc
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 _MIGRATION_NAMES = {
     1: "initial_schema",
     2: "compatibility_columns_and_alias_keys",
     3: "kickoff_utc_model_artifact_and_derived_clv",
     4: "historical_odds_metadata",
+    5: "forecast_snapshot",
 }
 
 
@@ -59,6 +60,7 @@ def table_count(conn: sqlite3.Connection, table_name: str) -> int:
         "model_artifact",
         "player_prop",
         "prediction",
+        "forecast_snapshot",
         "prediction_result",
         "recommendation",
         "recommendation_result",
@@ -149,6 +151,7 @@ def _run_lightweight_migrations(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "recommendation_result", "clv_fair_ev", "REAL")
     _add_column_if_missing(conn, "recommendation_result", "closing_snapshot_at", "TEXT")
     _add_column_if_missing(conn, "historical_odds", "metadata_json", "TEXT")
+    _ensure_forecast_snapshot_table(conn)
 
     for row in conn.execute("SELECT team_id, canonical FROM team WHERE canonical_key IS NULL"):
         conn.execute(
@@ -164,6 +167,39 @@ def _run_lightweight_migrations(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_team_canonical_key ON team(canonical_key)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_team_alias_key ON team_alias(alias_key)")
     _backfill_fixture_kickoff_utc(conn)
+
+
+def _ensure_forecast_snapshot_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS forecast_snapshot (
+          snapshot_id INTEGER PRIMARY KEY,
+          fixture_id TEXT NOT NULL REFERENCES fixture(fixture_id),
+          prediction_run_id INTEGER NOT NULL REFERENCES ingest_run(run_id),
+          artifact_id TEXT,
+          as_of_utc TEXT NOT NULL,
+          market TEXT NOT NULL,
+          selection TEXT NOT NULL,
+          prob REAL NOT NULL,
+          fair_odds REAL NOT NULL,
+          signal_code TEXT NOT NULL,
+          model_version TEXT NOT NULL,
+          market_validation_status TEXT NOT NULL,
+          source TEXT NOT NULL DEFAULT 'forecast_gui',
+          settled INTEGER NOT NULL DEFAULT 0,
+          result_label INTEGER,
+          correct INTEGER,
+          settled_utc TEXT,
+          UNIQUE(fixture_id, prediction_run_id, market)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_forecast_snapshot_fixture
+          ON forecast_snapshot(fixture_id, settled)
+        """
+    )
 
 
 def migrate_db(conn: sqlite3.Connection) -> int:
