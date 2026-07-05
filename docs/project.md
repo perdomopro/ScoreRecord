@@ -655,6 +655,7 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Kept the forecast selector restricted to calibrated goal markets (`OU1.5`, `OU2.5`, `OU3.5`, `BTTS`). Added a regression test that inserts a synthetic `1X2` row with 99% probability and verifies it cannot become a principal forecast or appear on `/today`.
 - Updated the roadmap to insert Phase 4.5 before odds/paper work and to require the Phase 3 OU2.5 benchmark readout before Phase 6 paper EV is shown.
 - Homeserver validation after deploy: focused GUI/World Cup/fixture tests passed `18 passed`; full suite passed `89 passed`; targeted `ruff` over touched Python files passed; GUI smoke passed for `/healthz`, `/today?date=2026-07-05`, and `/match/wc2026-match-091`.
+- Homeserver validation after the `OU2.5` principal refinement: focused tests passed `18 passed`; full suite passed `89 passed`; targeted `ruff` passed; GUI smoke passed; direct forecast-data inspection confirmed `GOLES` primaries use `OU2.5` for the resolved July 5 fixtures.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
