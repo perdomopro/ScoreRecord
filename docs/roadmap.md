@@ -14,7 +14,7 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 3 - Club OU2.5 benchmark | Coverage prep implemented; run in parallel and close before Phase 6 paper EV. |
 | 4 - Today forecast web | Forecast GUI deployed and verified with 6 future resolved fixtures and clean forecast quality gates. |
 | 4.5 - Forecast recommendation UX | Implemented and deployed: principal-by-family forecasts, still no odds or value language. |
-| 4.6 - Forecast snapshots | Implemented and migrated to schema 5; remote post-deploy tests queued by usage limit. |
+| 4.6 - Forecast snapshots | Hardened locally: shared policy module, run-scoped quality, schema 6 quality metadata; remote gate pending. |
 | 5-9 | Pending. |
 
 Open loops that close Phase 0/1 when remote execution is available:
@@ -281,6 +281,9 @@ Technical work:
 - Add `forecast_snapshot` with the frozen fixture, prediction run, artifact, market,
   selection, probability, signal code, model version, validation status, and
   settlement fields.
+- Keep selection and signal policy in shared `forecast_policy.py`, not in the GUI.
+- Scope quality-panel reads to the displayed `prediction_run_id`.
+- Freeze quality context in `quality_status_json`.
 - Add `freeze-forecast-snapshot --date YYYY-MM-DD` and `--today`.
 - Use the same GUI selection rules: `OU2.5` for `GOLES` and `BTTS` yes/no. Do not
   freeze `1X2`, double chance, exact score, `OU1.5`, or `OU3.5`.
@@ -298,6 +301,8 @@ Exit criteria:
 - Settlement handles OU2.5 over/under and BTTS yes/no.
 - Report groups metrics by market and signal code.
 - No odds, EV, Kelly, stake, value, or betting recommendation language is introduced.
+- Remote pytest, ruff, and GUI smoke must pass before treating this phase as fully
+  closed.
 
 ## Phase 5 - Serious Odds Layer
 

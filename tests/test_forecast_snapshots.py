@@ -1,3 +1,4 @@
+import json
 import math
 import sqlite3
 from datetime import UTC, datetime
@@ -103,7 +104,11 @@ def test_freeze_creates_ou25_and_btts_snapshots_without_1x2() -> None:
     assert summary.candidates == 2
     assert summary.inserted == 2
     rows = conn.execute(
-        "SELECT market, selection, signal_code FROM forecast_snapshot ORDER BY market"
+        """
+        SELECT market, selection, signal_code, quality_status_json
+        FROM forecast_snapshot
+        ORDER BY market
+        """
     ).fetchall()
     assert [(row["market"], row["selection"]) for row in rows] == [
         ("BTTS", "yes"),
@@ -111,6 +116,9 @@ def test_freeze_creates_ou25_and_btts_snapshots_without_1x2() -> None:
     ]
     assert {row["market"] for row in rows} == {"BTTS", "OU2.5"}
     assert {row["signal_code"] for row in rows} == {"NO_SIGNAL", "MODERATE"}
+    quality = json.loads(rows[0]["quality_status_json"])
+    assert quality["market_validation"] == "NOT_TESTED"
+    assert quality["calibration"] == "WARN"
 
 
 def test_freeze_ignores_started_fixtures_and_is_idempotent() -> None:

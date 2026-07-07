@@ -656,6 +656,9 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added the forecast signal layer for binary goal markets: `NO_SIGNAL`, `LEAN`, `MODERATE`, and `STRONG` are derived from distance to 50%, while the actual side and probability remain visible as diagnostics.
 - Added a compact model quality panel sourced from latest `data_quality` rows for calibration sanity, OU monotonicity, fixture Elo coverage, and market-validation status.
 - Added `forecast_snapshot` plus `freeze-forecast-snapshot`, `settle-forecast-snapshots`, and `forecast-report` to freeze the GUI's OU2.5/BTTS principals before kickoff, settle them against final scores, and report accuracy, Brier, and log-loss by market and signal code.
+- Added `forecast_policy.py` so GUI rendering and snapshot freezing share the same OU2.5/BTTS selection and signal-strength policy without `forecast_snapshots.py` depending on the web module.
+- Changed the forecast quality panel to read `data_quality` scoped to the displayed `prediction_run_id`, preventing newer unrelated quality rows from changing the status of an older forecast run.
+- Added `quality_status_json` to `forecast_snapshot` under schema version `6`, freezing calibration, OU monotonicity, Elo coverage, and market-validation status with each snapshot.
 - Kept the forecast selector restricted to calibrated goal markets (`OU1.5`, `OU2.5`, `OU3.5`, `BTTS`). Added a regression test that inserts a synthetic `1X2` row with 99% probability and verifies it cannot become a principal forecast or appear on `/today`.
 - Updated the roadmap to insert Phase 4.5 before odds/paper work and to require the Phase 3 OU2.5 benchmark readout before Phase 6 paper EV is shown.
 - Local validation for forecast snapshots: `compileall`, manual focused tests, `git diff --check`, and a CLI smoke over a temporary DB passed for freeze, settle, and report.

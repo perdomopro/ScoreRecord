@@ -85,11 +85,11 @@ def _insert_forecast_fixture(conn: sqlite3.Connection) -> int:
 def _insert_forecast_quality(
     conn: sqlite3.Connection,
     *,
+    run_id: int,
     calibration_value: float,
     ou_violations: int,
     missing_elo_slots: int,
 ) -> None:
-    run_id = _run(conn, "predict-fixtures")
     for market in ["OU1.5", "OU2.5", "OU3.5", "BTTS"]:
         conn.execute(
             """
@@ -412,9 +412,10 @@ def test_forecast_signal_strength_marks_ou25_moderate() -> None:
 
 def test_forecast_quality_panel_renders_ok_and_warn() -> None:
     conn = _conn()
-    _insert_forecast_fixture(conn)
+    run_id = _insert_forecast_fixture(conn)
     _insert_forecast_quality(
         conn,
+        run_id=run_id,
         calibration_value=1.0,
         ou_violations=0,
         missing_elo_slots=0,
@@ -437,6 +438,7 @@ def test_forecast_quality_panel_renders_ok_and_warn() -> None:
 
     _insert_forecast_quality(
         conn,
+        run_id=run_id,
         calibration_value=0.0,
         ou_violations=2,
         missing_elo_slots=1,
@@ -453,6 +455,37 @@ def test_forecast_quality_panel_renders_ok_and_warn() -> None:
     assert "0/4 checks" in warn_html
     assert "2 violations" in warn_html
     assert "1 missing rating slots" in warn_html
+
+
+def test_forecast_quality_panel_ignores_unrelated_later_quality_rows() -> None:
+    conn = _conn()
+    run_id = _insert_forecast_fixture(conn)
+    _insert_forecast_quality(
+        conn,
+        run_id=run_id,
+        calibration_value=1.0,
+        ou_violations=0,
+        missing_elo_slots=0,
+    )
+    unrelated_run_id = _run(conn, "predict-fixtures")
+    _insert_forecast_quality(
+        conn,
+        run_id=unrelated_run_id,
+        calibration_value=0.0,
+        ou_violations=3,
+        missing_elo_slots=4,
+    )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    html = render_today_forecast(data, refresh_seconds=60)
+
+    assert html.count("<strong>OK</strong>") >= 3
+    assert "3 violations" not in html
+    assert "4 missing rating slots" not in html
 
 
 def test_forecast_selector_ignores_uncalibrated_1x2_rows() -> None:

@@ -15,6 +15,9 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from scorerecord.db import connect, init_db
+from scorerecord.forecast_policy import FORECAST_MARKETS, select_primary_forecasts
+from scorerecord.forecast_policy import signal_strength as forecast_signal_strength
+from scorerecord.forecast_quality import ForecastQualityItem, forecast_quality_items
 from scorerecord.time_utils import parse_kickoff_utc
 
 DEFAULT_HOST = "127.0.0.1"
@@ -25,11 +28,6 @@ DEFAULT_MIN_PROB = 0.15
 DEFAULT_MAX_ODDS_AGE_MINUTES = 180.0
 DEFAULT_MIN_BOOKS = 2
 DEFAULT_DISPLAY_TZ = "America/Mexico_City"
-FORECAST_MARKETS = ("OU1.5", "OU2.5", "OU3.5", "BTTS")
-SIGNAL_NO_SIGNAL = "NO_SIGNAL"
-SIGNAL_LEAN = "LEAN"
-SIGNAL_MODERATE = "MODERATE"
-SIGNAL_STRONG = "STRONG"
 
 
 @dataclass(frozen=True)
@@ -69,20 +67,6 @@ class ForecastSnapshotView:
     result_label: int | None
     correct: int | None
     settled_utc: str | None
-
-
-@dataclass(frozen=True)
-class SignalStrength:
-    code: str
-    label: str
-    css_class: str
-
-
-@dataclass(frozen=True)
-class ForecastQualityItem:
-    label: str
-    status: str
-    detail: str
 
 
 @dataclass(frozen=True)
@@ -243,7 +227,7 @@ def load_forecast_data(
     latest_run_id = _latest_prediction_run_id(conn)
     prediction_rows = _forecast_prediction_rows(conn, latest_run_id)
     predictions_by_fixture = _group_forecast_predictions(prediction_rows)
-    quality_items = _forecast_quality_items(conn)
+    quality_items = forecast_quality_items(conn, latest_run_id)
     rows = _forecast_fixture_rows(conn, fixture_id=fixture_id)
     snapshots_by_fixture = _group_forecast_snapshots(
         _forecast_snapshot_rows(conn, [str(row["fixture_id"]) for row in rows])
@@ -567,66 +551,6 @@ def _forecast_snapshot_rows(
     ).fetchall()
 
 
-def _forecast_quality_items(conn: sqlite3.Connection) -> list[ForecastQualityItem]:
-    return [
-        _calibration_quality(conn),
-        _ou_monotonicity_quality(conn),
-        _elo_coverage_quality(conn),
-    ]
-
-
-def _calibration_quality(conn: sqlite3.Connection) -> ForecastQualityItem:
-    rows = [
-        _latest_quality_metric(
-            conn,
-            "calibrator_sanity",
-            f"{market}_mean_calibration_improved",
-        )
-        for market in FORECAST_MARKETS
-    ]
-    ok_count = sum(1 for row in rows if row is not None and float(row["metric_value"] or 0) >= 1)
-    status = "OK" if ok_count == len(FORECAST_MARKETS) else "WARN"
-    return ForecastQualityItem("Calibration", status, f"{ok_count}/{len(FORECAST_MARKETS)} checks")
-
-
-def _ou_monotonicity_quality(conn: sqlite3.Connection) -> ForecastQualityItem:
-    row = _latest_quality_metric(
-        conn,
-        "prediction_sanity",
-        "ou_monotonicity_violations",
-    )
-    violations = int(float(row["metric_value"] or 0)) if row is not None else -1
-    status = "OK" if violations == 0 else "WARN"
-    detail = "missing" if violations < 0 else f"{violations} violations"
-    return ForecastQualityItem("OU monotonicity", status, detail)
-
-
-def _elo_coverage_quality(conn: sqlite3.Connection) -> ForecastQualityItem:
-    row = _latest_quality_metric(conn, "fixture_elo", "missing_team_rating_slots")
-    missing = int(float(row["metric_value"] or 0)) if row is not None else -1
-    status = "OK" if missing == 0 else "WARN"
-    detail = "missing" if missing < 0 else f"{missing} missing rating slots"
-    return ForecastQualityItem("Elo coverage", status, detail)
-
-
-def _latest_quality_metric(
-    conn: sqlite3.Connection,
-    check_name: str,
-    metric_name: str,
-) -> sqlite3.Row | None:
-    return conn.execute(
-        """
-        SELECT run_id, metric_value, details_json
-        FROM data_quality
-        WHERE check_name = ?
-          AND metric_name = ?
-        ORDER BY quality_id DESC
-        LIMIT 1
-        """,
-        (check_name, metric_name),
-    ).fetchone()
-
-
 def _forecast_fixture_rows(
     conn: sqlite3.Connection,
     *,
@@ -726,7 +650,7 @@ def _forecast_fixture_from_row(
     is_started = bool(kickoff_utc and now_utc >= kickoff_utc)
     monotonicity_ok = _ou_monotonicity_ok(predictions)
     visible_markets = predictions if is_resolved and monotonicity_ok else []
-    primary_markets = [] if is_started else _select_primary_forecasts(visible_markets)
+    primary_markets = [] if is_started else select_primary_forecasts(visible_markets)
     primary = primary_markets[0] if primary_markets else None
     state, state_label = _forecast_state(
         is_resolved=is_resolved,
@@ -772,22 +696,6 @@ def _ou_monotonicity_ok(markets: list[ForecastMarket]) -> bool:
     if not {"OU1.5", "OU2.5", "OU3.5"}.issubset(over):
         return True
     return over["OU1.5"] + 1e-9 >= over["OU2.5"] >= over["OU3.5"] - 1e-9
-
-
-def _select_primary_forecast(markets: list[ForecastMarket]) -> ForecastMarket | None:
-    if not markets:
-        return None
-    return max(markets, key=lambda market: (market.prob, _market_rank(market.market)))
-
-
-def _select_primary_forecasts(markets: list[ForecastMarket]) -> list[ForecastMarket]:
-    goal_primary = _select_primary_forecast(
-        [market for market in markets if market.market == "OU2.5"]
-    )
-    btts_primary = _select_primary_forecast(
-        [market for market in markets if market.market == "BTTS"]
-    )
-    return [market for market in [goal_primary, btts_primary] if market is not None]
 
 
 def _forecast_state(
@@ -923,7 +831,7 @@ def _primary_forecasts_block(fixture: ForecastFixture) -> str:
 
 
 def _primary_forecast_item(market: ForecastMarket) -> str:
-    signal = _signal_strength(market.prob)
+    signal = forecast_signal_strength(market.prob)
     return f"""
         <div class="primary-pick {signal.css_class}" data-signal="{_e(signal.code)}">
           <span>Principal {_e(_forecast_family_label(market))}</span>
@@ -946,19 +854,8 @@ def _forecast_diagnostic_label(market: ForecastMarket) -> str:
     return f"{market.market}: {market.selection} {_pct(market.prob)}"
 
 
-def _signal_strength(prob: float) -> SignalStrength:
-    delta = abs(prob - 0.50)
-    if delta < 0.03:
-        return SignalStrength(SIGNAL_NO_SIGNAL, "Sin senal clara", "signal-no-signal")
-    if delta < 0.08:
-        return SignalStrength(SIGNAL_LEAN, "Tendencia leve", "signal-lean")
-    if delta < 0.15:
-        return SignalStrength(SIGNAL_MODERATE, "Tendencia moderada", "signal-moderate")
-    return SignalStrength(SIGNAL_STRONG, "Senal fuerte", "signal-strong")
-
-
 def _signal_label(prob: float) -> str:
-    signal = _signal_strength(prob)
+    signal = forecast_signal_strength(prob)
     return f"{signal.label} ({signal.code})"
 
 
@@ -1119,11 +1016,6 @@ def _forecast_family_label(market: ForecastMarket) -> str:
 def _fixture_context(fixture: ForecastFixture) -> str:
     parts = [part for part in [fixture.stage, fixture.group_name, fixture.ground] if part]
     return " - ".join(str(part) for part in parts) or "Fixture mundialista"
-
-
-def _market_rank(market: str) -> int:
-    order = {market_name: index for index, market_name in enumerate(FORECAST_MARKETS)}
-    return -order.get(market, 999)
 
 
 def _short_id(value: str | None) -> str | None:

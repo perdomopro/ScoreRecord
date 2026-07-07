@@ -7,10 +7,15 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-from scorerecord.gui import _signal_strength, load_forecast_data
+from scorerecord.forecast_policy import FORECAST_MARKETS, select_primary_forecasts
+from scorerecord.forecast_policy import signal_strength as forecast_signal_strength
+from scorerecord.forecast_quality import forecast_quality_status_json
 from scorerecord.runs import ingest_run
+from scorerecord.time_utils import parse_kickoff_utc
 
+DEFAULT_DISPLAY_TZ = "America/Mexico_City"
 EPS = 1e-6
 
 
@@ -77,6 +82,18 @@ class ForecastSnapshotReport:
         return rows
 
 
+@dataclass(frozen=True)
+class SnapshotMarket:
+    fixture_id: str
+    artifact_id: str | None
+    market: str
+    selection: str
+    prob: float
+    fair_odds: float
+    model_version: str
+    market_validation_status: str
+
+
 def freeze_forecast_snapshot(
     conn: sqlite3.Connection,
     *,
@@ -86,35 +103,40 @@ def freeze_forecast_snapshot(
     cwd: Path | None = None,
 ) -> ForecastSnapshotFreezeSummary:
     as_of = as_of_utc or datetime.now(UTC)
-    selected_date = None if today else target_date or as_of.date().isoformat()
-    data = load_forecast_data(conn, target_date=selected_date, now_utc=as_of)
-    if data.latest_run_id is None:
-        return ForecastSnapshotFreezeSummary(data.target_date, None, 0, 0)
+    selected_date = _target_date(target_date=target_date, today=today, as_of=as_of)
+    prediction_run_id = _latest_prediction_run_id(conn)
+    if prediction_run_id is None:
+        return ForecastSnapshotFreezeSummary(selected_date, None, 0, 0)
 
-    candidates = [
-        (fixture, market)
-        for fixture in data.fixtures
-        if fixture.is_resolved and not fixture.is_started
-        for market in fixture.primary_markets
-        if market.market in {"OU2.5", "BTTS"}
-    ]
+    candidates = _snapshot_candidates(
+        conn,
+        prediction_run_id=prediction_run_id,
+        target_date=selected_date,
+        as_of=as_of,
+    )
     inserted = 0
     as_of_text = as_of.isoformat(timespec="seconds")
     with ingest_run(conn, "freeze-forecast-snapshot", source="forecast_gui", cwd=cwd):
-        for fixture, market in candidates:
-            signal = _signal_strength(market.prob)
+        for market in candidates:
+            signal = forecast_signal_strength(market.prob)
+            quality_status_json = forecast_quality_status_json(
+                conn,
+                prediction_run_id,
+                market.market_validation_status,
+            )
             cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO forecast_snapshot (
                   fixture_id, prediction_run_id, artifact_id, as_of_utc,
                   market, selection, prob, fair_odds, signal_code,
-                  model_version, market_validation_status, source
+                  model_version, market_validation_status, quality_status_json,
+                  source
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'forecast_gui')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'forecast_gui')
                 """,
                 (
-                    fixture.fixture_id,
-                    data.latest_run_id,
+                    market.fixture_id,
+                    prediction_run_id,
                     market.artifact_id,
                     as_of_text,
                     market.market,
@@ -124,16 +146,123 @@ def freeze_forecast_snapshot(
                     signal.code,
                     market.model_version,
                     market.market_validation_status,
+                    quality_status_json,
                 ),
             )
             inserted += max(cursor.rowcount, 0)
     conn.commit()
     return ForecastSnapshotFreezeSummary(
-        data.target_date,
-        data.latest_run_id,
+        selected_date,
+        prediction_run_id,
         len(candidates),
         inserted,
     )
+
+
+def _target_date(*, target_date: str | None, today: bool, as_of: datetime) -> str:
+    if target_date and not today:
+        return target_date
+    local = as_of.astimezone(ZoneInfo(DEFAULT_DISPLAY_TZ))
+    return local.date().isoformat()
+
+
+def _latest_prediction_run_id(conn: sqlite3.Connection) -> int | None:
+    row = conn.execute(
+        """
+        SELECT ir.run_id
+        FROM ingest_run ir
+        JOIN prediction p ON p.run_id = ir.run_id
+        WHERE ir.job_name = 'predict-fixtures'
+          AND ir.status = 'succeeded'
+        GROUP BY ir.run_id
+        ORDER BY ir.run_id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    if row:
+        return int(row["run_id"])
+    fallback = conn.execute(
+        "SELECT MAX(run_id) AS run_id FROM prediction WHERE run_id IS NOT NULL"
+    ).fetchone()
+    return int(fallback["run_id"]) if fallback and fallback["run_id"] is not None else None
+
+
+def _snapshot_candidates(
+    conn: sqlite3.Connection,
+    *,
+    prediction_run_id: int,
+    target_date: str,
+    as_of: datetime,
+) -> list[SnapshotMarket]:
+    rows = _snapshot_prediction_rows(conn, prediction_run_id)
+    grouped: dict[str, list[SnapshotMarket]] = {}
+    fixture_dates: dict[str, str | None] = {}
+    fixture_started: dict[str, bool] = {}
+    for row in rows:
+        kickoff = parse_kickoff_utc(
+            kickoff_utc=row["kickoff_utc"],
+            kickoff_local=row["kickoff_local"],
+        )
+        display_date = (
+            kickoff.astimezone(ZoneInfo(DEFAULT_DISPLAY_TZ)).date().isoformat()
+            if kickoff
+            else None
+        )
+        fixture_id = str(row["fixture_id"])
+        fixture_dates[fixture_id] = display_date
+        fixture_started[fixture_id] = bool(kickoff and as_of >= kickoff)
+        grouped.setdefault(fixture_id, []).append(
+            SnapshotMarket(
+                fixture_id=fixture_id,
+                artifact_id=row["artifact_id"],
+                market=str(row["market"]),
+                selection=str(row["selection"]),
+                prob=float(row["prob"]),
+                fair_odds=float(row["fair_odds"]),
+                model_version=str(row["model_version"]),
+                market_validation_status=str(row["market_validation_status"] or "NOT_TESTED"),
+            )
+        )
+    candidates: list[SnapshotMarket] = []
+    for fixture_id, markets in grouped.items():
+        if fixture_dates.get(fixture_id) != target_date:
+            continue
+        if fixture_started.get(fixture_id):
+            continue
+        candidates.extend(select_primary_forecasts(markets))
+    return candidates
+
+
+def _snapshot_prediction_rows(
+    conn: sqlite3.Connection,
+    prediction_run_id: int,
+) -> list[sqlite3.Row]:
+    placeholders = ",".join("?" for _ in FORECAST_MARKETS)
+    return conn.execute(
+        f"""
+        SELECT f.fixture_id,
+               f.kickoff_utc,
+               f.kickoff_local,
+               p.artifact_id,
+               p.market,
+               p.selection,
+               p.prob,
+               p.fair_odds,
+               p.model_version,
+               COALESCE(ma.market_validation_status, 'NOT_TESTED') AS market_validation_status
+        FROM fixture f
+        JOIN prediction p ON p.fixture_id = f.fixture_id
+        LEFT JOIN model_artifact ma ON ma.artifact_id = p.artifact_id
+        WHERE p.run_id = ?
+          AND p.market IN ({placeholders})
+          AND f.home_id IS NOT NULL
+          AND f.away_id IS NOT NULL
+          AND f.home_score IS NULL
+          AND f.away_score IS NULL
+        ORDER BY f.fixture_id, p.market, p.selection
+        """,
+        (prediction_run_id, *FORECAST_MARKETS),
+    ).fetchall()
 
 
 def settle_forecast_snapshots(

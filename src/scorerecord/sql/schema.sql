@@ -217,6 +217,7 @@ CREATE TABLE IF NOT EXISTS forecast_snapshot (
   signal_code TEXT NOT NULL,
   model_version TEXT NOT NULL,
   market_validation_status TEXT NOT NULL,
+  quality_status_json TEXT,
   source TEXT NOT NULL DEFAULT 'forecast_gui',
   settled INTEGER NOT NULL DEFAULT 0,
   result_label INTEGER,

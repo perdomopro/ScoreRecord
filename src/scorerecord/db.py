@@ -8,13 +8,14 @@ from pathlib import Path
 from scorerecord.aliases import normalize_key
 from scorerecord.time_utils import format_utc, parse_kickoff_utc
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 _MIGRATION_NAMES = {
     1: "initial_schema",
     2: "compatibility_columns_and_alias_keys",
     3: "kickoff_utc_model_artifact_and_derived_clv",
     4: "historical_odds_metadata",
     5: "forecast_snapshot",
+    6: "forecast_snapshot_quality_status",
 }
 
 
@@ -152,6 +153,7 @@ def _run_lightweight_migrations(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "recommendation_result", "closing_snapshot_at", "TEXT")
     _add_column_if_missing(conn, "historical_odds", "metadata_json", "TEXT")
     _ensure_forecast_snapshot_table(conn)
+    _add_column_if_missing(conn, "forecast_snapshot", "quality_status_json", "TEXT")
 
     for row in conn.execute("SELECT team_id, canonical FROM team WHERE canonical_key IS NULL"):
         conn.execute(
@@ -185,6 +187,7 @@ def _ensure_forecast_snapshot_table(conn: sqlite3.Connection) -> None:
           signal_code TEXT NOT NULL,
           model_version TEXT NOT NULL,
           market_validation_status TEXT NOT NULL,
+          quality_status_json TEXT,
           source TEXT NOT NULL DEFAULT 'forecast_gui',
           settled INTEGER NOT NULL DEFAULT 0,
           result_label INTEGER,
