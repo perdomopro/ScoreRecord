@@ -654,6 +654,8 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Coverage reports `NO_ODDS`, `INCOMPLETE_MARKET`, `STALE_ODDS`, and `COVERAGE_OK`, requiring complete same-bookmaker two-way snapshots before a market is considered complete.
 - Added `odds-coverage-report --fixture-id <id>` and `--date YYYY-MM-DD` for CLI inspection of fixture coverage.
 - Added `/match` coverage cards with latest capture time, age, bookmaker count, complete-bookmaker count, and best observed side odds.
+- Hardened `OU2.5` coverage so rows require `line = 2.5`; legacy `line IS NULL` rows no longer count as valid OU2.5 coverage.
+- Clarified the GUI wording: best odds are "mejor cuota observada por lado" and may come from different bookmakers, so they are not a de-vig-ready market pair.
 - Kept Phase 5.1 informational only: no EV, no de-vig probability, no paper candidate, no stake sizing, no Kelly, and no betting recommendation.
 - Closing odds are not derived yet; this phase shows captured odds coverage only.
 - Local validation: `compileall`, manual focused tests for `tests/test_odds_coverage.py` and `tests/test_gui.py`, CLI smoke for `odds-coverage-report`, and `git diff --check` passed.

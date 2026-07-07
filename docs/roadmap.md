@@ -315,8 +315,9 @@ Technical work:
 - Keep `odds_snapshots` immutable.
 - Add `/match` odds coverage for `OU2.5` and `BTTS` only.
 - Report `NO_ODDS`, `INCOMPLETE_MARKET`, `STALE_ODDS`, and `COVERAGE_OK`.
+- Require `line = 2.5` for `OU2.5`; legacy NULL-line rows do not count.
 - Show latest capture time, age, bookmaker count, complete-bookmaker count, and best
-  observed side odds.
+  observed side odds. Label these as observed by side, not as a de-vig market pair.
 - Add `external_event_map`.
 - Derive horizons after capture: T-24H, T-6H, T-1H, T-15M, close.
 - Require complete same-bookmaker two-way snapshots before de-vigging totals.

@@ -968,6 +968,7 @@ def _odds_coverage_section(fixture: ForecastFixture) -> str:
     <section class="odds-coverage-panel" aria-label="Cobertura de cuotas">
       <h2>Cobertura de cuotas</h2>
       <p>Cobertura informativa. No calcula EV ni recomendación de apuesta.</p>
+      <p>Mejor cuota observada por lado; puede venir de casas distintas.</p>
       <div class="odds-coverage-grid">{cards}</div>
     </section>
     """

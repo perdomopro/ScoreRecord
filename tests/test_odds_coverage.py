@@ -38,8 +38,9 @@ def _insert_snapshot(
     odds: float,
     bookmaker: str = "BookA",
     snapshot_at: str = "2026-07-05T18:30:00+00:00",
+    line_override: float | None = 2.5,
 ) -> None:
-    line = 2.5 if market == "OU2.5" else None
+    line = line_override if market == "OU2.5" else None
     conn.execute(
         """
         INSERT INTO odds_snapshots (
@@ -99,6 +100,30 @@ def test_ou25_over_under_from_same_bookmaker_returns_coverage_ok() -> None:
         ("over", 1.90),
         ("under", 1.95),
     ]
+
+
+def test_ou25_null_line_rows_do_not_count_as_coverage_ok() -> None:
+    conn = _conn()
+    _insert_snapshot(
+        conn,
+        market="OU2.5",
+        selection="over",
+        odds=1.90,
+        line_override=None,
+    )
+    _insert_snapshot(
+        conn,
+        market="OU2.5",
+        selection="under",
+        odds=1.95,
+        line_override=None,
+    )
+
+    ou25 = _by_market(conn)["OU2.5"]
+
+    assert ou25.status == STATUS_NO_ODDS
+    assert ou25.bookmaker_count == 0
+    assert ou25.complete_bookmaker_count == 0
 
 
 def test_btts_yes_no_from_same_bookmaker_returns_coverage_ok() -> None:

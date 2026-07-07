@@ -564,6 +564,7 @@ def test_forecast_match_renders_goal_market_detail() -> None:
     assert "Ambos anotan: si" in html
     assert "Cobertura de cuotas" in html
     assert "No calcula EV ni recomendación de apuesta." in html
+    assert "Mejor cuota observada por lado" in html
     assert "NO_ODDS" in html
 
 

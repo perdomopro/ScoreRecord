@@ -144,7 +144,7 @@ def _odds_rows(
         params.append(kickoff_utc.isoformat(timespec="seconds"))
     line_filter = ""
     if market == "OU2.5":
-        line_filter = "AND (line = 2.5 OR line IS NULL)"
+        line_filter = "AND line = 2.5"
     return conn.execute(
         f"""
         SELECT fixture_id, bookmaker, market, selection, line, decimal_odds, snapshot_at
