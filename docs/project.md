@@ -658,6 +658,7 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Added a `/match` matrix titled `Cobertura por horizontes` with a disclaimer that this is not official closing odds and does not calculate EV or recommendations.
 - Kept Phase 5.2 informational only: no de-vig probability, no EV, no edge, no paper candidate, no stake sizing, no Kelly, no value label, and no betting recommendation.
 - Local validation: `compileall`, manual focused tests for `tests/test_odds_horizons.py`, `tests/test_odds_coverage.py`, and `tests/test_gui.py`, CLI smoke for `odds-horizon-report`, and `git diff --check` passed.
+- Homeserver validation: deploy applied successfully, `db-health` passed, focused tests passed `30 passed`, full suite passed `118 passed`, targeted `ruff` passed, `/healthz` returned `ok`, `/match/wc2026-match-091` rendered `Cobertura por horizontes`, and `odds-horizon-report --fixture-id wc2026-match-091` returned T24H/T6H/T1H/T15M/LAST_PRE_KICKOFF rows.
 
 ### 2026-07-07 - Phase 5.1 odds coverage display
 

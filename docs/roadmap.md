@@ -16,7 +16,7 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 4.5 - Forecast recommendation UX | Implemented and deployed: principal-by-family forecasts, still no odds or value language. |
 | 4.6 - Forecast snapshots | Implemented, deployed, migrated to schema 6, and remote-gated green. |
 | 5.1 - Odds coverage display | Implemented, deployed, and remote-gated green. Informational coverage only. |
-| 5.2 - Odds horizon coverage | Implemented locally; remote validation pending. No EV or closing derivation. |
+| 5.2 - Odds horizon coverage | Implemented, deployed, and remote-gated green. No EV or closing derivation. |
 | 5.3-9 | Pending. |
 
 Open loops that remain after the remote gate:
@@ -25,6 +25,7 @@ Open loops that remain after the remote gate:
 - Full `pytest` after fixture-resolution hardening is green on the homeserver: 88 passed.
 - Full `pytest` after forecast snapshot hardening is green on the homeserver as of 2026-07-07: 98 passed.
 - Full `pytest` after odds coverage display is green on the homeserver as of 2026-07-07: 106 passed.
+- Full `pytest` after odds horizon coverage is green on the homeserver as of 2026-07-07: 118 passed.
 - Full-repo `ruff` is still open with legacy style findings; touched GUI files pass targeted `ruff`.
 - `fixture-summary` confirms 104 fixtures, 0 missing kickoff UTC, 6 future resolved, and 8 future unresolved after refresh.
 - Run `db-failures --days 7` and explain the recent failed run.
