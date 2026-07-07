@@ -1,7 +1,7 @@
-from datetime import UTC, datetime
 import json
 import math
 import sqlite3
+from datetime import UTC, datetime
 
 from scorerecord.db import init_db
 from scorerecord.forecast_snapshots import (
@@ -10,7 +10,6 @@ from scorerecord.forecast_snapshots import (
     settle_forecast_snapshots,
 )
 from scorerecord.gui import load_forecast_data, render_match_forecast
-
 
 MODEL_VERSION = "test-forecast-v1"
 
