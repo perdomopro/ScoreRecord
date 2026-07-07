@@ -18,6 +18,7 @@ from scorerecord.db import connect, init_db
 from scorerecord.forecast_policy import FORECAST_MARKETS, select_primary_forecasts
 from scorerecord.forecast_policy import signal_strength as forecast_signal_strength
 from scorerecord.forecast_quality import ForecastQualityItem, forecast_quality_items
+from scorerecord.odds_coverage import OddsMarketCoverage, load_fixture_odds_coverage
 from scorerecord.time_utils import parse_kickoff_utc
 
 DEFAULT_HOST = "127.0.0.1"
@@ -93,6 +94,7 @@ class ForecastFixture:
     market_validation_status: str
     ou_monotonicity_ok: bool
     snapshots: list[ForecastSnapshotView]
+    odds_coverage: list[OddsMarketCoverage]
 
 
 @dataclass(frozen=True)
@@ -229,6 +231,16 @@ def load_forecast_data(
     predictions_by_fixture = _group_forecast_predictions(prediction_rows)
     quality_items = forecast_quality_items(conn, latest_run_id)
     rows = _forecast_fixture_rows(conn, fixture_id=fixture_id)
+    odds_coverage_by_fixture: dict[str, list[OddsMarketCoverage]] = {}
+    if fixture_id is not None:
+        odds_coverage_by_fixture = {
+            str(row["fixture_id"]): load_fixture_odds_coverage(
+                conn,
+                str(row["fixture_id"]),
+                as_of_utc=now,
+            )
+            for row in rows
+        }
     snapshots_by_fixture = _group_forecast_snapshots(
         _forecast_snapshot_rows(conn, [str(row["fixture_id"]) for row in rows])
     )
@@ -238,6 +250,7 @@ def load_forecast_data(
             row,
             predictions_by_fixture.get(str(row["fixture_id"]), []),
             snapshots_by_fixture.get(str(row["fixture_id"]), []),
+            odds_coverage_by_fixture.get(str(row["fixture_id"]), []),
             display_tz=display_tz,
             selected_date=selected_date if fixture_id is None else None,
             now_utc=now,
@@ -633,6 +646,7 @@ def _forecast_fixture_from_row(
     row: sqlite3.Row,
     predictions: list[ForecastMarket],
     snapshots: list[ForecastSnapshotView],
+    odds_coverage: list[OddsMarketCoverage],
     *,
     display_tz: ZoneInfo,
     selected_date: str | None,
@@ -684,6 +698,7 @@ def _forecast_fixture_from_row(
         ),
         ou_monotonicity_ok=monotonicity_ok,
         snapshots=snapshots,
+        odds_coverage=odds_coverage,
     )
 
 
@@ -740,7 +755,7 @@ def _forecast_warning_banner(data: ForecastData) -> str:
     return f"""
     <section class="forecast-alert">
       <strong>FORECAST_ONLY</strong>
-      <span>No es recomendacion de apuesta. No usa EV, Kelly ni edge.</span>
+      <span>No es recomendacion de apuesta. Solo pronostico y cobertura informativa.</span>
       <span>Market validation: {_e(data.market_validation_status or 'NOT_TESTED')}</span>
       <span>Modelo: {_e(data.model_version or 'sin prediccion')}</span>
       <span>Artifact: {_e(artifact or 'n/a')}</span>
@@ -865,6 +880,7 @@ def _quality_class(status: str) -> str:
 
 def _match_detail(fixture: ForecastFixture) -> str:
     snapshots = _forecast_snapshot_section(fixture)
+    odds_coverage = _odds_coverage_section(fixture)
     rows = "".join(
         f"""
         <tr>
@@ -906,6 +922,7 @@ def _match_detail(fixture: ForecastFixture) -> str:
         El precio teorico sale de 1 / probabilidad del modelo. No es una cuota real,
         no incluye prorroga ni penales, y no es recomendacion de apuesta.
       </p>
+      {odds_coverage}
     </section>
     """
 
@@ -941,6 +958,64 @@ def _forecast_snapshot_section(fixture: ForecastFixture) -> str:
       </table>
     </section>
     """
+
+
+def _odds_coverage_section(fixture: ForecastFixture) -> str:
+    if not fixture.odds_coverage:
+        return ""
+    cards = "".join(_odds_coverage_card(item) for item in fixture.odds_coverage)
+    return f"""
+    <section class="odds-coverage-panel" aria-label="Cobertura de cuotas">
+      <h2>Cobertura de cuotas</h2>
+      <p>Cobertura informativa. No calcula EV ni recomendación de apuesta.</p>
+      <div class="odds-coverage-grid">{cards}</div>
+    </section>
+    """
+
+
+def _odds_coverage_card(item: OddsMarketCoverage) -> str:
+    latest = _e(item.latest_captured_utc or "n/a")
+    age = "n/a" if item.age_minutes is None else f"{item.age_minutes:.0f}m"
+    sides = "".join(
+        f"""
+        <li>
+          <span>{_e(_odds_side_label(item.market, side.selection))}</span>
+          <strong>{_num(side.best_odds) if side.best_odds is not None else 'n/a'}</strong>
+          <small>{_e(side.bookmaker or 'n/a')}</small>
+        </li>
+        """
+        for side in item.sides
+    )
+    if not sides:
+        sides = "<li><span>Sin cuotas capturadas.</span></li>"
+    return f"""
+      <article class="odds-coverage-card {_odds_status_class(item.status)}">
+        <div class="odds-coverage-head">
+          <h3>{_e(item.market)}</h3>
+          <strong>{_e(item.status)}</strong>
+        </div>
+        <dl>
+          <div><dt>Casas</dt><dd>{item.bookmaker_count}</dd></div>
+          <div><dt>Mercado completo</dt><dd>{item.complete_bookmaker_count}</dd></div>
+          <div><dt>Ultima captura</dt><dd>{latest}</dd></div>
+          <div><dt>Edad</dt><dd>{_e(age)}</dd></div>
+        </dl>
+        <ul>{sides}</ul>
+        <p>{_e(item.details)}</p>
+      </article>
+    """
+
+
+def _odds_status_class(status: str) -> str:
+    return f"odds-{status.lower().replace('_', '-')}"
+
+
+def _odds_side_label(market: str, selection: str) -> str:
+    if market == "OU2.5":
+        return f"{selection.title()} 2.5"
+    if market == "BTTS":
+        return "Yes" if selection == "yes" else "No"
+    return selection
 
 
 def _snapshot_selection_label(snapshot: ForecastSnapshotView) -> str:
@@ -1925,6 +2000,72 @@ p { color: var(--muted); margin: 4px 0 0; }
   font-size: 13px;
   margin: 12px 0 0;
 }
+.odds-coverage-panel {
+  margin-top: 18px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--purple);
+  border-radius: 8px;
+  background: #fbfcff;
+}
+.odds-coverage-panel h2 { font-size: 18px; margin: 0 0 4px; }
+.odds-coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.odds-coverage-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+.odds-coverage-card.odds-coverage-ok { border-left: 5px solid var(--green); }
+.odds-coverage-card.odds-stale-odds { border-left: 5px solid var(--amber); }
+.odds-coverage-card.odds-incomplete-market { border-left: 5px solid var(--red); }
+.odds-coverage-card.odds-no-odds { border-left: 5px solid var(--muted); }
+.odds-coverage-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+.odds-coverage-head h3 { margin: 0; font-size: 17px; }
+.odds-coverage-head strong {
+  font-size: 12px;
+  color: var(--muted);
+}
+.odds-coverage-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+.odds-coverage-card dl div {
+  padding: 7px;
+  background: var(--surface-2);
+  border-radius: 6px;
+}
+.odds-coverage-card dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.odds-coverage-card dd { margin: 2px 0 0; font-weight: 750; }
+.odds-coverage-card ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.odds-coverage-card li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+.odds-coverage-card li small { color: var(--muted); }
 .empty-forecast { text-align: center; padding: 36px 18px; }
 .empty-forecast h1 { margin: 0 0 8px; }
 .muted, .empty { color: var(--muted); }
@@ -1934,6 +2075,7 @@ p { color: var(--muted); margin: 4px 0 0; }
   .forecast-stats { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
   .match-grid { grid-template-columns: 1fr; }
   .primary-list { grid-template-columns: 1fr; }
+  .odds-coverage-grid { grid-template-columns: 1fr; }
 }
 """
 

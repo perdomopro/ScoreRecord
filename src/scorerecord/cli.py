@@ -50,6 +50,7 @@ from scorerecord.ingest.history import ingest_history
 from scorerecord.ingest.odds import fetch_live_odds, odds_snapshot_coverage_report
 from scorerecord.ingest.worldcup import ingest_worldcup_2026, resolve_fixture_teams
 from scorerecord.models.manifest import build_model_manifest
+from scorerecord.odds_coverage import load_fixture_odds_coverage
 from scorerecord.predict.fixtures import publish_fixture_predictions
 from scorerecord.quality import (
     fixture_resolution_report,
@@ -200,6 +201,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Print live odds snapshot coverage by fixture.",
     )
     snapshot_report.add_argument("--limit", type=int, default=50)
+    odds_coverage_report = subparsers.add_parser(
+        "odds-coverage-report",
+        help="Print forecast-only OU2.5/BTTS odds coverage for fixtures.",
+    )
+    odds_coverage_target = odds_coverage_report.add_mutually_exclusive_group(required=True)
+    odds_coverage_target.add_argument("--fixture-id")
+    odds_coverage_target.add_argument("--date", help="Fixture UTC date, YYYY-MM-DD.")
     edge = subparsers.add_parser("compute-edge", help="De-vig odds and compute model edge.")
     edge.add_argument("--bookmaker")
     edge.add_argument("--min-odds", type=float, default=1.10)
@@ -677,6 +685,34 @@ def main(argv: list[str] | None = None) -> int:
                 print(row.as_row())
             return 0
 
+        if args.command == "odds-coverage-report":
+            fixture_ids = (
+                [args.fixture_id]
+                if args.fixture_id
+                else _fixture_ids_for_utc_date(conn, args.date)
+            )
+            if not fixture_ids:
+                print("No fixtures found.")
+                return 0
+            for fixture_id in fixture_ids:
+                for coverage in load_fixture_odds_coverage(conn, fixture_id):
+                    age = (
+                        "n/a"
+                        if coverage.age_minutes is None
+                        else f"{coverage.age_minutes:.0f}"
+                    )
+                    print(
+                        "odds_coverage: "
+                        f"fixture_id={coverage.fixture_id} "
+                        f"market={coverage.market} "
+                        f"status={coverage.status} "
+                        f"bookmaker_count={coverage.bookmaker_count} "
+                        f"complete_bookmaker_count={coverage.complete_bookmaker_count} "
+                        f"latest_captured_utc={coverage.latest_captured_utc or 'n/a'} "
+                        f"age_minutes={age}"
+                    )
+            return 0
+
         if args.command == "compute-edge":
             summary = compute_edges(
                 conn,
@@ -888,6 +924,19 @@ def _parse_optional_int_tuple(value: str) -> tuple[int | None, ...]:
             continue
         output.append(None if stripped in {"none", "null", "off"} else int(stripped))
     return tuple(output)
+
+
+def _fixture_ids_for_utc_date(conn, target_date: str) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT fixture_id
+        FROM fixture
+        WHERE substr(COALESCE(kickoff_utc, kickoff_local), 1, 10) = ?
+        ORDER BY kickoff_utc, fixture_id
+        """,
+        (target_date,),
+    ).fetchall()
+    return [str(row["fixture_id"]) for row in rows]
 
 
 if __name__ == "__main__":

@@ -648,6 +648,16 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Homeserver validation after this hardening: focused GUI/World Cup/fixture tests passed `17 passed`; full suite passed `88 passed`; targeted `ruff` over touched files passed.
 - GUI smoke after restart: `/healthz` returned `ok`; `/today?date=2026-07-05` contains `FORECAST_ONLY`; `/audit` contains `LEGACY AUDIT MODE - NO BETTING RECOMMENDATIONS`; `/match/wc2026-match-091` contains `Precio teorico del modelo` and `90 min / tiempo reglamentario`.
 
+### 2026-07-07 - Phase 5.1 odds coverage display
+
+- Added `odds_coverage.py` as a read-only coverage layer over `odds_snapshots` for `OU2.5` and `BTTS`.
+- Coverage reports `NO_ODDS`, `INCOMPLETE_MARKET`, `STALE_ODDS`, and `COVERAGE_OK`, requiring complete same-bookmaker two-way snapshots before a market is considered complete.
+- Added `odds-coverage-report --fixture-id <id>` and `--date YYYY-MM-DD` for CLI inspection of fixture coverage.
+- Added `/match` coverage cards with latest capture time, age, bookmaker count, complete-bookmaker count, and best observed side odds.
+- Kept Phase 5.1 informational only: no EV, no de-vig probability, no paper candidate, no stake sizing, no Kelly, and no betting recommendation.
+- Closing odds are not derived yet; this phase shows captured odds coverage only.
+- Local validation: `compileall`, manual focused tests for `tests/test_odds_coverage.py` and `tests/test_gui.py`, CLI smoke for `odds-coverage-report`, and `git diff --check` passed.
+
 ### 2026-07-05 - Phase 4.5 forecast recommendation UX
 
 - Changed the forecast card from one global principal pick to principal forecasts by family: one `GOLES` candidate from calibrated OU markets and one `BTTS` candidate from calibrated BTTS yes/no probabilities.

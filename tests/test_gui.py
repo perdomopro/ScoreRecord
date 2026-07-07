@@ -114,6 +114,31 @@ def _insert_forecast_quality(
     )
 
 
+def _insert_odds_snapshot(
+    conn: sqlite3.Connection,
+    *,
+    market: str,
+    selection: str,
+    odds: float,
+    bookmaker: str = "BookA",
+    snapshot_at: str = "2026-07-04T18:30:00+00:00",
+) -> None:
+    line = 2.5 if market == "OU2.5" else None
+    conn.execute(
+        """
+        INSERT INTO odds_snapshots (
+          event_id, fixture_id, bookmaker, market, selection, line,
+          decimal_odds, snapshot_at, commence_time, source
+        )
+        VALUES (
+          'event-forecast', 'm-forecast', ?, ?, ?, ?, ?,
+          ?, '2026-07-04T20:00:00+00:00', 'test'
+        )
+        """,
+        (bookmaker, market, selection, line, odds, snapshot_at),
+    )
+
+
 def test_dashboard_uses_latest_post_guardrail_recommendation_run() -> None:
     conn = _conn()
     conn.execute(
@@ -380,7 +405,7 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert "OU2.5: Over 52.00%" in html
     assert "BTTS: Si 50.10%" in html
     assert "Actionable Recommendations" not in html
-    assert "No usa EV" in html
+    assert "Solo pronostico y cobertura informativa" in html
 
 
 def test_forecast_signal_strength_marks_ou25_moderate() -> None:
@@ -537,6 +562,40 @@ def test_forecast_match_renders_goal_market_detail() -> None:
     assert "No es una cuota real" in html
     assert "OU2.5" in html
     assert "Ambos anotan: si" in html
+    assert "Cobertura de cuotas" in html
+    assert "No calcula EV ni recomendación de apuesta." in html
+    assert "NO_ODDS" in html
+
+
+def test_forecast_match_renders_odds_coverage_without_1x2() -> None:
+    conn = _conn()
+    _insert_forecast_fixture(conn)
+    _insert_odds_snapshot(conn, market="OU2.5", selection="over", odds=1.92)
+    _insert_odds_snapshot(conn, market="OU2.5", selection="under", odds=1.88)
+    _insert_odds_snapshot(conn, market="BTTS", selection="yes", odds=1.80)
+    _insert_odds_snapshot(conn, market="1X2", selection="home", odds=2.40)
+
+    data = load_forecast_data(
+        conn,
+        fixture_id="m-forecast",
+        now_utc=datetime(2026, 7, 4, 19, 0, tzinfo=UTC),
+    )
+    html = render_match_forecast(data, "m-forecast")
+
+    assert "Cobertura de cuotas" in html
+    assert "OU2.5" in html
+    assert "COVERAGE_OK" in html
+    assert "BTTS" in html
+    assert "INCOMPLETE_MARKET" in html
+    assert "Over 2.5" in html
+    assert "1.920" in html
+    assert "Under 2.5" in html
+    assert "1.880" in html
+    assert "1X2" not in html
+    assert "Kelly" not in html
+    assert "stake" not in html
+    assert "PAPER_CANDIDATE" not in html
+    assert "VALIDATED_RECOMMENDATION" not in html
 
 
 def test_forecast_hides_ou_when_monotonicity_is_broken() -> None:

@@ -72,10 +72,11 @@ http://127.0.0.1:8765/audit
 ```
 
 The forecast view is deliberately `FORECAST_ONLY`: it shows calibrated goal-market
-probabilities, principal forecasts by market family, and fair odds, but no EV, Kelly,
-stake, edge, or value language. The confidence label is model magnitude only and is
-not validated against World Cup results or market prices. The
-older paper/edge dashboard remains available at `/audit` for operational review.
+probabilities, principal forecasts by market family, model-implied prices, and
+informational odds coverage for OU2.5/BTTS on match pages. It does not compute
+paper candidates, stake sizing, or betting recommendations. The confidence label is
+model magnitude only and is not validated against World Cup results or market
+prices. The older paper/edge dashboard remains available at `/audit` for operational review.
 Use `SCORERECORD_DISPLAY_TZ` to change the display timezone; it defaults to
 `America/Mexico_City`.
 
