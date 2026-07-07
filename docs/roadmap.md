@@ -4,23 +4,24 @@ Purpose: keep the project decomposable into small, safe increments. Each phase h
 objective, technical work, exit criteria, dependencies, and run-sized increments. Do not
 advance a phase as trusted until the previous phase exit criteria are actually met.
 
-## Current State - 2026-07-04
+## Current State - 2026-07-07
 
 | Phase | State |
 | --- | --- |
 | 0 - Forward capture | Code ready; verify future fixtures with `kickoff_utc` before relying on timers. |
-| 1 - Repo and DB stabilization | Code ready; formal gate still pending remote `pytest` plus `ruff`. |
-| 2 - Evaluation and scoring | Code ready; quarantined until the formal gate is green. |
+| 1 - Repo and DB stabilization | Remote full `pytest` is green; full-repo `ruff` legacy debt remains separate. |
+| 2 - Evaluation and scoring | Code ready; no longer blocked by test execution, still not market-validated. |
 | 3 - Club OU2.5 benchmark | Coverage prep implemented; run in parallel and close before Phase 6 paper EV. |
 | 4 - Today forecast web | Forecast GUI deployed and verified with 6 future resolved fixtures and clean forecast quality gates. |
 | 4.5 - Forecast recommendation UX | Implemented and deployed: principal-by-family forecasts, still no odds or value language. |
-| 4.6 - Forecast snapshots | Hardened locally: shared policy module, run-scoped quality, schema 6 quality metadata; remote gate pending. |
+| 4.6 - Forecast snapshots | Implemented, deployed, migrated to schema 6, and remote-gated green. |
 | 5-9 | Pending. |
 
-Open loops that close Phase 0/1 when remote execution is available:
+Open loops that remain after the remote gate:
 
 - Full `pytest` is green on the homeserver as of 2026-07-04: 84 passed.
 - Full `pytest` after fixture-resolution hardening is green on the homeserver: 88 passed.
+- Full `pytest` after forecast snapshot hardening is green on the homeserver as of 2026-07-07: 98 passed.
 - Full-repo `ruff` is still open with legacy style findings; touched GUI files pass targeted `ruff`.
 - `fixture-summary` confirms 104 fixtures, 0 missing kickoff UTC, 6 future resolved, and 8 future unresolved after refresh.
 - Run `db-failures --days 7` and explain the recent failed run.
