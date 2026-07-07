@@ -1,7 +1,7 @@
+from datetime import UTC, datetime
 import json
 import math
 import sqlite3
-from datetime import UTC, datetime
 
 from scorerecord.db import init_db
 from scorerecord.forecast_snapshots import (

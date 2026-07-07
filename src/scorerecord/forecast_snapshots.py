@@ -355,13 +355,13 @@ def _report_group(conn: sqlite3.Connection, column: str) -> list[ForecastReportR
             brier = (
                 sum(
                     (prob - correct) ** 2
-                    for prob, correct in zip(probs, correct_values)
+                    for prob, correct in zip(probs, correct_values, strict=True)
                 )
                 / len(probs)
             )
             logloss = sum(
                 _binary_logloss(prob, correct)
-                for prob, correct in zip(probs, correct_values)
+                for prob, correct in zip(probs, correct_values, strict=True)
             ) / len(probs)
         report_rows.append(
             ForecastReportRow(
