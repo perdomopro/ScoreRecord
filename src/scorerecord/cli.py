@@ -51,6 +51,10 @@ from scorerecord.ingest.odds import fetch_live_odds, odds_snapshot_coverage_repo
 from scorerecord.ingest.worldcup import ingest_worldcup_2026, resolve_fixture_teams
 from scorerecord.models.manifest import build_model_manifest
 from scorerecord.odds_coverage import load_fixture_odds_coverage
+from scorerecord.odds_coverage_summary import (
+    build_odds_coverage_summary_for_date,
+    build_odds_coverage_summary_for_fixture,
+)
 from scorerecord.odds_horizons import (
     load_date_odds_horizon_coverage,
     load_fixture_odds_horizon_coverage,
@@ -220,6 +224,15 @@ def main(argv: list[str] | None = None) -> int:
     odds_horizon_target.add_argument("--fixture-id")
     odds_horizon_target.add_argument("--date", help="Fixture local date, YYYY-MM-DD.")
     odds_horizon_report.add_argument("--display-tz", default="America/Mexico_City")
+    odds_coverage_summary = subparsers.add_parser(
+        "odds-coverage-summary",
+        help="Print operational OU2.5/BTTS odds coverage summary.",
+    )
+    odds_summary_target = odds_coverage_summary.add_mutually_exclusive_group(required=True)
+    odds_summary_target.add_argument("--fixture-id")
+    odds_summary_target.add_argument("--date", help="Fixture local date, YYYY-MM-DD.")
+    odds_coverage_summary.add_argument("--display-tz", default="America/Mexico_City")
+    odds_coverage_summary.add_argument("--json", action="store_true")
     edge = subparsers.add_parser("compute-edge", help="De-vig odds and compute model edge.")
     edge.add_argument("--bookmaker")
     edge.add_argument("--min-odds", type=float, default=1.10)
@@ -756,6 +769,24 @@ def main(argv: list[str] | None = None) -> int:
                     f"minutes_from_target={minutes_target} "
                     f"minutes_before_kickoff={minutes_kickoff}"
                 )
+            return 0
+
+        if args.command == "odds-coverage-summary":
+            report = (
+                build_odds_coverage_summary_for_fixture(conn, args.fixture_id)
+                if args.fixture_id
+                else build_odds_coverage_summary_for_date(
+                    conn,
+                    args.date,
+                    display_tz_name=args.display_tz,
+                )
+            )
+            if args.json:
+                print(json.dumps(report.as_dict(), sort_keys=True))
+                return 0
+            print(report.as_header())
+            for row in report.fixtures:
+                print(row.as_row())
             return 0
 
         if args.command == "compute-edge":

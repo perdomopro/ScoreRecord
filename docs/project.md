@@ -648,6 +648,26 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Homeserver validation after this hardening: focused GUI/World Cup/fixture tests passed `17 passed`; full suite passed `88 passed`; targeted `ruff` over touched files passed.
 - GUI smoke after restart: `/healthz` returned `ok`; `/today?date=2026-07-05` contains `FORECAST_ONLY`; `/audit` contains `LEGACY AUDIT MODE - NO BETTING RECOMMENDATIONS`; `/match/wc2026-match-091` contains `Precio teorico del modelo` and `90 min / tiempo reglamentario`.
 
+### 2026-07-07 - Phase 5.3 operational odds coverage summary
+
+- Added `odds_coverage_summary.py` to aggregate read-only horizon coverage by
+  `fixture_id + market` for `OU2.5` and `BTTS`.
+- Added `odds-coverage-summary --fixture-id <id>` and `--date YYYY-MM-DD`; date
+  mode uses the display timezone, defaulting to `America/Mexico_City`.
+- Added operational grades: `READY_FOR_ANALYSIS`, `PARTIAL_COVERAGE`,
+  `WEAK_COVERAGE`, and `NO_ODDS`.
+- `READY_FOR_ANALYSIS` requires `LAST_PRE_KICKOFF`, at least one near-kickoff
+  horizon (`T1H` or `T15M`), and at least two complete bookmakers across the
+  selected horizon observations.
+- Kept Phase 5.3 as observability only: it summarizes whether captured rows are
+  ready for later analysis, not whether a forecast should be promoted.
+- Local validation: `compileall` passed and the 11 new
+  `tests/test_odds_coverage_summary.py` tests passed through the manual runner
+  because local `pytest` is not installed in this workspace runtime.
+- Homeserver deploy applied successfully and the deploy-time `db-health` passed.
+  Remote focused tests, full suite, targeted `ruff`, and CLI smoke are pending
+  because the SSH validation calls hit the current usage limit after deploy.
+
 ### 2026-07-07 - Phase 5.2 odds horizon coverage
 
 - Added `odds_horizons.py` to derive read-only pre-kickoff coverage observations from append-only `odds_snapshots`.

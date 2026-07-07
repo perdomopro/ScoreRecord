@@ -17,7 +17,8 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 4.6 - Forecast snapshots | Implemented, deployed, migrated to schema 6, and remote-gated green. |
 | 5.1 - Odds coverage display | Implemented, deployed, and remote-gated green. Informational coverage only. |
 | 5.2 - Odds horizon coverage | Implemented, deployed, and remote-gated green. No EV or closing derivation. |
-| 5.3-9 | Pending. |
+| 5.3 - Operational odds coverage summary | Implemented and deployed; remote validation pending due usage limit. Observability only. |
+| 6-9 | Pending. |
 
 Open loops that remain after the remote gate:
 
@@ -26,6 +27,10 @@ Open loops that remain after the remote gate:
 - Full `pytest` after forecast snapshot hardening is green on the homeserver as of 2026-07-07: 98 passed.
 - Full `pytest` after odds coverage display is green on the homeserver as of 2026-07-07: 106 passed.
 - Full `pytest` after odds horizon coverage is green on the homeserver as of 2026-07-07: 118 passed.
+- Phase 5.3 local gate: `compileall` and 11 manual coverage-summary tests passed.
+- Phase 5.3 deploy applied and deploy-time `db-health` passed; focused remote tests,
+  full suite, targeted `ruff`, CLI smoke, and GUI restart/smoke are pending due
+  the current usage limit.
 - Full-repo `ruff` is still open with legacy style findings; touched GUI files pass targeted `ruff`.
 - `fixture-summary` confirms 104 fixtures, 0 missing kickoff UTC, 6 future resolved, and 8 future unresolved after refresh.
 - Run `db-failures --days 7` and explain the recent failed run.
@@ -328,6 +333,15 @@ Technical work:
   odds.
 - Require complete same-bookmaker two-way snapshots before de-vigging totals.
 - Add `odds-coverage-report` and `odds-horizon-report`.
+- Add `odds-coverage-summary` for fixture/date readiness labels over the horizon
+  observations:
+  - `READY_FOR_ANALYSIS`: last pre-kickoff coverage, near-kickoff coverage, and at
+    least two complete bookmakers.
+  - `PARTIAL_COVERAGE`: at least one complete horizon, but not enough for the
+    ready label.
+  - `WEAK_COVERAGE`: incomplete-only observations, or complete observations with
+    too little bookmaker depth.
+  - `NO_ODDS`: no horizon observations.
 
 Exit criteria:
 
@@ -336,6 +350,8 @@ Exit criteria:
   no stake, and no value/recommendation language.
 - Closing odds are not derived in this phase; horizon coverage is read-only
   observability over append-only `odds_snapshots`.
+- `READY_FOR_ANALYSIS` is a data-quality label for later analysis only; it does
+  not promote the fixture to the next product maturity state.
 
 ## Phase 6 - `daily-goals-v1` Paper Engine
 

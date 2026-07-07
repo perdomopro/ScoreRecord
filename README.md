@@ -37,6 +37,8 @@ scorerecord settle-fixtures --dry-run
 scorerecord fetch-odds --dry-run
 scorerecord fetch-odds --preplay-window-minutes 60 --dry-run
 scorerecord odds-snapshot-report
+scorerecord odds-coverage-summary --date 2026-07-05
+scorerecord odds-coverage-summary --fixture-id wc2026-match-091
 scorerecord compute-edge --dry-run
 scorerecord recommend --max-edge 0.25 --max-odds-age-minutes 180 --min-books 2 --dry-run
 scorerecord compute-clv --dry-run
@@ -76,10 +78,13 @@ probabilities, principal forecasts by market family, model-implied prices, and
 informational odds coverage for OU2.5/BTTS on match pages. Match pages also show
 pre-kickoff horizon coverage (`T24H`, `T6H`, `T1H`, `T15M`, and
 `LAST_PRE_KICKOFF`) derived read-only from `odds_snapshots`; `LAST_PRE_KICKOFF`
-is not official closing odds. It does not compute paper candidates, stake sizing,
-or betting recommendations. The confidence label is model magnitude only and is
-not validated against World Cup results or market prices. The older paper/edge
-dashboard remains available at `/audit` for operational review.
+is not official closing odds. Use `odds-coverage-summary` to aggregate those
+horizon observations into operational data-quality grades (`READY_FOR_ANALYSIS`,
+`PARTIAL_COVERAGE`, `WEAK_COVERAGE`, `NO_ODDS`) by fixture and market. A ready
+grade means the captured rows are sufficient for later analysis only; it does
+not change the forecast-only status of the product. The confidence label is model
+magnitude only and is not validated against World Cup results or market prices.
+The older audit dashboard remains available at `/audit` for operational review.
 Use `SCORERECORD_DISPLAY_TZ` to change the display timezone; it defaults to
 `America/Mexico_City`.
 
