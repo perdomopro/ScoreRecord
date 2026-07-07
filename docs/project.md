@@ -659,6 +659,7 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Kept Phase 5.1 informational only: no EV, no de-vig probability, no paper candidate, no stake sizing, no Kelly, and no betting recommendation.
 - Closing odds are not derived yet; this phase shows captured odds coverage only.
 - Local validation: `compileall`, manual focused tests for `tests/test_odds_coverage.py` and `tests/test_gui.py`, CLI smoke for `odds-coverage-report`, and `git diff --check` passed.
+- Homeserver validation: deploy applied successfully, `db-health` passed, focused tests passed `18 passed`, full suite passed `106 passed`, targeted `ruff` passed, `/healthz` returned `ok`, `/match/wc2026-match-091` rendered `Cobertura de cuotas`, and `odds-coverage-report --fixture-id wc2026-match-091` returned OU2.5/BTTS coverage rows.
 
 ### 2026-07-05 - Phase 4.5 forecast recommendation UX
 
