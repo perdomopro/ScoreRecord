@@ -19,8 +19,11 @@ from scorerecord.forecast_policy import FORECAST_MARKETS, select_primary_forecas
 from scorerecord.forecast_policy import signal_strength as forecast_signal_strength
 from scorerecord.forecast_quality import ForecastQualityItem, forecast_quality_items
 from scorerecord.odds_coverage import OddsMarketCoverage, load_fixture_odds_coverage
-from scorerecord.odds_horizons import DEFAULT_HORIZONS, OddsHorizonCoverage
-from scorerecord.odds_horizons import load_fixture_odds_horizon_coverage
+from scorerecord.odds_horizons import (
+    DEFAULT_HORIZONS,
+    OddsHorizonCoverage,
+    load_fixture_odds_horizon_coverage,
+)
 from scorerecord.time_utils import parse_kickoff_utc
 
 DEFAULT_HOST = "127.0.0.1"

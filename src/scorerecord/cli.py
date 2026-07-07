@@ -51,8 +51,10 @@ from scorerecord.ingest.odds import fetch_live_odds, odds_snapshot_coverage_repo
 from scorerecord.ingest.worldcup import ingest_worldcup_2026, resolve_fixture_teams
 from scorerecord.models.manifest import build_model_manifest
 from scorerecord.odds_coverage import load_fixture_odds_coverage
-from scorerecord.odds_horizons import load_date_odds_horizon_coverage
-from scorerecord.odds_horizons import load_fixture_odds_horizon_coverage
+from scorerecord.odds_horizons import (
+    load_date_odds_horizon_coverage,
+    load_fixture_odds_horizon_coverage,
+)
 from scorerecord.predict.fixtures import publish_fixture_predictions
 from scorerecord.quality import (
     fixture_resolution_report,
