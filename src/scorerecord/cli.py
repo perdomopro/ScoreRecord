@@ -51,6 +51,8 @@ from scorerecord.ingest.odds import fetch_live_odds, odds_snapshot_coverage_repo
 from scorerecord.ingest.worldcup import ingest_worldcup_2026, resolve_fixture_teams
 from scorerecord.models.manifest import build_model_manifest
 from scorerecord.odds_coverage import load_fixture_odds_coverage
+from scorerecord.odds_horizons import load_date_odds_horizon_coverage
+from scorerecord.odds_horizons import load_fixture_odds_horizon_coverage
 from scorerecord.predict.fixtures import publish_fixture_predictions
 from scorerecord.quality import (
     fixture_resolution_report,
@@ -208,6 +210,14 @@ def main(argv: list[str] | None = None) -> int:
     odds_coverage_target = odds_coverage_report.add_mutually_exclusive_group(required=True)
     odds_coverage_target.add_argument("--fixture-id")
     odds_coverage_target.add_argument("--date", help="Fixture UTC date, YYYY-MM-DD.")
+    odds_horizon_report = subparsers.add_parser(
+        "odds-horizon-report",
+        help="Print forecast-only OU2.5/BTTS odds coverage by pre-kickoff horizon.",
+    )
+    odds_horizon_target = odds_horizon_report.add_mutually_exclusive_group(required=True)
+    odds_horizon_target.add_argument("--fixture-id")
+    odds_horizon_target.add_argument("--date", help="Fixture local date, YYYY-MM-DD.")
+    odds_horizon_report.add_argument("--display-tz", default="America/Mexico_City")
     edge = subparsers.add_parser("compute-edge", help="De-vig odds and compute model edge.")
     edge.add_argument("--bookmaker")
     edge.add_argument("--min-odds", type=float, default=1.10)
@@ -713,6 +723,39 @@ def main(argv: list[str] | None = None) -> int:
                     )
             return 0
 
+        if args.command == "odds-horizon-report":
+            rows = (
+                load_fixture_odds_horizon_coverage(conn, args.fixture_id)
+                if args.fixture_id
+                else load_date_odds_horizon_coverage(
+                    conn,
+                    args.date,
+                    display_tz_name=args.display_tz,
+                )
+            )
+            if not rows:
+                print("No fixtures found.")
+                return 0
+            for row in rows:
+                snapshot = row.selected_snapshot_at or "n/a"
+                target = row.target_utc or "n/a"
+                minutes_target = _format_optional_float(row.minutes_from_target)
+                minutes_kickoff = _format_optional_float(row.minutes_before_kickoff)
+                print(
+                    "odds_horizon: "
+                    f"fixture_id={row.fixture_id} "
+                    f"market={row.market} "
+                    f"horizon={row.horizon} "
+                    f"status={row.status} "
+                    f"bookmakers={row.bookmaker_count} "
+                    f"complete={row.complete_bookmaker_count} "
+                    f"target_utc={target} "
+                    f"snapshot_at={snapshot} "
+                    f"minutes_from_target={minutes_target} "
+                    f"minutes_before_kickoff={minutes_kickoff}"
+                )
+            return 0
+
         if args.command == "compute-edge":
             summary = compute_edges(
                 conn,
@@ -937,6 +980,10 @@ def _fixture_ids_for_utc_date(conn, target_date: str) -> list[str]:
         (target_date,),
     ).fetchall()
     return [str(row["fixture_id"]) for row in rows]
+
+
+def _format_optional_float(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.1f}"
 
 
 if __name__ == "__main__":

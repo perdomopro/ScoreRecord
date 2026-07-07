@@ -565,6 +565,8 @@ def test_forecast_match_renders_goal_market_detail() -> None:
     assert "Cobertura de cuotas" in html
     assert "No calcula EV ni recomendación de apuesta." in html
     assert "Mejor cuota observada por lado" in html
+    assert "Cobertura por horizontes" in html
+    assert "No es cierre oficial, no calcula EV ni recomendación." in html
     assert "NO_ODDS" in html
 
 
@@ -584,10 +586,17 @@ def test_forecast_match_renders_odds_coverage_without_1x2() -> None:
     html = render_match_forecast(data, "m-forecast")
 
     assert "Cobertura de cuotas" in html
+    assert "Cobertura por horizontes" in html
     assert "OU2.5" in html
     assert "COVERAGE_OK" in html
     assert "BTTS" in html
     assert "INCOMPLETE_MARKET" in html
+    assert "T24H" in html
+    assert "T6H" in html
+    assert "T1H" in html
+    assert "T15M" in html
+    assert "LAST_PRE_KICKOFF" in html
+    assert "1 casas completas" in html
     assert "Over 2.5" in html
     assert "1.920" in html
     assert "Under 2.5" in html

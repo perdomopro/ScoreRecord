@@ -16,7 +16,8 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 4.5 - Forecast recommendation UX | Implemented and deployed: principal-by-family forecasts, still no odds or value language. |
 | 4.6 - Forecast snapshots | Implemented, deployed, migrated to schema 6, and remote-gated green. |
 | 5.1 - Odds coverage display | Implemented, deployed, and remote-gated green. Informational coverage only. |
-| 5.2-9 | Pending. |
+| 5.2 - Odds horizon coverage | Implemented locally; remote validation pending. No EV or closing derivation. |
+| 5.3-9 | Pending. |
 
 Open loops that remain after the remote gate:
 
@@ -320,16 +321,20 @@ Technical work:
 - Show latest capture time, age, bookmaker count, complete-bookmaker count, and best
   observed side odds. Label these as observed by side, not as a de-vig market pair.
 - Add `external_event_map`.
-- Derive horizons after capture: T-24H, T-6H, T-1H, T-15M, close.
+- Derive horizon coverage after capture: T24H, T6H, T1H, T15M, and
+  LAST_PRE_KICKOFF.
+- Label LAST_PRE_KICKOFF as an observed pre-kickoff snapshot, not official closing
+  odds.
 - Require complete same-bookmaker two-way snapshots before de-vigging totals.
-- Add `odds-coverage-report`.
+- Add `odds-coverage-report` and `odds-horizon-report`.
 
 Exit criteria:
 
 - V1 market scope is based on observed real coverage, not assumptions.
 - Coverage display remains informational only: no EV, no paper candidate, no Kelly,
   no stake, and no value/recommendation language.
-- Closing odds are not derived in this phase.
+- Closing odds are not derived in this phase; horizon coverage is read-only
+  observability over append-only `odds_snapshots`.
 
 ## Phase 6 - `daily-goals-v1` Paper Engine
 

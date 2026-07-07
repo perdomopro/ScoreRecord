@@ -19,6 +19,8 @@ from scorerecord.forecast_policy import FORECAST_MARKETS, select_primary_forecas
 from scorerecord.forecast_policy import signal_strength as forecast_signal_strength
 from scorerecord.forecast_quality import ForecastQualityItem, forecast_quality_items
 from scorerecord.odds_coverage import OddsMarketCoverage, load_fixture_odds_coverage
+from scorerecord.odds_horizons import DEFAULT_HORIZONS, OddsHorizonCoverage
+from scorerecord.odds_horizons import load_fixture_odds_horizon_coverage
 from scorerecord.time_utils import parse_kickoff_utc
 
 DEFAULT_HOST = "127.0.0.1"
@@ -95,6 +97,7 @@ class ForecastFixture:
     ou_monotonicity_ok: bool
     snapshots: list[ForecastSnapshotView]
     odds_coverage: list[OddsMarketCoverage]
+    odds_horizons: list[OddsHorizonCoverage]
 
 
 @dataclass(frozen=True)
@@ -232,12 +235,20 @@ def load_forecast_data(
     quality_items = forecast_quality_items(conn, latest_run_id)
     rows = _forecast_fixture_rows(conn, fixture_id=fixture_id)
     odds_coverage_by_fixture: dict[str, list[OddsMarketCoverage]] = {}
+    odds_horizons_by_fixture: dict[str, list[OddsHorizonCoverage]] = {}
     if fixture_id is not None:
         odds_coverage_by_fixture = {
             str(row["fixture_id"]): load_fixture_odds_coverage(
                 conn,
                 str(row["fixture_id"]),
                 as_of_utc=now,
+            )
+            for row in rows
+        }
+        odds_horizons_by_fixture = {
+            str(row["fixture_id"]): load_fixture_odds_horizon_coverage(
+                conn,
+                str(row["fixture_id"]),
             )
             for row in rows
         }
@@ -251,6 +262,7 @@ def load_forecast_data(
             predictions_by_fixture.get(str(row["fixture_id"]), []),
             snapshots_by_fixture.get(str(row["fixture_id"]), []),
             odds_coverage_by_fixture.get(str(row["fixture_id"]), []),
+            odds_horizons_by_fixture.get(str(row["fixture_id"]), []),
             display_tz=display_tz,
             selected_date=selected_date if fixture_id is None else None,
             now_utc=now,
@@ -647,6 +659,7 @@ def _forecast_fixture_from_row(
     predictions: list[ForecastMarket],
     snapshots: list[ForecastSnapshotView],
     odds_coverage: list[OddsMarketCoverage],
+    odds_horizons: list[OddsHorizonCoverage],
     *,
     display_tz: ZoneInfo,
     selected_date: str | None,
@@ -699,6 +712,7 @@ def _forecast_fixture_from_row(
         ou_monotonicity_ok=monotonicity_ok,
         snapshots=snapshots,
         odds_coverage=odds_coverage,
+        odds_horizons=odds_horizons,
     )
 
 
@@ -881,6 +895,7 @@ def _quality_class(status: str) -> str:
 def _match_detail(fixture: ForecastFixture) -> str:
     snapshots = _forecast_snapshot_section(fixture)
     odds_coverage = _odds_coverage_section(fixture)
+    odds_horizons = _odds_horizon_section(fixture)
     rows = "".join(
         f"""
         <tr>
@@ -923,6 +938,7 @@ def _match_detail(fixture: ForecastFixture) -> str:
         no incluye prorroga ni penales, y no es recomendacion de apuesta.
       </p>
       {odds_coverage}
+      {odds_horizons}
     </section>
     """
 
@@ -1017,6 +1033,59 @@ def _odds_side_label(market: str, selection: str) -> str:
     if market == "BTTS":
         return "Yes" if selection == "yes" else "No"
     return selection
+
+
+def _odds_horizon_section(fixture: ForecastFixture) -> str:
+    if not fixture.odds_horizons:
+        return ""
+    by_key = {(item.market, item.horizon): item for item in fixture.odds_horizons}
+    header = "".join(f"<th>{_e(horizon)}</th>" for horizon in DEFAULT_HORIZONS)
+    row_chunks = []
+    for market in ("OU2.5", "BTTS"):
+        cells = "".join(
+            _odds_horizon_cell(by_key.get((market, horizon)))
+            for horizon in DEFAULT_HORIZONS
+        )
+        row_chunks.append(
+            f"""
+        <tr>
+          <th>{_e(market)}</th>
+          {cells}
+        </tr>
+        """
+        )
+    rows = "".join(row_chunks)
+    return f"""
+    <section class="odds-horizon-panel" aria-label="Cobertura por horizontes">
+      <h2>Cobertura por horizontes</h2>
+      <p>Observabilidad pre-kickoff. No es cierre oficial, no calcula EV ni recomendación.</p>
+      <table class="odds-horizon-table">
+        <thead>
+          <tr><th>Mercado</th>{header}</tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+    """
+
+
+def _odds_horizon_cell(item: OddsHorizonCoverage | None) -> str:
+    if item is None:
+        return '<td class="odds-horizon-cell odds-no-odds"><strong>NO_ODDS</strong></td>'
+    snapshot = _short_timestamp(item.selected_snapshot_at)
+    return f"""
+      <td class="odds-horizon-cell {_odds_status_class(item.status)}">
+        <strong>{_e(item.status)}</strong>
+        <span>{item.complete_bookmaker_count} casas completas</span>
+        <small>{_e(snapshot or 'sin snapshot')}</small>
+      </td>
+    """
+
+
+def _short_timestamp(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value.replace("+00:00", "Z")
 
 
 def _snapshot_selection_label(snapshot: ForecastSnapshotView) -> str:
@@ -2067,6 +2136,47 @@ p { color: var(--muted); margin: 4px 0 0; }
   align-items: center;
 }
 .odds-coverage-card li small { color: var(--muted); }
+.odds-horizon-panel {
+  margin-top: 18px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--blue);
+  border-radius: 8px;
+  background: #fbfcff;
+}
+.odds-horizon-panel h2 { font-size: 18px; margin: 0 0 4px; }
+.odds-horizon-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+.odds-horizon-table th,
+.odds-horizon-table td {
+  border: 1px solid var(--line);
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.odds-horizon-table thead th {
+  color: var(--muted);
+  background: #fbfcfd;
+  font-size: 12px;
+}
+.odds-horizon-cell strong,
+.odds-horizon-cell span,
+.odds-horizon-cell small {
+  display: block;
+}
+.odds-horizon-cell strong { font-size: 12px; }
+.odds-horizon-cell span,
+.odds-horizon-cell small {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 3px;
+}
+.odds-horizon-cell.odds-coverage-ok { background: #f4fbf7; }
+.odds-horizon-cell.odds-incomplete-market { background: #fff4f3; }
+.odds-horizon-cell.odds-no-odds { background: #f7f8fa; }
 .empty-forecast { text-align: center; padding: 36px 18px; }
 .empty-forecast h1 { margin: 0 0 8px; }
 .muted, .empty { color: var(--muted); }

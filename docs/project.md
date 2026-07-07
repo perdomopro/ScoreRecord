@@ -648,6 +648,17 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Homeserver validation after this hardening: focused GUI/World Cup/fixture tests passed `17 passed`; full suite passed `88 passed`; targeted `ruff` over touched files passed.
 - GUI smoke after restart: `/healthz` returned `ok`; `/today?date=2026-07-05` contains `FORECAST_ONLY`; `/audit` contains `LEGACY AUDIT MODE - NO BETTING RECOMMENDATIONS`; `/match/wc2026-match-091` contains `Precio teorico del modelo` and `90 min / tiempo reglamentario`.
 
+### 2026-07-07 - Phase 5.2 odds horizon coverage
+
+- Added `odds_horizons.py` to derive read-only pre-kickoff coverage observations from append-only `odds_snapshots`.
+- Added horizons `T24H`, `T6H`, `T1H`, `T15M`, and `LAST_PRE_KICKOFF` for `OU2.5` and `BTTS`.
+- Horizon selection uses the latest snapshot at or before each target; `LAST_PRE_KICKOFF` uses the latest snapshot strictly before kickoff.
+- Complete horizon coverage requires both sides from the same bookmaker and same `snapshot_at`; `OU2.5` still requires `line = 2.5`.
+- Added `odds-horizon-report --fixture-id <id>` and `--date YYYY-MM-DD`; date mode uses the display timezone, defaulting to `America/Mexico_City`.
+- Added a `/match` matrix titled `Cobertura por horizontes` with a disclaimer that this is not official closing odds and does not calculate EV or recommendations.
+- Kept Phase 5.2 informational only: no de-vig probability, no EV, no edge, no paper candidate, no stake sizing, no Kelly, no value label, and no betting recommendation.
+- Local validation: `compileall`, manual focused tests for `tests/test_odds_horizons.py`, `tests/test_odds_coverage.py`, and `tests/test_gui.py`, CLI smoke for `odds-horizon-report`, and `git diff --check` passed.
+
 ### 2026-07-07 - Phase 5.1 odds coverage display
 
 - Added `odds_coverage.py` as a read-only coverage layer over `odds_snapshots` for `OU2.5` and `BTTS`.
