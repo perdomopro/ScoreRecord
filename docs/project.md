@@ -664,9 +664,21 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Local validation: `compileall` passed and the 11 new
   `tests/test_odds_coverage_summary.py` tests passed through the manual runner
   because local `pytest` is not installed in this workspace runtime.
-- Homeserver deploy applied successfully and the deploy-time `db-health` passed.
-  Remote focused tests, full suite, targeted `ruff`, and CLI smoke are pending
-  because the SSH validation calls hit the current usage limit after deploy.
+- Homeserver validation passed: focused tests returned `41 passed`, full suite
+  returned `129 passed`, targeted `ruff` passed, deploy-time `db-health` passed,
+  and `odds-coverage-summary` CLI smoke passed for fixture and date modes.
+- Operational runbook for 2026-07-09: `ingest-worldcup --refresh` resolved the
+  next fixture as France vs Morocco, improving fixture resolution to 99/104 and
+  `future_resolved=3`.
+- Ran `build-elo`, `predict-fixtures`, and
+  `freeze-forecast-snapshot --date 2026-07-09`; the prediction run inserted 57
+  rows and the freeze inserted 2 forecast snapshots for the 2026-07-09 fixture.
+- A scoped odds fetch for `wc2026-match-097` matched the event and inserted 10
+  raw snapshots. Current readiness for 2026-07-09 remains limited:
+  `BTTS=WEAK_COVERAGE` because horizon depth is below two complete bookmakers,
+  and `OU2.5=NO_ODDS` because no valid line-2.5 snapshots are present.
+- GUI smoke for `/today?date=2026-07-09` confirmed the card now shows
+  `France vs Morocco`.
 
 ### 2026-07-07 - Phase 5.2 odds horizon coverage
 

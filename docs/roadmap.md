@@ -17,7 +17,7 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 4.6 - Forecast snapshots | Implemented, deployed, migrated to schema 6, and remote-gated green. |
 | 5.1 - Odds coverage display | Implemented, deployed, and remote-gated green. Informational coverage only. |
 | 5.2 - Odds horizon coverage | Implemented, deployed, and remote-gated green. No EV or closing derivation. |
-| 5.3 - Operational odds coverage summary | Implemented and deployed; remote validation pending due usage limit. Observability only. |
+| 5.3 - Operational odds coverage summary | Implemented, deployed, and remote-gated green. Observability only. |
 | 6-9 | Pending. |
 
 Open loops that remain after the remote gate:
@@ -28,13 +28,16 @@ Open loops that remain after the remote gate:
 - Full `pytest` after odds coverage display is green on the homeserver as of 2026-07-07: 106 passed.
 - Full `pytest` after odds horizon coverage is green on the homeserver as of 2026-07-07: 118 passed.
 - Phase 5.3 local gate: `compileall` and 11 manual coverage-summary tests passed.
-- Phase 5.3 deploy applied and deploy-time `db-health` passed; focused remote tests,
-  full suite, targeted `ruff`, CLI smoke, and GUI restart/smoke are pending due
-  the current usage limit.
+- Phase 5.3 remote gate is green: focused tests passed `41 passed`, full suite
+  passed `129 passed`, targeted `ruff` passed, deploy-time `db-health` passed,
+  and CLI smoke passed for fixture/date `odds-coverage-summary`.
 - Full-repo `ruff` is still open with legacy style findings; touched GUI files pass targeted `ruff`.
-- `fixture-summary` confirms 104 fixtures, 0 missing kickoff UTC, 6 future resolved, and 8 future unresolved after refresh.
-- Run `db-failures --days 7` and explain the recent failed run.
-- Confirm the homeserver `.venv` has dev tools or install `.[dev]`.
+- `fixture-summary` after the 2026-07-08 refresh confirms 104 fixtures, 0 missing
+  kickoff UTC, 3 future resolved, and 5 future unresolved. The 2026-07-09 match
+  is resolved as France vs Morocco and is visible in the forecast GUI.
+- Deploy-time `db-health` reports `recent_failed_runs: 0`.
+- The homeserver `.venv` has the required dev tools for remote gates; pytest and
+  targeted ruff both ran successfully.
 
 ## Non-Negotiables
 
@@ -216,6 +219,11 @@ Run-sized increments:
 3. Generalized benchmark loading.
 4. Prequential calibrated OU2.5 probabilities.
 5. Multi-league benchmark readout.
+
+Next sequencing note:
+
+- Do not start Phase 6 until Phase 3 has a benchmark readout and Phase 5.4/5.5
+  have audited captured odds integrity and frozen the entry snapshot policy.
 
 ## Phase 4 - Today Forecast Web
 
