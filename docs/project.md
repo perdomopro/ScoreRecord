@@ -648,6 +648,40 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Homeserver validation after this hardening: focused GUI/World Cup/fixture tests passed `17 passed`; full suite passed `88 passed`; targeted `ruff` over touched files passed.
 - GUI smoke after restart: `/healthz` returned `ok`; `/today?date=2026-07-05` contains `FORECAST_ONLY`; `/audit` contains `LEGACY AUDIT MODE - NO BETTING RECOMMENDATIONS`; `/match/wc2026-match-091` contains `Precio teorico del modelo` and `90 min / tiempo reglamentario`.
 
+### 2026-07-08 - Phase 3 OU2.5 club benchmark implementation
+
+- Extended `market-benchmark-report` beyond 1X2 with a dedicated `OU2.5` club
+  benchmark path over Football-Data historical odds.
+- Added CLI flags for the Phase 3 benchmark shape: `--leagues`, `--calibration
+  prequential`, `--bootstrap-block week`, and `--bootstrap-samples`.
+- `OU2.5` historical odds loading now requires a complete two-way market:
+  `over` and `under`, `line=2.5`, decimal odds greater than 1, matching
+  `entry_odds_type=avg_preclose`, and consistent source column family.
+- The benchmark scores one binary row per match, using `label=1` when total goals
+  are greater than 2.5 and excluding matches without complete market odds from
+  both model and market comparisons.
+- Added prequential Platt calibration for the club benchmark using only prior
+  out-of-sample raw Dixon-Coles predictions.
+- The summary reports `dixon_coles_raw`, `dixon_coles_platt_prequential`,
+  `market_preclose_fair`, `market_close_fair`, Brier, log-loss, ECE, paired
+  deltas, bootstrap confidence intervals, and `benchmark_state`.
+- Added tests for complete two-way OU2.5 extraction, missing/invalid odds
+  exclusion, two-way de-vig, one binary row per match, paired block bootstrap,
+  prequential calibration, and `benchmark_state` generation.
+- Local validation: `compileall`, 16 manual `tests/test_backtest.py` invocations,
+  and `git diff --check` passed. Local `pytest` and `ruff` are unavailable in
+  this workspace runtime.
+- Homeserver deploy applied and deploy-time `db-health` passed. Focused remote
+  tests before the final style fixes returned `31 passed`; the follow-up remote
+  `ruff`, full suite, coverage refresh, and benchmark run are pending because the
+  environment hit the SSH usage limit after deploy.
+- A remote pre-refresh `historical-odds-report --market OU2.5` showed 0 loaded
+  OU2.5 rows for the currently loaded club seasons, so the real Phase 3 benchmark
+  still requires reingesting/refreshing Football-Data seasons with the OU2.5
+  extractor before running the frozen benchmark command.
+- No paper candidates, threshold grids, stake sizing, Kelly sizing, or live
+  recommendation path was added.
+
 ### 2026-07-07 - Phase 5.3 operational odds coverage summary
 
 - Added `odds_coverage_summary.py` to aggregate read-only horizon coverage by

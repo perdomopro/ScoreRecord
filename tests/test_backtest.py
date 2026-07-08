@@ -4,19 +4,25 @@ from datetime import date
 
 from scorerecord.db import init_db
 from scorerecord.evaluate.backtest import (
-    BacktestBet,
-    HistoricalPrediction,
     HistoricalOddsMatch,
+    HistoricalPrediction,
+    Ou25BenchmarkPrediction,
     RealOddsPrediction,
     _calibration_rows,
+    _devig_two_way,
+    _load_historical_odds_matches,
+    _load_historical_odds_markets,
     _market_benchmark_summary_rows,
+    _ou25_benchmark_metric_sets,
     _select_backtest_bets,
     _shrink_real_odds_predictions,
+    _walk_forward_ou25_benchmark_predictions,
     edge_bucket,
     max_drawdown,
     odds_bucket,
     prob_bucket,
     run_historical_backtest,
+    run_market_benchmark_report,
     run_real_odds_policy_grid,
     sample_size_tier,
     score_bucket,
@@ -426,3 +432,272 @@ def test_real_odds_policy_grid_reuses_predictions_and_writes_compact_rows(tmp_pa
     assert "max_picks_per_day" in grid
     assert "market_shrink_alpha" in grid
     assert "positive_clv_rate" in grid
+
+
+def _insert_historical_match(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str,
+    match_date: str,
+    home: str = "A",
+    away: str = "B",
+    home_goals: int = 2,
+    away_goals: int = 1,
+    league_code: str = "E0",
+) -> None:
+    result = "home" if home_goals > away_goals else "away" if away_goals > home_goals else "draw"
+    conn.execute(
+        """
+        INSERT INTO historical_match (
+          source, source_event_id, league_code, season, match_date,
+          home_team, away_team, home_goals, away_goals, result_1x2
+        )
+        VALUES ('football-data', ?, ?, '2023-2024', ?, ?, ?, ?, ?, ?)
+        """,
+        (event_id, league_code, match_date, home, away, home_goals, away_goals, result),
+    )
+
+
+def _insert_ou25_odds(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str,
+    over: float | None = 1.90,
+    under: float | None = 2.00,
+    close_over: float | None = 1.85,
+    close_under: float | None = 2.05,
+    bookmaker: str = "Avg",
+) -> None:
+    rows = [("over", over, close_over), ("under", under, close_under)]
+    for selection, entry, closing in rows:
+        if entry is None:
+            continue
+        conn.execute(
+            """
+            INSERT INTO historical_odds (
+              source, source_event_id, bookmaker, market, selection, line,
+              entry_odds, entry_odds_type, closing_odds, closing_odds_type,
+              is_real_historical_odds, is_timestamp_exact
+            )
+            VALUES (
+              'football-data', ?, ?, 'OU2.5', ?, 2.5,
+              ?, 'avg_preclose', ?, 'avg_close', 1, 0
+            )
+            """,
+            (event_id, bookmaker, selection, entry, closing),
+        )
+
+
+def _ou25_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_db(conn)
+    return conn
+
+
+def test_ou25_historical_odds_loader_requires_complete_two_way() -> None:
+    conn = _ou25_conn()
+    _insert_ou25_odds(conn, event_id="complete")
+    _insert_ou25_odds(conn, event_id="missing-under", under=None)
+
+    markets = _load_historical_odds_markets(
+        conn,
+        source="football-data",
+        entry_odds_type="avg_preclose",
+        closing_odds_type="avg_close",
+        market="OU2.5",
+    )
+
+    assert set(markets) == {"complete"}
+    assert set(markets["complete"].entry_odds) == {"over", "under"}
+
+
+def test_ou25_historical_odds_loader_excludes_invalid_decimal_odds() -> None:
+    conn = _ou25_conn()
+    _insert_ou25_odds(conn, event_id="invalid", over=1.0, under=2.0)
+    _insert_ou25_odds(conn, event_id="valid", over=1.91, under=1.95)
+
+    markets = _load_historical_odds_markets(
+        conn,
+        source="football-data",
+        entry_odds_type="avg_preclose",
+        closing_odds_type="avg_close",
+        market="OU2.5",
+    )
+
+    assert set(markets) == {"valid"}
+
+
+def test_ou25_market_probability_uses_two_way_devig_formula() -> None:
+    probs = _devig_two_way(1.80, 2.20)
+    expected = (1 / 1.80) / ((1 / 1.80) + (1 / 2.20))
+
+    assert round(probs["over"], 10) == round(expected, 10)
+    assert round(probs["over"] + probs["under"], 10) == 1.0
+
+
+def test_ou25_metric_sets_score_one_binary_row_per_match_and_pair_same_matches() -> None:
+    rows = [
+        _ou25_prediction(event_id="e1", label=1, raw=0.60, calibrated=0.62, market=0.55),
+        _ou25_prediction(
+            event_id="e2",
+            label=0,
+            raw=0.40,
+            calibrated=0.38,
+            market=0.45,
+            match_date="2024-01-15",
+        ),
+    ]
+
+    metrics = _ou25_benchmark_metric_sets(rows, bootstrap_samples=25)
+    calibrated_preclose = [
+        metric
+        for metric in metrics
+        if metric.model_name == "dixon_coles_platt_prequential"
+        and metric.market_reference == "market_preclose_fair"
+    ][0]
+
+    assert calibrated_preclose.num_matches == 2
+    assert calibrated_preclose.num_selection_rows == 4
+    assert calibrated_preclose.bootstrap_blocks == 2
+    assert calibrated_preclose.bootstrap_iterations == 25
+
+
+def test_ou25_prequential_calibration_uses_prior_out_of_sample_rows_only() -> None:
+    conn = _ou25_conn()
+    for index, (match_date, home, away, hg, ag) in enumerate(
+        [
+            ("2024-01-01", "A", "B", 2, 1),
+            ("2024-01-02", "C", "D", 0, 1),
+            ("2024-01-03", "A", "C", 3, 1),
+            ("2024-01-04", "B", "D", 0, 0),
+        ],
+        start=1,
+    ):
+        event_id = f"e{index}"
+        _insert_historical_match(
+            conn,
+            event_id=event_id,
+            match_date=match_date,
+            home=home,
+            away=away,
+            home_goals=hg,
+            away_goals=ag,
+        )
+        _insert_ou25_odds(conn, event_id=event_id)
+    matches = _load_historical_odds_matches(
+        conn,
+        source="football-data",
+        league_code="E0",
+        test_season=None,
+        to_date=date(2024, 1, 4),
+    )
+    markets = _load_historical_odds_markets(
+        conn,
+        source="football-data",
+        entry_odds_type="avg_preclose",
+        closing_odds_type="avg_close",
+        market="OU2.5",
+    )
+
+    rows = _walk_forward_ou25_benchmark_predictions(
+        matches,
+        odds=markets,
+        from_date=date(2024, 1, 3),
+        to_date=date(2024, 1, 4),
+        start_year=2024,
+        min_train=2,
+        calibration="prequential",
+    )
+
+    assert rows[0].model_calibrated_prob is None
+    assert rows[1].model_calibrated_prob is not None
+
+
+def test_market_benchmark_report_runs_ou25_and_writes_state(tmp_path) -> None:
+    conn = _ou25_conn()
+    for index, (match_date, home, away, hg, ag) in enumerate(
+        [
+            ("2024-01-01", "A", "B", 2, 1),
+            ("2024-01-02", "C", "D", 0, 1),
+            ("2024-01-03", "A", "C", 3, 1),
+            ("2024-01-04", "B", "D", 0, 0),
+        ],
+        start=1,
+    ):
+        event_id = f"e{index}"
+        _insert_historical_match(
+            conn,
+            event_id=event_id,
+            match_date=match_date,
+            home=home,
+            away=away,
+            home_goals=hg,
+            away_goals=ag,
+        )
+        _insert_ou25_odds(conn, event_id=event_id)
+
+    summary = run_market_benchmark_report(
+        conn,
+        from_date=date(2024, 1, 3),
+        to_date=date(2024, 1, 4),
+        out_dir=tmp_path,
+        start_year=2024,
+        min_train=2,
+        market="OU2.5",
+        league="EPL",
+        bootstrap_samples=25,
+    )
+
+    metadata = json.loads(
+        (tmp_path / f"market_benchmark_ou25_metadata_{summary.run_id}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert summary.market == "OU2.5"
+    assert summary.benchmark_state in {
+        "PROMISING",
+        "INCONCLUSIVE",
+        "REJECTED_FOR_INDEPENDENT_VALUE",
+    }
+    assert metadata["overall"]["num_matches"] == 1
+    assert metadata["overall"]["num_selection_rows"] == 2
+
+
+def _ou25_prediction(
+    *,
+    event_id: str,
+    label: int,
+    raw: float,
+    calibrated: float | None,
+    market: float,
+    match_date: str = "2024-01-01",
+) -> Ou25BenchmarkPrediction:
+    return Ou25BenchmarkPrediction(
+        match=HistoricalOddsMatch(
+            source="football-data",
+            source_event_id=event_id,
+            league_code="E0",
+            season="2023-2024",
+            match_date=match_date,
+            home_team="A",
+            away_team="B",
+            home_goals=2 if label else 0,
+            away_goals=1 if label else 0,
+            result_1x2="home" if label else "draw",
+            home_id=1,
+            away_id=2,
+        ),
+        label=label,
+        model_raw_prob=raw,
+        model_calibrated_prob=calibrated,
+        market_preclose_prob=market,
+        market_close_prob=market,
+        entry_over_odds=1.90,
+        entry_under_odds=2.00,
+        closing_over_odds=1.85,
+        closing_under_odds=2.05,
+        market_preclose_overround=(1 / 1.90) + (1 / 2.00),
+        market_close_overround=(1 / 1.85) + (1 / 2.05),
+    )

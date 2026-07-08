@@ -317,11 +317,22 @@ def main(argv: list[str] | None = None) -> int:
     benchmark.add_argument("--start-year", type=int, default=2021)
     benchmark.add_argument("--min-train", type=int, default=200)
     benchmark.add_argument("--historical-odds-source", default="football-data")
-    benchmark.add_argument("--entry-odds", default="avg_open")
+    benchmark.add_argument("--entry-odds")
     benchmark.add_argument("--closing-odds", default="avg_close")
     benchmark.add_argument("--market", default="1X2")
     benchmark.add_argument("--league", help="Historical odds league alias/code filter.")
+    benchmark.add_argument(
+        "--leagues",
+        help="Comma-separated historical odds league aliases/codes.",
+    )
     benchmark.add_argument("--season", help="Historical odds season filter, e.g. 2023-2024.")
+    benchmark.add_argument(
+        "--calibration",
+        choices=("prequential",),
+        default="prequential",
+    )
+    benchmark.add_argument("--bootstrap-block", choices=("week",), default="week")
+    benchmark.add_argument("--bootstrap-samples", type=int, default=2000)
     diagnostics = subparsers.add_parser(
         "calibration-diagnostics",
         help="Write segmented calibration and model-vs-market diagnostics for historical odds.",
@@ -856,11 +867,16 @@ def main(argv: list[str] | None = None) -> int:
                 max_picks_per_day=args.max_picks_per_day,
                 odds_mode=args.odds_mode,
                 historical_odds_source=args.historical_odds_source,
-                entry_odds=args.entry_odds,
+                entry_odds=args.entry_odds
+                or ("avg_preclose" if args.market == "OU2.5" else "avg_open"),
                 closing_odds=args.closing_odds,
                 market=args.market,
                 league=args.league,
+                leagues=_parse_str_tuple(args.leagues) if args.leagues else None,
                 season=args.season,
+                calibration=args.calibration,
+                bootstrap_block=args.bootstrap_block,
+                bootstrap_samples=args.bootstrap_samples,
                 cwd=Path.cwd(),
             )
             print(summary.as_row())

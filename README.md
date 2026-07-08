@@ -54,7 +54,7 @@ scorerecord backtest --from 2023-08-01 --to 2024-05-31 --odds-mode historical --
 scorerecord backtest --from 2021-08-01 --to 2025-05-31 --odds-mode historical --league EPL --market 1X2 --min-train 500
 scorerecord backtest-policy-grid --from 2021-08-01 --to 2025-05-31 --league EPL --min-train 500
 scorerecord backtest-policy-grid --from 2021-08-01 --to 2025-05-31 --league EPL --min-train 500 --market-shrink-alphas 1.0,0.75,0.5,0.25
-scorerecord market-benchmark-report --from 2021-08-01 --to 2025-05-31 --league EPL --min-train 500
+scorerecord market-benchmark-report --market OU2.5 --from 2021-08-01 --to 2025-05-31 --leagues EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,CHAMPIONSHIP --entry-odds avg_preclose --closing-odds avg_close --calibration prequential --bootstrap-block week --bootstrap-samples 2000 --min-train 500
 scorerecord analyze-policy-grids "outputs/backtests/policy_grid_real_odds_*.csv"
 scorerecord calibration-diagnostics --from 2021-08-01 --to 2025-05-31 --leagues EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,CHAMPIONSHIP --min-train 500
 scripts/run_multileague_validation.sh

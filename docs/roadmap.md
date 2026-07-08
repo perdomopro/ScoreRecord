@@ -11,7 +11,7 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 0 - Forward capture | Code ready; verify future fixtures with `kickoff_utc` before relying on timers. |
 | 1 - Repo and DB stabilization | Remote full `pytest` is green; full-repo `ruff` legacy debt remains separate. |
 | 2 - Evaluation and scoring | Code ready; no longer blocked by test execution, still not market-validated. |
-| 3 - Club OU2.5 benchmark | Coverage prep implemented; run in parallel and close before Phase 6 paper EV. |
+| 3 - Club OU2.5 benchmark | Benchmark code implemented and deployed; real OU2.5 run pending coverage refresh and remote gate. |
 | 4 - Today forecast web | Forecast GUI deployed and verified with 6 future resolved fixtures and clean forecast quality gates. |
 | 4.5 - Forecast recommendation UX | Implemented and deployed: principal-by-family forecasts, still no odds or value language. |
 | 4.6 - Forecast snapshots | Implemented, deployed, migrated to schema 6, and remote-gated green. |
@@ -31,6 +31,11 @@ Open loops that remain after the remote gate:
 - Phase 5.3 remote gate is green: focused tests passed `41 passed`, full suite
   passed `129 passed`, targeted `ruff` passed, deploy-time `db-health` passed,
   and CLI smoke passed for fixture/date `odds-coverage-summary`.
+- Phase 3 code gate local: `compileall`, 16 manual `test_backtest` invocations,
+  and `git diff --check` passed. A pre-refresh remote `historical-odds-report
+  --market OU2.5` showed 0 loaded OU2.5 rows in the currently loaded club seasons;
+  refresh/reingest plus benchmark execution is pending because SSH calls hit the
+  current usage limit after deploy.
 - Full-repo `ruff` is still open with legacy style findings; touched GUI files pass targeted `ruff`.
 - `fixture-summary` after the 2026-07-08 refresh confirms 104 fixtures, 0 missing
   kickoff UTC, 3 future resolved, and 5 future unresolved. The 2026-07-09 match
@@ -171,6 +176,14 @@ Technical work:
   - Accept each league for market validation only if coverage is complete enough.
   - Use leagues with poor odds coverage for forecasting/product only.
 - Generalize `market-benchmark-report` after coverage is verified.
+- Current implementation supports:
+  - `--market OU2.5`
+  - `--leagues EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,CHAMPIONSHIP`
+  - `--entry-odds avg_preclose`
+  - `--closing-odds avg_close`
+  - `--calibration prequential`
+  - `--bootstrap-block week`
+  - `--bootstrap-samples 2000`
 - Use one binary observation per match.
 - De-vig two-way odds from the same bookmaker/snapshot family.
 - Add prequential calibration only from out-of-sample prior predictions.
@@ -216,9 +229,9 @@ Run-sized increments:
 
 1. `extract_ou25_quotes`.
 2. OU2.5 coverage report.
-3. Generalized benchmark loading.
-4. Prequential calibrated OU2.5 probabilities.
-5. Multi-league benchmark readout.
+3. Generalized benchmark loading. Done in code; remote gate pending.
+4. Prequential calibrated OU2.5 probabilities. Done in code; remote gate pending.
+5. Multi-league benchmark readout. Pending real refreshed coverage and remote run.
 
 Next sequencing note:
 
