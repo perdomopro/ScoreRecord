@@ -9,6 +9,7 @@ from scorerecord.evaluate.calibration_diagnostics import (
     run_calibration_diagnostics,
 )
 from scorerecord.evaluate.backtest import HistoricalOddsMatch, RealOddsPrediction
+import math
 
 
 def _real_prediction(
@@ -60,7 +61,7 @@ def test_segment_diagnostics_surface_overconfidence_and_market_gap() -> None:
     overconfidence = _overconfidence_rows(segments, min_segment_rows=100)
 
     assert segments[0]["model_minus_market_logloss"] > 0
-    assert segments[0]["overconfidence"] == 0.80
+    assert math.isclose(segments[0]["overconfidence"], 0.80, rel_tol=1e-5)
     assert overconfidence[0]["severity"] == "critical"
     assert overconfidence[0]["model_worse_than_market"] == 1
 

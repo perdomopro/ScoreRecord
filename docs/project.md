@@ -269,6 +269,18 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 
 ## Change Log
 
+### 2026-07-10 - Phase 3 OU2.5 club benchmark readout
+
+- Ingested Football-Data `OU2.5` historical odds for `EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,CHAMPIONSHIP` from 2021-08-01 to 2025-05-31.
+- Validated complete two-way odds coverage (100% complete rate) across the tested seasons using `historical-odds-report`.
+- Ran the frozen `market-benchmark-report` command over 2000 bootstrap block resamples.
+- Benchmark results: `num_matches=8858`, `num_selection_rows=17716`.
+- Model vs Market performance: `model_calibrated_logloss=0.682365`, `market_preclose_logloss=0.673340`, `market_close_logloss=0.670710`.
+- Paired deltas: `delta_calibrated_vs_preclose=0.009025` (CI: `[0.006272, 0.012023]`), `delta_calibrated_vs_close=0.011655` (CI: `[0.008549, 0.015038]`).
+- The benchmark state is `REJECTED_FOR_INDEPENDENT_VALUE` because the model is clearly worse than the market preclose and close odds (the entire CI is above zero).
+- Interpretation: The current independent Dixon-Coles model does not beat the historical fair market for totals. This does NOT validate World Cup betting and does NOT create paper candidates.
+- Next steps: Do NOT proceed with the independent `daily-goals-v1` paper (Phase 6 is blocked). Instead, consider the Phase 8 market-anchored residual model.
+
 ### 2026-06-24 - Fase 1.5 baseline harness
 
 - Added `features/build.py` for leak-free 1X2 feature extraction from `team_rating_history.rating_pre`.

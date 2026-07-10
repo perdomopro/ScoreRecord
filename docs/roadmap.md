@@ -11,14 +11,17 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 0 - Forward capture | Code ready; verify future fixtures with `kickoff_utc` before relying on timers. |
 | 1 - Repo and DB stabilization | Remote full `pytest` is green; full-repo `ruff` legacy debt remains separate. |
 | 2 - Evaluation and scoring | Code ready; no longer blocked by test execution, still not market-validated. |
-| 3 - Club OU2.5 benchmark | Benchmark code implemented and deployed; real OU2.5 run pending coverage refresh and remote gate. |
+| 3 - Club OU2.5 benchmark | Benchmark closed; model rejected for independent value. Phase 6 remains explicitly blocked. |
 | 4 - Today forecast web | Forecast GUI deployed and verified with 6 future resolved fixtures and clean forecast quality gates. |
 | 4.5 - Forecast recommendation UX | Implemented and deployed: principal-by-family forecasts, still no odds or value language. |
 | 4.6 - Forecast snapshots | Implemented, deployed, migrated to schema 6, and remote-gated green. |
 | 5.1 - Odds coverage display | Implemented, deployed, and remote-gated green. Informational coverage only. |
 | 5.2 - Odds horizon coverage | Implemented, deployed, and remote-gated green. No EV or closing derivation. |
 | 5.3 - Operational odds coverage summary | Implemented, deployed, and remote-gated green. Observability only. |
-| 6-9 | Pending. |
+| 6 | Explicitly Blocked |
+| 7 - Independent evaluation | Bypassed. Model rejected for independent value. |
+| 8 - Market-anchored benchmark | Active path. Residual modeling. |
+| 9 | Pending. |
 
 Open loops that remain after the remote gate:
 
@@ -31,11 +34,10 @@ Open loops that remain after the remote gate:
 - Phase 5.3 remote gate is green: focused tests passed `41 passed`, full suite
   passed `129 passed`, targeted `ruff` passed, deploy-time `db-health` passed,
   and CLI smoke passed for fixture/date `odds-coverage-summary`.
-- Phase 3 code gate local: `compileall`, 16 manual `test_backtest` invocations,
-  and `git diff --check` passed. A pre-refresh remote `historical-odds-report
-  --market OU2.5` showed 0 loaded OU2.5 rows in the currently loaded club seasons;
-  refresh/reingest plus benchmark execution is pending because SSH calls hit the
-  current usage limit after deploy.
+- Phase 3 benchmark was successfully run locally after reingesting Football-Data
+  for the 6 club leagues (2021-2022 to 2024-2025). The model was rejected for
+  independent value against fair market probabilities. Phase 6 (daily-goals-v1)
+  is blocked. Proceed to Phase 8 (market-anchored residual model).
 - Full-repo `ruff` is still open with legacy style findings; touched GUI files pass targeted `ruff`.
 - `fixture-summary` after the 2026-07-08 refresh confirms 104 fixtures, 0 missing
   kickoff UTC, 3 future resolved, and 5 future unresolved. The 2026-07-09 match
@@ -229,14 +231,14 @@ Run-sized increments:
 
 1. `extract_ou25_quotes`.
 2. OU2.5 coverage report.
-3. Generalized benchmark loading. Done in code; remote gate pending.
-4. Prequential calibrated OU2.5 probabilities. Done in code; remote gate pending.
-5. Multi-league benchmark readout. Pending real refreshed coverage and remote run.
+3. Generalized benchmark loading. Done in code.
+4. Prequential calibrated OU2.5 probabilities. Done in code.
+5. Multi-league benchmark readout. Run completed. Status: REJECTED_FOR_INDEPENDENT_VALUE.
 
 Next sequencing note:
 
-- Do not start Phase 6 until Phase 3 has a benchmark readout and Phase 5.4/5.5
-  have audited captured odds integrity and frozen the entry snapshot policy.
+Phase 3 is closed and the independent Dixon-Coles model was demonstrably rejected for independent value against fair market probabilities. Phase 6 (Paper Candidates) remains explicitly blocked and World Cup betting is NOT validated. 
+The active research path is now Phase 8.0 (Market-Anchored Residual Benchmark). The market is treated as the baseline truth, and the Dixon-Coles model is treated as a residual feature on top of the pre-close market logit to see if it provides any additive signal.
 
 ## Phase 4 - Today Forecast Web
 
