@@ -277,8 +277,66 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Residual Model performance: `market_residual_dc_logloss=0.673632`.
 - Paired deltas: `delta_residual_vs_preclose=0.000334` (CI: `[-0.000003, 0.000668]`).
 - Model parameters: `coef_dc_raw_logit_minus_market_logit=-0.019804`.
-- The benchmark state is `RESIDUAL_INCONCLUSIVE` (rejected). The residual model fails to improve upon the pre-close market odds. The coefficient is negative, meaning the Dixon-Coles model signal is anti-correlated with the market's true error, making it worse than simply following the market.
-- Next steps: Phase 8 is formally rejected. We must explore other features, models, or markets.
+- The benchmark state is `RESIDUAL_INCONCLUSIVE`. The residual model does not improve upon the `market_preclose` and is worse than the `market_offset_intercept_only` baseline, with the CI crossing zero.
+- The parameter coefficient for `dc_raw_logit_minus_market_logit` is `-0.0198`. The residual of Dixon-Coles does not provide measurable improvement over the market; if anything, the learned adjustment slightly discounts it.
+- Operational interpretation: no-go for Phase 6 paper candidates. Phase 6 remains BLOCKED.
+- Next options: Phase 8.1 segmented diagnostics (to learn where it fails, not for paper) or Phase 9 corners exploration.
+
+Command used:
+```bash
+.venv/bin/scorerecord market-residual-benchmark --market OU2.5 --from 2021-08-01 --to 2025-05-31 --leagues EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,CHAMPIONSHIP --entry-odds avg_preclose --closing-odds avg_close --bootstrap-block week --bootstrap-samples 2000 --min-train 500 --features dc_raw_logit_minus_market_logit --json
+```
+
+Output:
+```json
+{
+  "market": "OU2.5",
+  "residual_benchmark_state": "RESIDUAL_INCONCLUSIVE",
+  "num_matches": 8861,
+  "num_selection_rows": 17722,
+  "date_range": "2021-08-01 to 2025-05-31",
+  "leagues": "EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,CHAMPIONSHIP",
+  "features_used": "dc_raw_logit_minus_market_logit",
+  "min_train": 500,
+  "bootstrap_samples": 2000,
+  "model_converged_count": 804,
+  "model_failed_count": 0,
+  "market_preclose_logloss": 0.6732983577035633,
+  "market_close_logloss": 0.6706575201886634,
+  "dixon_coles_calibrated_logloss": 0.6809585076839978,
+  "market_offset_intercept_only_logloss": 0.6734738624889228,
+  "market_residual_dc_logloss": 0.6736323641167565,
+  "market_preclose_brier": 0.24025271841672496,
+  "market_close_brier": 0.2389755782427904,
+  "dixon_coles_calibrated_brier": 0.24398672352546902,
+  "market_offset_intercept_only_brier": 0.24033960418788167,
+  "market_residual_dc_brier": 0.2404157708827006,
+  "delta_residual_vs_preclose": 0.00033400641319330913,
+  "delta_residual_vs_close": 0.0029748439280930417,
+  "delta_residual_vs_dixon_coles_calibrated": -0.007326143567241197,
+  "delta_residual_vs_market_offset_intercept_only": 0.00015850162783364764,
+  "ci_delta_residual_vs_preclose": [
+    -2.5336091244985274e-06,
+    0.0006682517931832089
+  ],
+  "ci_delta_residual_vs_close": [
+    0.0017873331247487201,
+    0.0040958789450282335
+  ],
+  "ci_delta_residual_vs_dixon_coles_calibrated": [
+    -0.009743139397084872,
+    -0.004804377078876484
+  ],
+  "ci_delta_residual_vs_market_offset_intercept_only": [
+    -0.00010991980843894615,
+    0.0004524105455424294
+  ],
+  "model_params_summary": {
+    "intercept": 0.0033893728856917425,
+    "coef_dc_raw_logit_minus_market_logit": -0.01980474098112503
+  }
+}
+```
 
 ### 2026-07-10 - Phase 3 OU2.5 club benchmark readout
 

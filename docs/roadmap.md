@@ -238,8 +238,8 @@ Run-sized increments:
 Next sequencing note:
 
 Phase 3 is closed and the independent Dixon-Coles model was demonstrably rejected for independent value against fair market probabilities. Phase 6 (Paper Candidates) remains explicitly blocked and World Cup betting is NOT validated. 
-The active research path WAS Phase 8.0 (Market-Anchored Residual Benchmark). However, the Phase 8 benchmark readout resulted in RESIDUAL_INCONCLUSIVE (rejected). The residual model with `dc_raw_logit_minus_market_logit` as a feature failed to improve upon the pre-close market odds.
-We must now consider exploring new features, models, or entirely new markets (e.g., corners, cards) as independent goal models and simple residuals failed to beat the market.
+The active research path WAS Phase 8.0 (Market-Anchored Residual Benchmark). However, the Phase 8 benchmark readout resulted in RESIDUAL_INCONCLUSIVE. The residual model did not improve upon `market_preclose` and was worse than the `offset-only` baseline. 
+The practical decision is a no-go for Phase 6 paper candidates. We must now explore Phase 8.1 segmented diagnostics or Phase 9 Corners.
 
 ## Phase 4 - Today Forecast Web
 
@@ -436,7 +436,7 @@ Maturity:
 - `PROMISING`: 100+ picks, 20+ days, 90% CLV CI above zero.
 - `FORWARD_VALIDATED`: 200+ picks, 95% CI above zero, stable by market, no retuning.
 
-## Phase 8 - Market-Anchored Residual Model (Status: COMPLETED, REJECTED)
+## Phase 8 - Market-Anchored Residual Model (Status: CLOSED, RESIDUAL_INCONCLUSIVE)
 
 Objective: if independent modeling loses, stop adding features blindly.
 
@@ -448,7 +448,10 @@ Technical work:
 
 Readout (2026-07-11):
 - `delta_residual_vs_preclose` = `0.000334` (CI: `[-0.000003, 0.000668]`).
-- The residual model fails to improve upon the market. Status is `RESIDUAL_INCONCLUSIVE` / Rejected.
+- State: `RESIDUAL_INCONCLUSIVE`.
+- Practical decision: no-go for Phase 6 paper candidates. The residual model did not improve `market_preclose` and was worse than offset-only.
+- Phase 6 remains BLOCKED.
+- Next options: Phase 8.1 segmented diagnostics or Phase 9 corners exploration.
 
 
 ## Phase 9 - Corners
