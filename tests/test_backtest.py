@@ -10,8 +10,8 @@ from scorerecord.evaluate.backtest import (
     RealOddsPrediction,
     _calibration_rows,
     _devig_two_way,
-    _load_historical_odds_matches,
     _load_historical_odds_markets,
+    _load_historical_odds_matches,
     _market_benchmark_summary_rows,
     _ou25_benchmark_metric_sets,
     _select_backtest_bets,
@@ -701,3 +701,66 @@ def _ou25_prediction(
         market_preclose_overround=(1 / 1.90) + (1 / 2.00),
         market_close_overround=(1 / 1.85) + (1 / 2.05),
     )
+
+
+def test_cli_market_benchmark_report_accepts_frozen_command(monkeypatch) -> None:
+    """Test market-benchmark-report parser/handler accepts the frozen Phase 3 command."""
+    from scorerecord import cli
+    
+    passed_args = {}
+    def mock_run(*args, **kwargs):
+        passed_args.update(kwargs)
+        class DummySummary:
+            def as_row(self): return ""
+        return DummySummary()
+
+    monkeypatch.setattr("scorerecord.cli.run_market_benchmark_report", mock_run)
+    # Also mock connect to return a dummy context manager
+    class MockConn:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+    monkeypatch.setattr("scorerecord.cli.connect", lambda *args, **kwargs: MockConn())
+    monkeypatch.setattr("scorerecord.cli.init_db", lambda *args, **kwargs: None)
+    
+    # Run the exact Phase 3 command structure
+    argv = [
+        "market-benchmark-report",
+        "--from", "2021-08-01",
+        "--to", "2025-05-31",
+        "--leagues", "EPL,LA_LIGA",
+    ]
+    cli.main(argv)
+    
+    assert passed_args["leagues"] == ("EPL", "LA_LIGA")
+    assert passed_args["calibration"] == "prequential"
+    assert passed_args["bootstrap_block"] == "week"
+    assert passed_args["bootstrap_samples"] == 2000
+
+
+def test_cli_backtest_command_parser_handler_does_not_crash(monkeypatch) -> None:
+    """Test backtest command parser/handler does not crash from missing args."""
+    from scorerecord import cli
+    
+    passed_args = {}
+    def mock_run(*args, **kwargs):
+        passed_args.update(kwargs)
+        class DummySummary:
+            def as_row(self): return ""
+        return DummySummary()
+
+    monkeypatch.setattr("scorerecord.cli.run_historical_backtest", mock_run)
+    class MockConn:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+    monkeypatch.setattr("scorerecord.cli.connect", lambda *args, **kwargs: MockConn())
+    monkeypatch.setattr("scorerecord.cli.init_db", lambda *args, **kwargs: None)
+    
+    argv = [
+        "backtest",
+        "--from", "2021-08-01",
+        "--to", "2025-05-31",
+    ]
+    cli.main(argv)
+    
+    # Should not crash and should pass basic args
+    assert passed_args["from_date"].isoformat() == "2021-08-01"

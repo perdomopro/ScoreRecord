@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 import dataclasses
+import json
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -22,13 +22,13 @@ from scorerecord.evaluate.backtest import (
     run_market_benchmark_report,
     run_real_odds_policy_grid,
 )
-from scorerecord.evaluate.market_residual import (
-    run_market_residual_benchmark,
-)
 from scorerecord.evaluate.calibration_diagnostics import run_calibration_diagnostics
 from scorerecord.evaluate.calibrator_drift import monitor_calibrator_drift
 from scorerecord.evaluate.edge import compute_edges
 from scorerecord.evaluate.goal_markets import run_goal_market_walk_forward
+from scorerecord.evaluate.market_residual import (
+    run_market_residual_benchmark,
+)
 from scorerecord.evaluate.policy_analysis import analyze_policy_grids
 from scorerecord.evaluate.recommendations import (
     compute_recommendation_clv,
@@ -340,18 +340,29 @@ def main(argv: list[str] | None = None) -> int:
     
     residual = subparsers.add_parser(
         "market-residual-benchmark",
-        help="Compare walk-forward residual model probabilities against fair historical market probabilities.",
+        help=(
+            "Compare walk-forward residual model probabilities against "
+            "fair historical market probabilities."
+        ),
     )
     residual.add_argument("--from", dest="from_date", required=True, help="YYYY-MM-DD")
     residual.add_argument("--to", dest="to_date", required=True, help="YYYY-MM-DD")
     residual.add_argument("--market", default="OU2.5", help="Market to run residual on")
-    residual.add_argument("--leagues", required=True, help="Comma-separated historical odds league alias/code filters.")
+    residual.add_argument(
+        "--leagues",
+        required=True,
+        help="Comma-separated historical odds league alias/code filters.",
+    )
     residual.add_argument("--entry-odds", required=True, help="Entry odds type")
     residual.add_argument("--closing-odds", required=True, help="Closing odds type")
-    residual.add_argument("--bootstrap-block", choices=["month", "week", "fixture_day"], default="week")
+    residual.add_argument("--bootstrap-block", choices=["week"], default="week")
     residual.add_argument("--bootstrap-samples", type=int, default=2000)
     residual.add_argument("--min-train", type=int, default=500)
-    residual.add_argument("--features", default="dc_raw_logit_minus_market_logit", help="Comma-separated features")
+    residual.add_argument(
+        "--features",
+        default="dc_raw_logit_minus_market_logit",
+        help="Comma-separated features",
+    )
     residual.add_argument("--l2", type=float, default=1.0)
     residual.add_argument("--max-iter", type=int, default=500)
     residual.add_argument("--json", action="store_true", help="Output JSON instead of summary")
@@ -895,11 +906,7 @@ def main(argv: list[str] | None = None) -> int:
                 closing_odds=args.closing_odds,
                 market=args.market,
                 league=args.league,
-                leagues=_parse_str_tuple(args.leagues) if args.leagues else None,
                 season=args.season,
-                calibration=args.calibration,
-                bootstrap_block=args.bootstrap_block,
-                bootstrap_samples=args.bootstrap_samples,
                 cwd=Path.cwd(),
             )
             print(summary.as_row())
@@ -944,7 +951,11 @@ def main(argv: list[str] | None = None) -> int:
                 closing_odds=args.closing_odds,
                 market=args.market,
                 league=args.league,
+                leagues=_parse_str_tuple(args.leagues) if args.leagues else None,
                 season=args.season,
+                calibration=args.calibration,
+                bootstrap_block=args.bootstrap_block,
+                bootstrap_samples=args.bootstrap_samples,
                 cwd=Path.cwd(),
             )
             print(summary.as_row())

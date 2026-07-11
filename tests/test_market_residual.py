@@ -68,6 +68,9 @@ def test_extract_features_no_closing_market():
     with pytest.raises(ValueError, match="is not in the allowlist"):
         _extract_features(rows, ("closing_odds",))
         
+    with pytest.raises(ValueError, match="is not in the allowlist"):
+        _extract_features(rows, ("elo_diff",))
+
     # Allowed feature works
     X = _extract_features(rows, ("dc_raw_logit_minus_market_logit",))
     assert X.shape == (1, 1)
@@ -142,3 +145,73 @@ def test_no_paper_candidates_produced():
     assert "stake" not in fields
     assert "kelly" not in fields
     assert "recommendation" not in fields
+
+
+def test_cli_market_residual_benchmark_rejects_unsupported_market_and_features(
+    monkeypatch, capsys
+) -> None:
+    """Test market-residual-benchmark rejects market != OU2.5 and unsupported features."""
+    from scorerecord import cli
+    
+    class MockConn:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+    monkeypatch.setattr("scorerecord.cli.connect", lambda *args, **kwargs: MockConn())
+    monkeypatch.setattr("scorerecord.cli.init_db", lambda *args, **kwargs: None)
+    
+    # 1. Market != OU2.5
+    argv_market = [
+        "market-residual-benchmark",
+        "--from", "2021-08-01",
+        "--to", "2025-05-31",
+        "--market", "1X2",
+        "--leagues", "EPL",
+        "--entry-odds", "avg_preclose",
+        "--closing-odds", "avg_close",
+    ]
+    ret = cli.main(argv_market)
+    assert ret == 1
+    captured = capsys.readouterr()
+    assert "only supports OU2.5" in captured.out
+    
+    # 2. Unsupported feature via CLI should trigger ValueError in
+    # run_market_residual_benchmark's _extract_features
+    # We'll mock build_ou25_residual_dataset to return a dummy row so it hits _extract_features
+    from scorerecord.evaluate.market_residual import Ou25ResidualRow
+    rows = [Ou25ResidualRow(
+        match_id="1", date="2024-01-01", league="EPL", season="2024", y=1,
+        market_preclose_fair=0.5, market_close_fair=0.5, market_preclose_logit=0.0,
+        dixon_coles_raw_prob=0.5, dixon_coles_calibrated_prob=None,
+        dc_raw_logit_minus_market_logit=0.0, dc_calibrated_logit_minus_market_logit=None
+    )]
+    monkeypatch.setattr(
+        "scorerecord.evaluate.market_residual.build_ou25_residual_dataset",
+        lambda *args, **kwargs: rows,
+    )
+    
+    argv_feature = [
+        "market-residual-benchmark",
+        "--from", "2021-08-01",
+        "--to", "2025-05-31",
+        "--leagues", "EPL",
+        "--entry-odds", "avg_preclose",
+        "--closing-odds", "avg_close",
+        "--min-train", "0",
+        "--features", "elo_diff"
+    ]
+    import pytest
+    with pytest.raises(ValueError, match="is not in the allowlist"):
+        cli.main(argv_feature)
+        
+    # 3. Bootstrap block != week
+    argv_block = [
+        "market-residual-benchmark",
+        "--from", "2021-08-01",
+        "--to", "2025-05-31",
+        "--leagues", "EPL",
+        "--entry-odds", "avg_preclose",
+        "--closing-odds", "avg_close",
+        "--bootstrap-block", "month"
+    ]
+    with pytest.raises(SystemExit):
+        cli.main(argv_block)

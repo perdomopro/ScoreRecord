@@ -236,6 +236,9 @@ def run_market_residual_benchmark(
     l2: float = 1.0,
     max_iter: int = 500,
 ) -> MarketResidualBenchmarkReport:
+    if bootstrap_block != "week":
+        raise ValueError("Phase 8.0 only supports bootstrap_block='week'.")
+
     dataset = build_ou25_residual_dataset(
         conn,
         from_date=from_date,
@@ -460,15 +463,14 @@ def _extract_features(rows: list[Ou25ResidualRow], features: tuple[str, ...]) ->
         
     allowed_features = {
         "dc_raw_logit_minus_market_logit",
-        "dc_calibrated_logit_minus_market_logit",
-        "elo_diff"
     }
     
     for f in features:
         if f not in allowed_features:
             raise ValueError(
                 f"Feature '{f}' is not in the allowlist. Allowed features are: {allowed_features}. "
-                "market_close_* and other future leakages are strictly prohibited."
+                "elo_diff, dc_calibrated_logit_minus_market_logit, "
+                "and market_close_* are strictly prohibited for now."
             )
 
     out = np.zeros((len(rows), len(features)), dtype=float)
