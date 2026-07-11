@@ -10,8 +10,11 @@ from datetime import date
 import numpy as np
 
 from scorerecord.evaluate.backtest import (
+    _load_historical_odds_matches,
+    _load_historical_odds_markets,
     _walk_forward_ou25_benchmark_predictions,
 )
+from scorerecord.ingest.football_data import resolve_league_code
 from scorerecord.evaluate.scoring import (
     binary_brier,
     binary_logloss,
@@ -131,16 +134,30 @@ def build_ou25_residual_dataset(
     closing_odds: str,
     min_train: int,
 ) -> list[Ou25ResidualRow]:
-    predictions = _walk_forward_ou25_benchmark_predictions(
+    league_codes = tuple(resolve_league_code(value) for value in leagues)
+    matches = _load_historical_odds_matches(
         conn,
-        from_date=from_date,
+        source="football-data",
+        league_code=league_codes[0] if len(league_codes) == 1 else None,
+        league_codes=league_codes or None,
+        test_season=None,
         to_date=to_date,
-        leagues=leagues,
-        min_train_size=min_train,
+    )
+    odds = _load_historical_odds_markets(
+        conn,
+        source="football-data",
         entry_odds_type=entry_odds,
         closing_odds_type=closing_odds,
-        block_size_days=7,
-        samples=1,
+        market="OU2.5",
+    )
+    predictions = _walk_forward_ou25_benchmark_predictions(
+        matches,
+        odds=odds,
+        from_date=from_date,
+        to_date=to_date,
+        start_year=2021,
+        min_train=min_train,
+        calibration="prequential",
     )
 
     dataset: list[Ou25ResidualRow] = []
