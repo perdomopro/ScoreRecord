@@ -269,6 +269,17 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 
 ## Change Log
 
+### 2026-07-11 - Phase 8 OU2.5 market-anchored residual benchmark readout
+
+- Ran `market-residual-benchmark` command over 2000 bootstrap block resamples.
+- Benchmark results: `num_matches=8861`, `num_selection_rows=17722`.
+- Base Model vs Market performance: `dixon_coles_calibrated_logloss=0.680958`, `market_preclose_logloss=0.673298`.
+- Residual Model performance: `market_residual_dc_logloss=0.673632`.
+- Paired deltas: `delta_residual_vs_preclose=0.000334` (CI: `[-0.000003, 0.000668]`).
+- Model parameters: `coef_dc_raw_logit_minus_market_logit=-0.019804`.
+- The benchmark state is `RESIDUAL_INCONCLUSIVE` (rejected). The residual model fails to improve upon the pre-close market odds. The coefficient is negative, meaning the Dixon-Coles model signal is anti-correlated with the market's true error, making it worse than simply following the market.
+- Next steps: Phase 8 is formally rejected. We must explore other features, models, or markets.
+
 ### 2026-07-10 - Phase 3 OU2.5 club benchmark readout
 
 - Ingested Football-Data `OU2.5` historical odds for `EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,CHAMPIONSHIP` from 2021-08-01 to 2025-05-31.
@@ -280,6 +291,7 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - The benchmark state is `REJECTED_FOR_INDEPENDENT_VALUE` because the model is clearly worse than the market preclose and close odds (the entire CI is above zero).
 - Interpretation: The current independent Dixon-Coles model does not beat the historical fair market for totals. This does NOT validate World Cup betting and does NOT create paper candidates.
 - Next steps: Do NOT proceed with the independent `daily-goals-v1` paper (Phase 6 is blocked). Instead, consider the Phase 8 market-anchored residual model.
+
 
 ### 2026-06-24 - Fase 1.5 baseline harness
 

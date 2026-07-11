@@ -238,7 +238,8 @@ Run-sized increments:
 Next sequencing note:
 
 Phase 3 is closed and the independent Dixon-Coles model was demonstrably rejected for independent value against fair market probabilities. Phase 6 (Paper Candidates) remains explicitly blocked and World Cup betting is NOT validated. 
-The active research path is now Phase 8.0 (Market-Anchored Residual Benchmark). The market is treated as the baseline truth, and the Dixon-Coles model is treated as a residual feature on top of the pre-close market logit to see if it provides any additive signal.
+The active research path WAS Phase 8.0 (Market-Anchored Residual Benchmark). However, the Phase 8 benchmark readout resulted in RESIDUAL_INCONCLUSIVE (rejected). The residual model with `dc_raw_logit_minus_market_logit` as a feature failed to improve upon the pre-close market odds.
+We must now consider exploring new features, models, or entirely new markets (e.g., corners, cards) as independent goal models and simple residuals failed to beat the market.
 
 ## Phase 4 - Today Forecast Web
 
@@ -435,7 +436,7 @@ Maturity:
 - `PROMISING`: 100+ picks, 20+ days, 90% CLV CI above zero.
 - `FORWARD_VALIDATED`: 200+ picks, 95% CI above zero, stable by market, no retuning.
 
-## Phase 8 - Market-Anchored Residual Model
+## Phase 8 - Market-Anchored Residual Model (Status: COMPLETED, REJECTED)
 
 Objective: if independent modeling loses, stop adding features blindly.
 
@@ -443,8 +444,12 @@ Technical work:
 
 - Use `logit(p_final) = logit(p_market_at_decision) + residual_model(features)`.
 - Treat Dixon-Coles outputs as features, not truth.
-- Alternative target: predict fair closing probability from earlier market prices plus features.
 - Benchmark market-at-decision vs market-plus-residual vs closing market.
+
+Readout (2026-07-11):
+- `delta_residual_vs_preclose` = `0.000334` (CI: `[-0.000003, 0.000668]`).
+- The residual model fails to improve upon the market. Status is `RESIDUAL_INCONCLUSIVE` / Rejected.
+
 
 ## Phase 9 - Corners
 
