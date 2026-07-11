@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import dataclasses
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -21,7 +22,9 @@ from scorerecord.evaluate.backtest import (
     run_market_benchmark_report,
     run_real_odds_policy_grid,
 )
-from scorerecord.evaluate.market_residual import run_market_residual_benchmark
+from scorerecord.evaluate.market_residual import (
+    run_market_residual_benchmark,
+)
 from scorerecord.evaluate.calibration_diagnostics import run_calibration_diagnostics
 from scorerecord.evaluate.calibrator_drift import monitor_calibrator_drift
 from scorerecord.evaluate.edge import compute_edges
@@ -327,10 +330,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma-separated historical odds league aliases/codes.",
     )
     benchmark.add_argument("--season", help="Historical odds season filter, e.g. 2023-2024.")
-    benchmark.add_argument("--leagues", help="Comma-separated historical odds league alias/code filters.")
-    benchmark.add_argument("--calibration", choices=["marginal", "platt", "platt_prequential"], default="platt")
-    benchmark.add_argument("--bootstrap-block", choices=["month", "week", "fixture_day"], default="month")
-    benchmark.add_argument("--bootstrap-samples", type=int, default=100)
+    benchmark.add_argument(
+        "--calibration",
+        choices=("prequential",),
+        default="prequential",
+    )
+    benchmark.add_argument("--bootstrap-block", choices=("week",), default="week")
+    benchmark.add_argument("--bootstrap-samples", type=int, default=2000)
     
     residual = subparsers.add_parser(
         "market-residual-benchmark",
@@ -349,6 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     residual.add_argument("--l2", type=float, default=1.0)
     residual.add_argument("--max-iter", type=int, default=500)
     residual.add_argument("--json", action="store_true", help="Output JSON instead of summary")
+    
     diagnostics = subparsers.add_parser(
         "calibration-diagnostics",
         help="Write segmented calibration and model-vs-market diagnostics for historical odds.",
@@ -944,8 +951,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "market-residual-benchmark":
-            import json
-            import dataclasses
+            if args.market != "OU2.5":
+                print("Error: market-residual-benchmark only supports OU2.5 at this time.")
+                return 1
+                
             report = run_market_residual_benchmark(
                 conn,
                 from_date=date.fromisoformat(args.from_date),

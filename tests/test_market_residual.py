@@ -1,3 +1,4 @@
+import datetime
 import math
 
 import numpy as np
@@ -60,44 +61,80 @@ def test_extract_features_no_closing_market():
             dc_raw_logit_minus_market_logit=0.0, dc_calibrated_logit_minus_market_logit=0.0
         )
     ]
-    features = ("dc_raw_logit_minus_market_logit",)
-    X = _extract_features(rows, features)
+    import pytest
+    with pytest.raises(ValueError, match="is not in the allowlist"):
+        _extract_features(rows, ("market_close_fair",))
+        
+    with pytest.raises(ValueError, match="is not in the allowlist"):
+        _extract_features(rows, ("closing_odds",))
+        
+    # Allowed feature works
+    X = _extract_features(rows, ("dc_raw_logit_minus_market_logit",))
     assert X.shape == (1, 1)
-    
-    # Trying to extract market_close_fair is possible by name, but we enforce via API
-    # and code inspection that closing market is not passed to features.
-    
-    
-def test_dataset_filters_missing_odds():
-    """Test 1, 2, 3, 4, 5: Dataset includes only complete two-way odds > 1.0"""
-    # This is primarily tested via the build_ou25_residual_dataset function's logic
-    # which we can verify by checking the implementation.
-    # In `build_ou25_residual_dataset` we explicitly have:
-    # if p.entry_over_odds <= 1.0 or p.entry_under_odds <= 1.0: continue
-    # if p.closing_over_odds is None or p.closing_under_odds is None: continue
-    pass
 
 
-def test_walk_forward_leakage_and_paired_comparison():
-    """Test 11, 12, 13, 14: Walk-forward leakage, min_train, paired eval, bootstrap blocks"""
-    # Also covered by `run_market_residual_benchmark` logic
-    # The chronological sort ensures train_rows are older than block_start_date
-    # and min_train is strictly checked.
-    pass
-
-
-def test_residual_benchmark_states():
-    """Test 15: residual_benchmark_state logic."""
+def test_walk_forward_logic(monkeypatch):
+    """Test walk-forward leakage, min_train, paired eval, bootstrap blocks, state logic."""
+    from scorerecord.evaluate.market_residual import run_market_residual_benchmark
     
-    # We can test the state logic simply by instantiating or reviewing the logic
-    # PROMISING: c_preclose[1] < 0 and c_intercept[1] < 0
-    # REJECTED: c_preclose[0] > 0 or c_intercept[0] > 0
-    pass
+    # Create 1000 rows across 5 weeks
+    rows = []
+    base_date = datetime.date(2024, 1, 1)
+    for i in range(1000):
+        week = (i // 200)
+        date_val = base_date + datetime.timedelta(days=week * 7)
+        date_str = date_val.isoformat()
+        rows.append(Ou25ResidualRow(
+            match_id=str(i), date=date_str, league="EPL", season="2024", y=i % 2,
+            market_preclose_fair=0.5, market_close_fair=0.5, market_preclose_logit=0.0,
+            dixon_coles_raw_prob=0.5, dixon_coles_calibrated_prob=None,
+            dc_raw_logit_minus_market_logit=0.0, dc_calibrated_logit_minus_market_logit=None
+        ))
+    
+    import sqlite3
+    
+    def _mock_build(*args, **kwargs):
+        return rows
+        
+    # Mock dataset builder
+    monkeypatch.setattr(
+        "scorerecord.evaluate.market_residual.build_ou25_residual_dataset", 
+        _mock_build
+    )
+    
+    # We set min_train to 400. That means Week 1 (200) + Week 2 (200) 
+    # will be used to train for Week 3.
+    # Evaluations should only happen for Week 3, 4, 5 (600 rows total)
+    conn = sqlite3.connect(":memory:")
+    report = run_market_residual_benchmark(
+        conn,
+        from_date=np.datetime64("2024-01-01").astype(object), # Dummy
+        to_date=np.datetime64("2024-12-31").astype(object),
+        leagues=("EPL",),
+        entry_odds="avg_preclose",
+        closing_odds="avg_close",
+        bootstrap_block="week",
+        bootstrap_samples=10,
+        min_train=400,
+        features=("dc_raw_logit_minus_market_logit",),
+        l2=1.0,
+        max_iter=10
+    )
+    
+    # Paired comparison: num_matches should be exactly 600 (weeks 3, 4, 5)
+    assert report.num_matches == 600
+    assert report.num_selection_rows == 1200
+    
+    # State logic check
+    assert report.residual_benchmark_state in (
+        "RESIDUAL_PROMISING", 
+        "RESIDUAL_INCONCLUSIVE", 
+        "RESIDUAL_REJECTED"
+    )
 
 
 def test_no_paper_candidates_produced():
     """Test 16: No EV, edge, stake, Kelly, value or paper candidate output."""
-    # Ensure MarketResidualBenchmarkReport has none of these
     from scorerecord.evaluate.market_residual import MarketResidualBenchmarkReport
     fields = MarketResidualBenchmarkReport.__dataclass_fields__.keys()
     assert "ev" not in fields

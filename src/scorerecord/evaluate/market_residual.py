@@ -457,6 +457,20 @@ def run_market_residual_benchmark(
 def _extract_features(rows: list[Ou25ResidualRow], features: tuple[str, ...]) -> np.ndarray:
     if not features:
         return np.zeros((len(rows), 0), dtype=float)
+        
+    allowed_features = {
+        "dc_raw_logit_minus_market_logit",
+        "dc_calibrated_logit_minus_market_logit",
+        "elo_diff"
+    }
+    
+    for f in features:
+        if f not in allowed_features:
+            raise ValueError(
+                f"Feature '{f}' is not in the allowlist. Allowed features are: {allowed_features}. "
+                "market_close_* and other future leakages are strictly prohibited."
+            )
+
     out = np.zeros((len(rows), len(features)), dtype=float)
     for i, row in enumerate(rows):
         for j, f in enumerate(features):
