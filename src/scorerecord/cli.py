@@ -416,7 +416,10 @@ def main(argv: list[str] | None = None) -> int:
     api_probe.add_argument("--sleep-seconds", type=float, default=0.0)
     api_probe.add_argument("--json", action="store_true")
 
-    goals_v2 = subparsers.add_parser("goals-v2-lambda-benchmark", help="Benchmark Goals V2 lambdas.")
+    goals_v2 = subparsers.add_parser(
+        "goals-v2-lambda-benchmark",
+        help="Benchmark Goals V2 lambdas.",
+    )
     goals_v2.add_argument("--from", dest="from_date", required=True)
     goals_v2.add_argument("--to", dest="to_date", required=True)
     goals_v2.add_argument("--leagues", required=True)
@@ -425,6 +428,24 @@ def main(argv: list[str] | None = None) -> int:
     goals_v2.add_argument("--bootstrap-samples", type=int, default=500)
     goals_v2.add_argument("--predictions-out")
     goals_v2.add_argument("--json", action="store_true")
+
+    goals_v2_mkt = subparsers.add_parser(
+        "goals-v2-market-benchmark",
+        help="Benchmark Goals V2 OU2.5 against historical market odds.",
+    )
+    goals_v2_mkt.add_argument("--train-from", required=True, help="YYYY-MM-DD")
+    goals_v2_mkt.add_argument("--eval-from", required=True, help="YYYY-MM-DD")
+    goals_v2_mkt.add_argument("--to", dest="to_date", required=True, help="YYYY-MM-DD")
+    goals_v2_mkt.add_argument("--leagues", required=True)
+    goals_v2_mkt.add_argument("--market", default="OU2.5")
+    goals_v2_mkt.add_argument("--entry-odds", default="avg_preclose")
+    goals_v2_mkt.add_argument("--closing-odds", default="avg_close")
+    goals_v2_mkt.add_argument("--half-life-days", type=float, default=365.0)
+    goals_v2_mkt.add_argument("--min-train", type=int, default=500)
+    goals_v2_mkt.add_argument("--bootstrap-block", choices=("week",), default="week")
+    goals_v2_mkt.add_argument("--bootstrap-samples", type=int, default=2000)
+    goals_v2_mkt.add_argument("--predictions-out")
+    goals_v2_mkt.add_argument("--json", action="store_true")
 
     args = parser.parse_args(argv)
     settings = load_settings()
@@ -1042,6 +1063,29 @@ def main(argv: list[str] | None = None) -> int:
                 from_date=date.fromisoformat(args.from_date),
                 to_date=date.fromisoformat(args.to_date),
                 leagues=_parse_str_tuple(args.leagues),
+                half_life_days=args.half_life_days,
+                min_train=args.min_train,
+                bootstrap_samples=args.bootstrap_samples,
+                predictions_out=args.predictions_out,
+            )
+            if args.json:
+                print(json.dumps(dataclasses.asdict(report), indent=2))
+            else:
+                for k, v in dataclasses.asdict(report).items():
+                    print(f"{k}={v}")
+            return 0
+
+        if args.command == "goals-v2-market-benchmark":
+            from scorerecord.evaluate.goals_v2_market_benchmark import run_goals_v2_market_benchmark
+            report = run_goals_v2_market_benchmark(
+                conn,
+                train_from=date.fromisoformat(args.train_from),
+                eval_from=date.fromisoformat(args.eval_from),
+                to_date=date.fromisoformat(args.to_date),
+                leagues=_parse_str_tuple(args.leagues),
+                market=args.market,
+                entry_odds=args.entry_odds,
+                closing_odds=args.closing_odds,
                 half_life_days=args.half_life_days,
                 min_train=args.min_train,
                 bootstrap_samples=args.bootstrap_samples,
