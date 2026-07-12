@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from scorerecord.evaluate.scoring import binary_brier, binary_logloss, multiclass_logloss
 from scorerecord.runs import ingest_run, record_quality
 from scorerecord.time_utils import parse_datetime_utc, parse_kickoff_utc
-
 
 _SUPPORTED_MARKET_PREFIXES = ("OU",)
 _SUPPORTED_MARKETS = {"1X2", "BTTS", "double_chance"}
@@ -48,7 +47,7 @@ def settle_fixtures(
     dry_run: bool = False,
     cwd: Path | None = None,
 ) -> SettlementSummary:
-    settled_utc = as_of or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    settled_utc = as_of or datetime.now(UTC).isoformat(timespec="seconds")
     finished_fixtures = _finished_fixture_count(conn)
     missing_prediction_fixtures = _missing_prediction_fixture_count(conn)
     rows = _settlement_candidates(conn, only_unsettled=only_unsettled)

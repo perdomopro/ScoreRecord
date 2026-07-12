@@ -1,15 +1,15 @@
 import csv
+import math
 import sqlite3
 from datetime import date
 
 from scorerecord.db import init_db
+from scorerecord.evaluate.backtest import HistoricalOddsMatch, RealOddsPrediction
 from scorerecord.evaluate.calibration_diagnostics import (
     _overconfidence_rows,
     _segment_rows,
     run_calibration_diagnostics,
 )
-from scorerecord.evaluate.backtest import HistoricalOddsMatch, RealOddsPrediction
-import math
 
 
 def _real_prediction(

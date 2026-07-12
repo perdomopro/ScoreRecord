@@ -6,13 +6,12 @@ import json
 import math
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import median
 
 from scorerecord.models.manifest import MODEL_VERSION
 from scorerecord.runs import ingest_run, record_quality
-
 
 HIGH_EDGE_ALERT_THRESHOLD = 0.25
 ODDS_OUTLIER_RATIO = 1.20
@@ -103,7 +102,7 @@ def compute_edges(
     if dry_run:
         return summary
 
-    generated_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    generated_utc = datetime.now(UTC).isoformat(timespec="seconds")
     with ingest_run(conn, "compute-edge", source="odds+prediction", cwd=cwd) as run_id:
         inserted = 0
         for row in rows:
@@ -168,7 +167,7 @@ def _edge_rows(
     prediction_rows = _latest_predictions(conn, model_version=model_version)
     fixture_context = _fixture_context(conn)
     market_stats = _selection_market_stats(odds_rows)
-    as_of = datetime.now(timezone.utc)
+    as_of = datetime.now(UTC)
     rows: list[EdgeRow] = []
     for key, selections in odds_rows.items():
         fixture_id, book, market = key
@@ -485,8 +484,8 @@ def _parse_datetime(value: str) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _odds_quality_flags(

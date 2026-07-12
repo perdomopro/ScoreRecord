@@ -14,7 +14,6 @@ from scorerecord.aliases import (
 )
 from scorerecord.sources import MARTJ42_GOALSCORERS_URL, MARTJ42_RESULTS_URL, fetch_text
 
-
 DEFAULT_START_DATE = date(2018, 1, 1)
 
 

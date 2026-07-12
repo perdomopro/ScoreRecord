@@ -436,6 +436,11 @@ Maturity:
 - `PROMISING`: 100+ picks, 20+ days, 90% CLV CI above zero.
 - `FORWARD_VALIDATED`: 200+ picks, 95% CI above zero, stable by market, no retuning.
 
+- **Phase 10.0:** Shots/SOT Feasibility Audit — **CLOSED** (`V2_ELIGIBLE` for top leagues)
+- **Phase 10.1:** Shots/SOT Process Rating Prototype — **CLOSED** (`PROCESS_PROMISING`. Goals V2 path proceeds.)
+- **Phase 10.2:** Goals V2 Lambda Modeling — **CLOSED** (Strict weekly prequential, 0 external API calls)
+- **Phase 10.3:** Market benchmark for Goals V2 — **NEXT**
+
 ## Phase 8 - Market-Anchored Residual Model (Status: CLOSED, RESIDUAL_INCONCLUSIVE)
 
 Objective: if independent modeling loses, stop adding features blindly.

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 
 @contextmanager

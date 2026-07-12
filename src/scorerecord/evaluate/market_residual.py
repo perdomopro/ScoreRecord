@@ -10,16 +10,16 @@ from datetime import date
 import numpy as np
 
 from scorerecord.evaluate.backtest import (
-    _load_historical_odds_matches,
     _load_historical_odds_markets,
+    _load_historical_odds_matches,
     _walk_forward_ou25_benchmark_predictions,
 )
-from scorerecord.ingest.football_data import resolve_league_code
 from scorerecord.evaluate.scoring import (
     binary_brier,
     binary_logloss,
     club_week_block,
 )
+from scorerecord.ingest.football_data import resolve_league_code
 
 
 def _stable_sigmoid(x: np.ndarray) -> np.ndarray:
@@ -76,13 +76,13 @@ class LogisticResidualModel:
         n_samples, n_features = X.shape
         self.feature_mean_ = np.mean(X, axis=0)
         self.feature_scale_ = np.std(X, axis=0)
-        
+
         # Avoid division by zero for zero-variance features
         self.feature_scale_ = np.where(self.feature_scale_ < 1e-9, 1.0, self.feature_scale_)
 
         X_scaled = (X - self.feature_mean_) / self.feature_scale_
         X_mat = np.hstack([np.ones((n_samples, 1)), X_scaled])
-        
+
         beta = np.zeros(n_features + 1)
         l2_matrix = np.eye(n_features + 1) * self.l2
         l2_matrix[0, 0] = 0.0  # Do not regularize intercept
@@ -117,7 +117,7 @@ class LogisticResidualModel:
     def predict_proba(self, offset_logit: np.ndarray, X: np.ndarray) -> np.ndarray:
         if self.coef_ is None or self.feature_mean_ is None or self.feature_scale_ is None:
             raise RuntimeError("Model is not fitted")
-        
+
         X_scaled = (X - self.feature_mean_) / self.feature_scale_
         logits = offset_logit + self.intercept_ + X_scaled @ self.coef_
         p = _stable_sigmoid(logits)
@@ -179,7 +179,7 @@ def build_ou25_residual_dataset(
         # For binary y: label is 1 if total_goals > 2.5 else 0 (matches p.label)
         preclose_logit = float(_stable_logit(np.array([p.market_preclose_prob]))[0])
         raw_logit = float(_stable_logit(np.array([p.model_raw_prob]))[0])
-        
+
         calibrated_logit_minus_market = None
         if p.model_calibrated_prob is not None:
             cal_logit = float(_stable_logit(np.array([p.model_calibrated_prob]))[0])
@@ -389,7 +389,7 @@ def run_market_residual_benchmark(
     # Bootstrapping for CIs
     rng = np.random.default_rng(0)
     block_keys = list(metrics_by_block.keys())
-    
+
     ci_preclose = []
     ci_close = []
     ci_dc = []
@@ -401,7 +401,7 @@ def run_market_residual_benchmark(
         s_d_close = []
         s_d_dc = []
         s_d_intercept = []
-        
+
         for k in sample_keys:
             for item in metrics_by_block[k]:
                 s_d_preclose.append(item["d_preclose"])
@@ -409,7 +409,7 @@ def run_market_residual_benchmark(
                 if item["d_dc"] is not None:
                     s_d_dc.append(item["d_dc"])
                 s_d_intercept.append(item["d_intercept"])
-                
+
         ci_preclose.append(np.mean(s_d_preclose))
         ci_close.append(np.mean(s_d_close))
         if s_d_dc:
@@ -426,7 +426,7 @@ def run_market_residual_benchmark(
 
     promising = (c_preclose[1] < 0.0) and (c_intercept[1] < 0.0)
     rejected = (c_preclose[0] > 0.0) or (c_intercept[0] > 0.0)
-    
+
     if promising:
         state = "RESIDUAL_PROMISING"
     elif rejected:
@@ -477,11 +477,11 @@ def run_market_residual_benchmark(
 def _extract_features(rows: list[Ou25ResidualRow], features: tuple[str, ...]) -> np.ndarray:
     if not features:
         return np.zeros((len(rows), 0), dtype=float)
-        
+
     allowed_features = {
         "dc_raw_logit_minus_market_logit",
     }
-    
+
     for f in features:
         if f not in allowed_features:
             raise ValueError(

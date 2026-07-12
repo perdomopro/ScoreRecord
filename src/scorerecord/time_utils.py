@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
-
+from datetime import UTC, datetime, timedelta, timezone
 
 _LOCAL_UTC_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?\s+UTC([+-]\d{1,2})(?::?(\d{2}))?$"
@@ -26,15 +25,15 @@ def parse_datetime_utc(value: object) -> datetime | None:
         local_dt = datetime.fromisoformat(
             f"{date_part}T{hour}:{minute}:{second or '00'}"
         ).replace(tzinfo=offset)
-        return local_dt.astimezone(timezone.utc)
+        return local_dt.astimezone(UTC)
 
     try:
         parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def parse_kickoff_utc(
@@ -48,4 +47,4 @@ def parse_kickoff_utc(
 def format_utc(value: datetime | None) -> str | None:
     if value is None:
         return None
-    return value.astimezone(timezone.utc).isoformat(timespec="seconds")
+    return value.astimezone(UTC).isoformat(timespec="seconds")

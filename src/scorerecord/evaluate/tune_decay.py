@@ -13,7 +13,6 @@ from scorerecord.features.build import MatchFeature, load_match_features
 from scorerecord.models.dixon_coles import DixonColes
 from scorerecord.runs import ingest_run, record_quality
 
-
 DEFAULT_HALF_LIVES = (0.5, 1.0, 1.5, 2.0, 3.0)
 
 

@@ -8,7 +8,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 
-
 EPS = 1e-6
 ONE_X_TWO_LABELS = ("home", "draw", "away")
 

@@ -12,14 +12,13 @@ import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from scorerecord.aliases import normalize_key
 from scorerecord.runs import ingest_run, record_quality
 from scorerecord.time_utils import parse_datetime_utc, parse_kickoff_utc
-
 
 API_MARKET_MAP = {
     "h2h": "1X2",
@@ -172,7 +171,7 @@ def fetch_live_odds(
                 bookmakers=bookmakers,
             )
             api_requests_used += 1
-            captured_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            captured_utc = datetime.now(UTC).isoformat(timespec="seconds")
             parsed_rows = parse_odds_payload(
                 payload,
                 fixture_id=str(fixture["fixture_id"]),
@@ -509,7 +508,7 @@ def _candidate_fixtures(
         """,
         params,
     ).fetchall()
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     closing_deadline = (
         now_utc + timedelta(minutes=closing_window_minutes)
         if closing_window_minutes is not None and fixture_id is None

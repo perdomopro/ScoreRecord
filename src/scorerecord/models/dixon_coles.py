@@ -9,7 +9,6 @@ import numpy as np
 from scorerecord.features.build import MatchFeature
 from scorerecord.models.markets import one_x_two_probabilities
 
-
 _DEFAULT_HALF_LIFE_YEARS = 3.0
 _DEFAULT_XI = math.log(2.0) / (_DEFAULT_HALF_LIFE_YEARS * 365.0)
 
@@ -49,7 +48,7 @@ class DixonColes:
     def name(self) -> str:
         return "dixon_coles"
 
-    def fit(self, matches: list[MatchFeature]) -> "DixonColes":
+    def fit(self, matches: list[MatchFeature]) -> DixonColes:
         if not matches:
             raise ValueError("Cannot fit on an empty training set")
 

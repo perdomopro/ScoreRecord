@@ -6,7 +6,6 @@ import math
 
 import numpy as np
 
-
 _EPS = 1e-9
 
 
@@ -26,7 +25,7 @@ class PlattCalibrator:
         self.a = 1.0
         self.b = 0.0
 
-    def fit(self, probs: list[float], labels: list[int]) -> "PlattCalibrator":
+    def fit(self, probs: list[float], labels: list[int]) -> PlattCalibrator:
         if len(probs) != len(labels):
             raise ValueError("probs and labels must have the same length")
         if not probs:

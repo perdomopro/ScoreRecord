@@ -4,7 +4,6 @@ from scorerecord.db import init_db
 from scorerecord.evaluate.edge import compute_edge, compute_edges, devig_1x2, devig_binary
 from scorerecord.models.manifest import MODEL_VERSION
 
-
 FUTURE_KICKOFF_LOCAL = "2099-06-11 13:00 UTC-6"
 FUTURE_GENERATED_UTC = "2099-06-10T00:00:00+00:00"
 FUTURE_CAPTURED_UTC = "2099-06-10T01:00:00+00:00"

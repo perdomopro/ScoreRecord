@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from scorerecord.db import init_db
 from scorerecord.ingest.odds import (
@@ -73,8 +73,8 @@ def test_closing_candidate_fixtures_limit_to_upcoming_window() -> None:
     conn.execute(
         "INSERT INTO team (team_id, canonical, canonical_key) VALUES (2, 'Away', 'away')"
     )
-    near = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
-    far = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+    near = (datetime.now(UTC) + timedelta(minutes=30)).isoformat()
+    far = (datetime.now(UTC) + timedelta(hours=3)).isoformat()
     conn.execute(
         """
         INSERT INTO fixture (fixture_id, kickoff_utc, home_id, away_id)

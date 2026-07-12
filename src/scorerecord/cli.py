@@ -413,7 +413,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     api_probe.add_argument("--season", type=int, default=2024)
     api_probe.add_argument("--sample-size", type=int, default=3)
+    api_probe.add_argument("--sleep-seconds", type=float, default=0.0)
     api_probe.add_argument("--json", action="store_true")
+
+    goals_v2 = subparsers.add_parser("goals-v2-lambda-benchmark", help="Benchmark Goals V2 lambdas.")
+    goals_v2.add_argument("--from", dest="from_date", required=True)
+    goals_v2.add_argument("--to", dest="to_date", required=True)
+    goals_v2.add_argument("--leagues", required=True)
+    goals_v2.add_argument("--half-life-days", type=float, default=365.0)
+    goals_v2.add_argument("--min-train", type=int, default=500)
+    goals_v2.add_argument("--bootstrap-samples", type=int, default=500)
+    goals_v2.add_argument("--predictions-out")
+    goals_v2.add_argument("--json", action="store_true")
 
     args = parser.parse_args(argv)
     settings = load_settings()
@@ -1014,12 +1025,32 @@ def main(argv: list[str] | None = None) -> int:
                 leagues=_parse_str_tuple(args.leagues),
                 season=args.season,
                 sample_size=args.sample_size,
+                sleep_seconds=args.sleep_seconds,
             )
 
             if args.json:
                 print(json.dumps(result, indent=2))
             else:
                 for k, v in result.items():
+                    print(f"{k}={v}")
+            return 0
+
+        if args.command == "goals-v2-lambda-benchmark":
+            from scorerecord.evaluate.goals_v2_lambda_benchmark import run_goals_v2_lambda_benchmark
+            report = run_goals_v2_lambda_benchmark(
+                conn,
+                from_date=date.fromisoformat(args.from_date),
+                to_date=date.fromisoformat(args.to_date),
+                leagues=_parse_str_tuple(args.leagues),
+                half_life_days=args.half_life_days,
+                min_train=args.min_train,
+                bootstrap_samples=args.bootstrap_samples,
+                predictions_out=args.predictions_out,
+            )
+            if args.json:
+                print(json.dumps(dataclasses.asdict(report), indent=2))
+            else:
+                for k, v in dataclasses.asdict(report).items():
                     print(f"{k}={v}")
             return 0
 

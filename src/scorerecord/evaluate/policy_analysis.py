@@ -8,10 +8,10 @@ import json
 import math
 import re
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 from scorerecord.runs import ingest_run, record_quality
 
@@ -43,7 +43,7 @@ def analyze_policy_grids(
     if not files:
         raise ValueError("No policy grid CSV files matched the provided inputs")
 
-    generated_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    generated_utc = datetime.now(UTC).isoformat(timespec="seconds")
     with ingest_run(conn, "analyze-policy-grids", source="policy_grid_csv", cwd=cwd) as run_id:
         per_league = _latest_rows_by_config_and_league(files)
         rows = _aggregate_policy_rows(per_league.values())

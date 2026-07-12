@@ -69,6 +69,7 @@ Fase 0-1 is the data spine:
 - Normalize team aliases.
 - Build Elo snapshot and Elo history.
 - Report data quality.
+- **Shots & Process Signals**: Actively exploring Shots and SOT as process signals via `football-data` (Phase 10). BigBalls API xG probe failed (`NO_LEAGUES`). Big 5 + Championship are `V2_ELIGIBLE` for shots modeling.
 
 Fase 1.5 is traceability and backtesting harness:
 
@@ -269,6 +270,19 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 
 ## Change Log
 
+### 2026-07-12 - Phase 10.2 Goals V2 Lambda Modeling
+- Implemented strict prequential walk-forward lambda evaluation for Phase 10.2.
+- Excluded API-FOOTBALL and used 0 external API calls (local Football-Data stats only).
+- Benchmark results (`goals-v2-lambda-benchmark`):
+  - `num_matches`: 8861
+  - `goals_baseline_joint_home_away_ll`: 1.7689
+  - `goals_plus_process_joint_home_away_ll`: 1.7595
+  - `delta_gpp_vs_goals_baseline`: -0.0094 (CI: `[-0.0117, -0.0068]`)
+- Model improved the joint logloss in all 6 evaluated leagues (`EPL, LA_LIGA, SERIE_A, BUNDESLIGA, LIGUE_1, CHAMPIONSHIP`) and all evaluated seasons.
+- Benchmark state: `LAMBDA_PROMISING`.
+- Total-goals logloss and calibration decile buckets were also tracked for `goals_baseline`, `process_only`, and `goals_plus_process`.
+- Phase 10.2 is CLOSED. Proceeding to Phase 10.3 (market validation against OU2.5).
+
 ### 2026-07-11 - Phase 8 OU2.5 market-anchored residual benchmark readout
 
 - Ran `market-residual-benchmark` command over 2000 bootstrap block resamples.
@@ -277,6 +291,38 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 - Residual Model performance: `market_residual_dc_logloss=0.673632`.
 - Paired deltas: `delta_residual_vs_preclose=0.000334` (CI: `[-0.000003, 0.000668]`).
 - Model parameters: `coef_dc_raw_logit_minus_market_logit=-0.019804`.
+
+### Phase 8.1 - Residual Optimization Diagnostics
+- **Status**: CLOSED
+- **Date**: 2024-05-31
+- **Result**: `RESIDUAL_INCONCLUSIVE` (Zero independent signal).
+- **Decision**: Final confirmation that goals-based modeling lacks independent edge over market closing odds.
+
+### Phase 10.1 - Shots/SOT Process Rating Prototype
+- **Status**: CLOSED
+- **Result**: `PROCESS_PROMISING` (Goals Plus Process LL: 1.7629 vs Goals Baseline LL: 1.7723; delta = -0.0094).
+- **Decision**: Prequential walk-forward evaluation proved that combining goals with process signals (Shots + SOT) provides a robust, statistically significant predictive edge over pure goals baselines. The improvement is consistent across all 6 evaluated leagues and all 6 chronological seasons. Phase 10.2 (Lambda Modeling) is UNBLOCKED. Goals V2 track proceeds.
+
+### Phase 10.1.1 - API-FOOTBALL Feasibility Probe
+- **Status**: CLOSED
+- **Date**: 2026-07-12
+- **Result**: `XG_USABLE_CANDIDATE`
+- **Coverage Summary**:
+  - `season=2024`
+  - `sample_size=3`
+  - `leagues=EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,CHAMPIONSHIP,MLS,LIGA_MX`
+  - `fixtures_sampled=24`
+  - `statistics_found=24`
+  - `shots_found=24`, `sot_found=24`, `total_shots_found=24`
+  - `blocked_shots_found=24`, `shots_inside_box_found=24`, `shots_outside_box_found=24`
+  - `corners_found=24`, `cards_found=24`, `fouls_found=24`
+  - `possession_found=24`, `passes_found=24`
+  - `xg_found=21`
+  - `all league_states=STATS_USABLE`
+  - `actual_requests_made=33`
+  - `free_plan_limit_warning=false`
+- **Decision**: API-FOOTBALL is a strong provider candidate for future stats/corners/xG coverage research. It remains excluded from Phase 10.2.
+
 - The benchmark state is `RESIDUAL_INCONCLUSIVE`. The residual model does not improve upon the `market_preclose` and is worse than the `market_offset_intercept_only` baseline, with the CI crossing zero.
 - The parameter coefficient for `dc_raw_logit_minus_market_logit` is `-0.0198`. The residual of Dixon-Coles does not provide measurable improvement over the market; if anything, the learned adjustment slightly discounts it.
 - Operational interpretation: no-go for Phase 6 paper candidates. Phase 6 remains BLOCKED.

@@ -6,7 +6,6 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date
 
-
 OUTCOME_HOME = 0
 OUTCOME_DRAW = 1
 OUTCOME_AWAY = 2

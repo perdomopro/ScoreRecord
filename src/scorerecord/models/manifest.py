@@ -9,7 +9,6 @@ from dataclasses import dataclass
 
 from scorerecord.models.dixon_coles import _DEFAULT_XI
 
-
 MODEL_VERSION = "dixon_coles:hl3y:platt-goals-v1"
 BASE_MODEL = "dixon_coles"
 HALF_LIFE_YEARS = 3.0

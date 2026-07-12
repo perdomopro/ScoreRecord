@@ -44,7 +44,6 @@ from scorerecord.models.dixon_coles import DixonColes
 from scorerecord.models.markets import btts_probability, one_x_two_probabilities, over_probability
 from scorerecord.runs import ingest_run, record_quality
 
-
 DEFAULT_OU_LINES = (1.5, 2.5, 3.5)
 _EPS = EPS
 

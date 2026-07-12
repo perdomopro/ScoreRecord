@@ -7,7 +7,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from scorerecord.evaluate.backtest import (
@@ -65,7 +65,7 @@ def run_calibration_diagnostics(
         raise ValueError("Only historical_odds_source=football-data is supported")
 
     league_codes = tuple(resolve_league_code(league) for league in leagues)
-    generated_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    generated_utc = datetime.now(UTC).isoformat(timespec="seconds")
 
     with ingest_run(
         conn,

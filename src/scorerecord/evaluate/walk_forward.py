@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Protocol
 
 from scorerecord.evaluate.scoring import (
     ONE_X_TWO_LABELS,
@@ -19,14 +20,13 @@ from scorerecord.models.baseline import MarginalBaseline, OneXTwoBaseline, Unifo
 from scorerecord.models.dixon_coles import DixonColes
 from scorerecord.runs import ingest_run, record_quality
 
-
 N_CLASSES = len(ONE_X_TWO_LABELS)
 
 
 class Model(Protocol):
     name: str
 
-    def fit(self, matches: list[MatchFeature]) -> "Model": ...
+    def fit(self, matches: list[MatchFeature]) -> Model: ...
 
     def predict_proba(self, matches: list[MatchFeature]) -> list[list[float]]: ...
 
@@ -249,7 +249,7 @@ def run_walk_forward(
         raise ValueError(f"Unknown model(s): {', '.join(unknown)}")
 
     matches = load_match_features(conn)
-    as_of = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    as_of = datetime.now(UTC).isoformat(timespec="seconds")
 
     results: list[WalkForwardResult] = []
     with ingest_run(conn, "walk-forward", source="match_history", cwd=cwd) as run_id:

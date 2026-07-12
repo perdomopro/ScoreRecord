@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 from scorerecord.evaluate.scoring import binary_brier, binary_logloss
 from scorerecord.evaluate.walk_forward import _is_friendly
@@ -16,7 +16,6 @@ from scorerecord.models.calibration import PlattCalibrator
 from scorerecord.models.dixon_coles import DixonColes
 from scorerecord.models.markets import btts_probability, over_probability
 from scorerecord.runs import ingest_run, record_quality
-
 
 DEFAULT_OU_LINES = (1.5, 2.5, 3.5)
 
@@ -93,7 +92,7 @@ def run_goal_market_walk_forward(
     matches = load_match_features(conn)
     markets = build_goal_markets(ou_lines=ou_lines)
     results: list[GoalMarketResult] = []
-    as_of = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    as_of = datetime.now(UTC).isoformat(timespec="seconds")
 
     with ingest_run(conn, "goal-markets", source="match_history", cwd=cwd) as run_id:
         record_quality(

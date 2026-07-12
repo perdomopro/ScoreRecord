@@ -8,7 +8,6 @@ from dataclasses import dataclass
 
 from scorerecord.features.build import MatchFeature
 
-
 N_CLASSES = 3
 
 
@@ -25,7 +24,7 @@ class _Scaler:
     stds: list[float]
 
     @classmethod
-    def fit(cls, rows: list[list[float]]) -> "_Scaler":
+    def fit(cls, rows: list[list[float]]) -> _Scaler:
         n_features = len(rows[0])
         means = [0.0] * n_features
         for row in rows:
@@ -68,7 +67,7 @@ class OneXTwoBaseline:
     def name(self) -> str:
         return "baseline_logistic"
 
-    def fit(self, matches: list[MatchFeature]) -> "OneXTwoBaseline":
+    def fit(self, matches: list[MatchFeature]) -> OneXTwoBaseline:
         if not matches:
             raise ValueError("Cannot fit on an empty training set")
 
@@ -143,7 +142,7 @@ class MarginalBaseline:
     def name(self) -> str:
         return "baseline_marginal"
 
-    def fit(self, matches: list[MatchFeature]) -> "MarginalBaseline":
+    def fit(self, matches: list[MatchFeature]) -> MarginalBaseline:
         counts = [0, 0, 0]
         for match in matches:
             counts[match.outcome] += 1
@@ -164,7 +163,7 @@ class UniformBaseline:
     def name(self) -> str:
         return "baseline_uniform"
 
-    def fit(self, matches: list[MatchFeature]) -> "UniformBaseline":
+    def fit(self, matches: list[MatchFeature]) -> UniformBaseline:
         if not matches:
             raise ValueError("Cannot fit on an empty training set")
         return self

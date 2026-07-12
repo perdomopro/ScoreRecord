@@ -6,7 +6,7 @@ import json
 import math
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from scorerecord.models.manifest import MODEL_VERSION
@@ -156,7 +156,7 @@ def generate_recommendations(
             dry_run=True,
         )
 
-    generated_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    generated_utc = datetime.now(UTC).isoformat(timespec="seconds")
     with ingest_run(conn, "recommend", source="edge_analysis", cwd=cwd) as run_id:
         inserted = 0
         for candidate in best:
@@ -236,7 +236,7 @@ def compute_recommendation_clv(
             dry_run=True,
         )
 
-    computed_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    computed_utc = datetime.now(UTC).isoformat(timespec="seconds")
     with ingest_run(conn, "compute-clv", source="recommendation+closing_odds", cwd=cwd) as run_id:
         inserted = 0
         for row in rows:
@@ -348,7 +348,7 @@ def _recommendation_candidates(
         ),
     ).fetchall()
     candidates = []
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     for row in rows:
         current_odds_age = _odds_age_minutes_now(str(row["captured_utc"]), now_utc)
         if current_odds_age is not None and current_odds_age > max_odds_age_minutes:

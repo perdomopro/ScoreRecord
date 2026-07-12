@@ -5,7 +5,6 @@ import time
 import urllib.request
 from pathlib import Path
 
-
 OPENFOOTBALL_2026_URL = (
     "https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json"
 )

@@ -5,7 +5,6 @@ import math
 import sqlite3
 from dataclasses import dataclass
 
-
 BASE_RATING = 1500.0
 
 

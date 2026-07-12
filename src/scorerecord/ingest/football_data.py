@@ -16,7 +16,6 @@ from scorerecord.evaluate.historical_odds import HistoricalEvent, HistoricalOdds
 from scorerecord.runs import ingest_run, record_quality
 from scorerecord.sources import fetch_text
 
-
 FOOTBALL_DATA_BASE_URL = "https://www.football-data.co.uk/mmz4281"
 FOOTBALL_DATA_SOURCE = "football-data"
 

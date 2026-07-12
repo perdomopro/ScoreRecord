@@ -10,7 +10,6 @@ from scorerecord.evaluate.recommendations import (
 )
 from scorerecord.models.manifest import MODEL_VERSION
 
-
 FUTURE_KICKOFF_LOCAL = "2099-06-11 13:00 UTC-6"
 FUTURE_KICKOFF_UTC = "2099-06-11T18:00:00+00:00"
 FUTURE_CAPTURED_UTC = "2099-06-10T01:00:00+00:00"
