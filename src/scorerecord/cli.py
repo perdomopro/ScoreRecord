@@ -311,8 +311,7 @@ def main(argv: list[str] | None = None) -> int:
     benchmark = subparsers.add_parser(
         "market-benchmark-report",
         help=(
-            "Compare walk-forward model probabilities against fair historical "
-            "market probabilities."
+            "Compare walk-forward model probabilities against fair historical market probabilities."
         ),
     )
     benchmark.add_argument("--from", dest="from_date", required=True, help="YYYY-MM-DD")
@@ -337,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     benchmark.add_argument("--bootstrap-block", choices=("week",), default="week")
     benchmark.add_argument("--bootstrap-samples", type=int, default=2000)
-    
+
     residual = subparsers.add_parser(
         "market-residual-benchmark",
         help=(
@@ -366,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
     residual.add_argument("--l2", type=float, default=1.0)
     residual.add_argument("--max-iter", type=int, default=500)
     residual.add_argument("--json", action="store_true", help="Output JSON instead of summary")
-    
+
     diagnostics = subparsers.add_parser(
         "calibration-diagnostics",
         help="Write segmented calibration and model-vs-market diagnostics for historical odds.",
@@ -405,6 +404,16 @@ def main(argv: list[str] | None = None) -> int:
     gui.add_argument("--port", type=int, default=8765)
     gui.add_argument("--refresh-seconds", type=int, default=60)
     subparsers.add_parser("db-summary", help="Print useful database counts.")
+
+    api_probe = subparsers.add_parser(
+        "provider-probe-api-football", help="Probe API-FOOTBALL for feasibility."
+    )
+    api_probe.add_argument(
+        "--leagues", default="EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,CHAMPIONSHIP,MLS,LIGA_MX"
+    )
+    api_probe.add_argument("--season", type=int, default=2024)
+    api_probe.add_argument("--sample-size", type=int, default=3)
+    api_probe.add_argument("--json", action="store_true")
 
     args = parser.parse_args(argv)
     settings = load_settings()
@@ -511,10 +520,7 @@ def main(argv: list[str] | None = None) -> int:
                         sort_keys=True,
                     ),
                 )
-            print(
-                "resolved_fixture: "
-                f"{args.fixture_id} home={args.home} away={args.away}"
-            )
+            print(f"resolved_fixture: {args.fixture_id} home={args.home} away={args.away}")
             return 0
 
         if args.command == "ingest-worldcup":
@@ -725,7 +731,9 @@ def main(argv: list[str] | None = None) -> int:
             preplay_window_minutes = (
                 args.preplay_window_minutes
                 if args.preplay_window_minutes is not None
-                else args.closing_window_minutes if args.closing else None
+                else args.closing_window_minutes
+                if args.closing
+                else None
             )
             summary = fetch_live_odds(
                 conn,
@@ -757,20 +765,14 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "odds-coverage-report":
             fixture_ids = (
-                [args.fixture_id]
-                if args.fixture_id
-                else _fixture_ids_for_utc_date(conn, args.date)
+                [args.fixture_id] if args.fixture_id else _fixture_ids_for_utc_date(conn, args.date)
             )
             if not fixture_ids:
                 print("No fixtures found.")
                 return 0
             for fixture_id in fixture_ids:
                 for coverage in load_fixture_odds_coverage(conn, fixture_id):
-                    age = (
-                        "n/a"
-                        if coverage.age_minutes is None
-                        else f"{coverage.age_minutes:.0f}"
-                    )
+                    age = "n/a" if coverage.age_minutes is None else f"{coverage.age_minutes:.0f}"
                     print(
                         "odds_coverage: "
                         f"fixture_id={coverage.fixture_id} "
@@ -965,7 +967,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.market != "OU2.5":
                 print("Error: market-residual-benchmark only supports OU2.5 at this time.")
                 return 1
-                
+
             report = run_market_residual_benchmark(
                 conn,
                 from_date=date.fromisoformat(args.from_date),
@@ -1003,6 +1005,22 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=Path.cwd(),
             )
             print(summary.as_row())
+            return 0
+
+        if args.command == "provider-probe-api-football":
+            from scorerecord.ingest.api_football_probe import probe_api_football
+
+            result = probe_api_football(
+                leagues=_parse_str_tuple(args.leagues),
+                season=args.season,
+                sample_size=args.sample_size,
+            )
+
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                for k, v in result.items():
+                    print(f"{k}={v}")
             return 0
 
         if args.command == "analyze-policy-grids":
