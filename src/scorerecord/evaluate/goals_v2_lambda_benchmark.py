@@ -209,14 +209,14 @@ def run_goals_v2_lambda_benchmark(
     train_history = []
     
     # Models
-    mod_gb_h = PoissonRegressor(4)
-    mod_gb_a = PoissonRegressor(4)
+    mod_gb_h = PoissonRegressor(4, warm_start=False)
+    mod_gb_a = PoissonRegressor(4, warm_start=False)
     
-    mod_po_h = PoissonRegressor(8)
-    mod_po_a = PoissonRegressor(8)
+    mod_po_h = PoissonRegressor(8, warm_start=False)
+    mod_po_a = PoissonRegressor(8, warm_start=False)
     
-    mod_gpp_h = PoissonRegressor(12)
-    mod_gpp_a = PoissonRegressor(12)
+    mod_gpp_h = PoissonRegressor(12, warm_start=False)
+    mod_gpp_a = PoissonRegressor(12, warm_start=False)
     
     def _extract_X(data: list[dict[str, Any]], variant: str) -> np.ndarray:
         if variant == "gb":

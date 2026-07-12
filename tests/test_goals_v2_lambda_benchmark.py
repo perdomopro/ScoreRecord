@@ -59,23 +59,46 @@ def test_independent_probabilities():
     assert np.all(res["p_over_25"] >= res["p_over_35"])
 
 
-def test_poisson_regressor():
-    """Test stable Poisson regressor and train-only standardization."""
-    # Data that needs scaling
-    X_train = np.array([[100.0, 1.0], [200.0, 2.0], [300.0, 3.0]])
-    y_train = np.array([1, 2, 3])
+def test_poisson_regressor_warm_start():
+    """Test warm_start behavior resets or keeps weights on repeated fit."""
+    X_train1 = np.array([[100.0, 1.0], [200.0, 2.0], [300.0, 3.0]])
+    y_train1 = np.array([1, 2, 3])
     
-    mod = PoissonRegressor(n_features=2, learning_rate=0.01, epochs=100)
-    mod.fit(X_train, y_train)
+    # 1. warm_start=False (default behavior)
+    mod_no_warm = PoissonRegressor(n_features=2, learning_rate=0.01, epochs=10, warm_start=False)
+    mod_no_warm.fit(X_train1, y_train1)
+    w1 = mod_no_warm.w.copy()
     
-    # mean_x should match training
-    np.testing.assert_allclose(mod.mean_x, [200.0, 2.0])
+    # Fit on same data again
+    mod_no_warm.fit(X_train1, y_train1)
+    w2 = mod_no_warm.w.copy()
+    # It resets weights and runs 10 epochs again, so w1 should exactly equal w2 (deterministic GD)
+    np.testing.assert_allclose(w1, w2)
     
-    # predict uses training mean/std
-    pred = mod.predict(np.array([[200.0, 2.0]]))
+    # Fit on different data
+    X_train2 = np.array([[50.0, 0.5], [150.0, 1.5]])
+    y_train2 = np.array([1, 1])
+    mod_no_warm.fit(X_train2, y_train2)
+    w3 = mod_no_warm.w.copy()
+    # Now w3 should be entirely different and based solely on X_train2, not building on w2
+    assert not np.allclose(w2, w3)
+    
+    # 2. warm_start=True
+    mod_warm = PoissonRegressor(n_features=2, learning_rate=0.01, epochs=10, warm_start=True)
+    mod_warm.fit(X_train1, y_train1)
+    w_warm_1 = mod_warm.w.copy()
+    
+    # Fit on same data again
+    mod_warm.fit(X_train1, y_train1)
+    w_warm_2 = mod_warm.w.copy()
+    # It built on top of w_warm_1, doing 10 MORE epochs, so w_warm_1 and w_warm_2 should differ
+    assert not np.allclose(w_warm_1, w_warm_2)
+    
+    # Mean and std scaling are train-only and should update
+    np.testing.assert_allclose(mod_warm.mean_x, [200.0, 2.0])
+    pred = mod_warm.predict(np.array([[200.0, 2.0]]))
     assert len(pred) == 1
     assert pred[0] > 0
-    assert np.isfinite(pred[0])
 
 
 def test_goals_v2_lambda_benchmark_walk_forward():

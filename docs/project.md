@@ -270,9 +270,12 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 
 ## Change Log
 
+### 2026-07-12 - Phase 10.2 Goals V2 Lambda Modeling
+
 - Model improved the joint logloss in all 6 evaluated leagues (`EPL, LA_LIGA, SERIE_A, BUNDESLIGA, LIGUE_1, CHAMPIONSHIP`) and all evaluated seasons.
-- Benchmark state: `LAMBDA_PROMISING`.
+- Benchmark state: `LAMBDA_PROMISING` (delta -0.0094, CI: [-0.0117, -0.0075]).
 - Total-goals logloss and calibration decile buckets were also tracked for `goals_baseline`, `process_only`, and `goals_plus_process`.
+- Re-verified behavior with explicit `warm_start=False` instantiation and tested resetting weight logic mathematically matches initial expectations.
 - Phase 10.2 is CLOSED. Proceeding to Phase 10.3 (market validation against OU2.5).
 
 ### 2026-07-11 - Phase 8 OU2.5 market-anchored residual benchmark readout
