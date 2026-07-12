@@ -447,6 +447,21 @@ def main(argv: list[str] | None = None) -> int:
     goals_v2_mkt.add_argument("--predictions-out")
     goals_v2_mkt.add_argument("--json", action="store_true")
 
+    ss_audit = subparsers.add_parser(
+        "sharp-soft-coverage-audit",
+        help="Audit bookmaker-level odds for sharp/soft CLV strategy feasibility.",
+    )
+    ss_audit.add_argument("--from", dest="from_date", required=True, help="YYYY-MM-DD")
+    ss_audit.add_argument("--to", dest="to_date", required=True, help="YYYY-MM-DD")
+    ss_audit.add_argument("--markets", required=True, help="Comma-separated markets")
+    ss_audit.add_argument("--leagues", required=True, help="Comma-separated leagues")
+    ss_audit.add_argument(
+        "--sharp-books",
+        default="Pinnacle,Pinnacle Sports,Pinnacle (PS3838),PS3838,Betfair Exchange,Matchbook,Smarkets,SBOBET,188BET",
+        help="Comma-separated list of sharp bookies",
+    )
+    ss_audit.add_argument("--json", action="store_true")
+
     args = parser.parse_args(argv)
     settings = load_settings()
     if args.db_path:
@@ -1058,6 +1073,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "goals-v2-lambda-benchmark":
             from scorerecord.evaluate.goals_v2_lambda_benchmark import run_goals_v2_lambda_benchmark
+
             report = run_goals_v2_lambda_benchmark(
                 conn,
                 from_date=date.fromisoformat(args.from_date),
@@ -1077,6 +1093,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "goals-v2-market-benchmark":
             from scorerecord.evaluate.goals_v2_market_benchmark import run_goals_v2_market_benchmark
+
             report = run_goals_v2_market_benchmark(
                 conn,
                 train_from=date.fromisoformat(args.train_from),
@@ -1090,6 +1107,24 @@ def main(argv: list[str] | None = None) -> int:
                 min_train=args.min_train,
                 bootstrap_samples=args.bootstrap_samples,
                 predictions_out=args.predictions_out,
+            )
+            if args.json:
+                print(json.dumps(dataclasses.asdict(report), indent=2))
+            else:
+                for k, v in dataclasses.asdict(report).items():
+                    print(f"{k}={v}")
+            return 0
+
+        if args.command == "sharp-soft-coverage-audit":
+            from scorerecord.evaluate.sharp_soft_coverage_audit import run_sharp_soft_audit
+
+            report = run_sharp_soft_audit(
+                conn,
+                date_from=args.from_date,
+                date_to=args.to_date,
+                markets=list(_parse_str_tuple(args.markets)),
+                leagues=list(_parse_str_tuple(args.leagues)),
+                sharp_books=list(_parse_str_tuple(args.sharp_books)),
             )
             if args.json:
                 print(json.dumps(dataclasses.asdict(report), indent=2))
