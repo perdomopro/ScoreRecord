@@ -270,14 +270,6 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 
 ## Change Log
 
-### 2026-07-12 - Phase 10.2 Goals V2 Lambda Modeling
-- Implemented strict prequential walk-forward lambda evaluation for Phase 10.2.
-- Excluded API-FOOTBALL and used 0 external API calls (local Football-Data stats only).
-- Benchmark results (`goals-v2-lambda-benchmark`):
-  - `num_matches`: 8861
-  - `goals_baseline_joint_home_away_ll`: 1.7689
-  - `goals_plus_process_joint_home_away_ll`: 1.7595
-  - `delta_gpp_vs_goals_baseline`: -0.0094 (CI: `[-0.0117, -0.0068]`)
 - Model improved the joint logloss in all 6 evaluated leagues (`EPL, LA_LIGA, SERIE_A, BUNDESLIGA, LIGUE_1, CHAMPIONSHIP`) and all evaluated seasons.
 - Benchmark state: `LAMBDA_PROMISING`.
 - Total-goals logloss and calibration decile buckets were also tracked for `goals_baseline`, `process_only`, and `goals_plus_process`.
