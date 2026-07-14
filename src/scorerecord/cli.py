@@ -38,7 +38,6 @@ from scorerecord.evaluate.settlement import settle_fixtures
 from scorerecord.evaluate.tune_decay import run_decay_sweep
 from scorerecord.evaluate.walk_forward import run_walk_forward
 from scorerecord.features.elo import rebuild_elo
-from scorerecord.ingest.readiness import audit_leagues
 from scorerecord.forecast_snapshots import (
     forecast_snapshot_report,
     freeze_forecast_snapshot,
@@ -53,8 +52,8 @@ from scorerecord.ingest.football_data import (
 )
 from scorerecord.ingest.history import ingest_history
 from scorerecord.ingest.odds import fetch_live_odds, odds_snapshot_coverage_report
+from scorerecord.ingest.readiness import audit_leagues
 from scorerecord.ingest.worldcup import ingest_worldcup_2026, resolve_fixture_teams
-from scorerecord.ingest.fixtures_odds_api import ingest_fixtures_odds_api
 from scorerecord.models.manifest import build_model_manifest
 from scorerecord.odds_coverage import load_fixture_odds_coverage
 from scorerecord.odds_coverage_summary import (
@@ -183,15 +182,27 @@ def main(argv: list[str] | None = None) -> int:
     settle.add_argument("--include-settled", action="store_true")
     settle.add_argument("--allow-backfill", action="store_true")
 
-    fixtures_odds = subparsers.add_parser("ingest-fixtures-odds-api", help="Fetch fixtures from Odds-API.io.")
+    fixtures_odds = subparsers.add_parser("ingest-fixtures-odds-api", help="Fetch fixtures from the-odds-api.com.")
     fixtures_odds.add_argument("--league", required=True)
     fixtures_odds.add_argument("--sport-key", required=True)
     fixtures_odds.add_argument("--season", required=True)
     fixtures_odds.add_argument("--competition", help="Override competition name. Defaults to league or EPL -> English Premier League")
     fixtures_odds.add_argument("--input-json", help="Path to local JSON file for offline dry-run")
     fixtures_odds.add_argument("--dry-run", action="store_true")
-    fixtures_odds.add_argument("--max-requests", type=int, default=1)
     fixtures_odds.add_argument("--json", action="store_true")
+    fixtures_odds.add_argument("--max-requests", type=int, default=1)
+
+    fixtures_odds_io = subparsers.add_parser("ingest-fixtures-odds-api-io", help="Fetch fixtures from odds-api.io.")
+    fixtures_odds_io.add_argument("--league", required=True)
+    fixtures_odds_io.add_argument("--sport", required=True)
+    fixtures_odds_io.add_argument("--league-slug", required=True)
+    fixtures_odds_io.add_argument("--season", required=True)
+    fixtures_odds_io.add_argument("--competition", required=True)
+    fixtures_odds_io.add_argument("--input-json", help="Path to local JSON file for offline dry-run")
+    fixtures_odds_io.add_argument("--verify-league-slug", action="store_true")
+    fixtures_odds_io.add_argument("--dry-run", action="store_true")
+    fixtures_odds_io.add_argument("--json", action="store_true")
+    fixtures_odds_io.add_argument("--max-requests", type=int, default=1)
 
     odds = subparsers.add_parser("fetch-odds", help="Fetch raw odds from Odds-API.io.")
     odds.add_argument("--sport", default="soccer")
@@ -810,41 +821,68 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "ingest-fixtures-odds-api":
-            raw_dir = Path(settings.raw_dir) if settings.raw_dir else None
+            from scorerecord.ingest.fixtures_odds_api import ingest_fixtures_odds_api
 
+            comp = args.competition
+            if not comp:
+                comp = "English Premier League" if args.league == "EPL" else args.league
+
+            raw_dir = Path(settings.raw_dir) if settings.raw_dir else None
+            
             mock_events = None
             if args.input_json:
-                with open(args.input_json, "r", encoding="utf-8") as f:
+                with open(args.input_json, encoding="utf-8") as f:
                     mock_events = json.load(f)
 
-            competition = args.competition
-            if not competition:
-                if args.league == "EPL":
-                    competition = "English Premier League"
-                else:
-                    competition = args.league
-
-            summary = ingest_fixtures_odds_api(
-                conn,
+            result = ingest_fixtures_odds_api(
+                conn=conn,
                 api_key=settings.the_odds_api_key,
                 sport_key=args.sport_key,
                 league_code=args.league,
-                competition=competition,
+                competition=comp,
                 season=args.season,
                 raw_dir=raw_dir,
                 base_url=settings.the_odds_api_base_url,
                 max_requests=args.max_requests,
                 dry_run=args.dry_run,
-                mock_events=mock_events,
+                mock_events=mock_events
             )
+
             if args.json:
-                print(json.dumps(summary, indent=2))
+                print(json.dumps(result, indent=2))
             else:
-                for k, v in summary.items():
+                for k, v in result.items():
                     print(f"{k}: {v}")
             return 0
 
+        if args.command == "ingest-fixtures-odds-api-io":
+            from scorerecord.ingest.fixtures_odds_api_io import ingest_fixtures_odds_api_io
 
+            raw_dir = Path(settings.raw_dir) if settings.raw_dir else None
+            input_json_path = Path(args.input_json) if args.input_json else None
+
+            result = ingest_fixtures_odds_api_io(
+                conn=conn,
+                api_key=settings.odds_api_io_key,
+                base_url=settings.odds_api_io_base_url,
+                sport=args.sport,
+                league_code=args.league,
+                league_slug=args.league_slug,
+                competition=args.competition,
+                season=args.season,
+                raw_dir=raw_dir,
+                max_requests=args.max_requests,
+                dry_run=args.dry_run,
+                input_json=input_json_path,
+                verify_league_slug=args.verify_league_slug,
+            )
+
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                for k, v in result.items():
+                    print(f"{k}: {v}")
+            return 0
         if args.command == "fetch-odds":
             preplay_window_minutes = (
                 args.preplay_window_minutes
