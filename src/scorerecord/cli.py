@@ -38,6 +38,7 @@ from scorerecord.evaluate.settlement import settle_fixtures
 from scorerecord.evaluate.tune_decay import run_decay_sweep
 from scorerecord.evaluate.walk_forward import run_walk_forward
 from scorerecord.features.elo import rebuild_elo
+from scorerecord.ingest.readiness import audit_leagues
 from scorerecord.forecast_snapshots import (
     forecast_snapshot_report,
     freeze_forecast_snapshot,
@@ -53,6 +54,7 @@ from scorerecord.ingest.football_data import (
 from scorerecord.ingest.history import ingest_history
 from scorerecord.ingest.odds import fetch_live_odds, odds_snapshot_coverage_report
 from scorerecord.ingest.worldcup import ingest_worldcup_2026, resolve_fixture_teams
+from scorerecord.ingest.fixtures_odds_api import ingest_fixtures_odds_api
 from scorerecord.models.manifest import build_model_manifest
 from scorerecord.odds_coverage import load_fixture_odds_coverage
 from scorerecord.odds_coverage_summary import (
@@ -180,6 +182,17 @@ def main(argv: list[str] | None = None) -> int:
     settle.add_argument("--dry-run", action="store_true")
     settle.add_argument("--include-settled", action="store_true")
     settle.add_argument("--allow-backfill", action="store_true")
+
+    fixtures_odds = subparsers.add_parser("ingest-fixtures-odds-api", help="Fetch fixtures from Odds-API.io.")
+    fixtures_odds.add_argument("--league", required=True)
+    fixtures_odds.add_argument("--sport-key", required=True)
+    fixtures_odds.add_argument("--season", required=True)
+    fixtures_odds.add_argument("--competition", help="Override competition name. Defaults to league or EPL -> English Premier League")
+    fixtures_odds.add_argument("--input-json", help="Path to local JSON file for offline dry-run")
+    fixtures_odds.add_argument("--dry-run", action="store_true")
+    fixtures_odds.add_argument("--max-requests", type=int, default=1)
+    fixtures_odds.add_argument("--json", action="store_true")
+
     odds = subparsers.add_parser("fetch-odds", help="Fetch raw odds from Odds-API.io.")
     odds.add_argument("--sport", default="soccer")
     odds.add_argument("--league", help="Odds-API.io league slug.")
@@ -416,6 +429,17 @@ def main(argv: list[str] | None = None) -> int:
     api_probe.add_argument("--sleep-seconds", type=float, default=0.0)
     api_probe.add_argument("--json", action="store_true")
 
+    api_probe_fix = subparsers.add_parser(
+        "provider-probe-api-football-fixtures", help="Read-only API-FOOTBALL fixture/team probe."
+    )
+    api_probe_fix.add_argument("--league", required=True)
+    api_probe_fix.add_argument("--api-football-league-id", type=int, required=True)
+    api_probe_fix.add_argument("--season", type=int, required=True)
+    api_probe_fix.add_argument("--max-requests", type=int, default=3)
+    api_probe_fix.add_argument("--input-json", help="Path to local JSON file for offline dry-run")
+    api_probe_fix.add_argument("--include-status", action="store_true")
+    api_probe_fix.add_argument("--json", action="store_true")
+
     goals_v2 = subparsers.add_parser(
         "goals-v2-lambda-benchmark",
         help="Benchmark Goals V2 lambdas.",
@@ -464,6 +488,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma-separated list of sharp bookies",
     )
     ss_audit.add_argument("--json", action="store_true")
+
+    ml_readiness = subparsers.add_parser(
+        "multi-league-readiness-report",
+        help="Audit readiness for daily multi-league forecast pipeline.",
+    )
+    ml_readiness.add_argument("--leagues", required=True, help="Comma-separated leagues")
+    ml_readiness.add_argument("--json", action="store_true")
 
     args = parser.parse_args(argv)
     settings = load_settings()
@@ -778,6 +809,42 @@ def main(argv: list[str] | None = None) -> int:
             print(summary.as_row())
             return 0
 
+        if args.command == "ingest-fixtures-odds-api":
+            raw_dir = Path(settings.raw_dir) if settings.raw_dir else None
+
+            mock_events = None
+            if args.input_json:
+                with open(args.input_json, "r", encoding="utf-8") as f:
+                    mock_events = json.load(f)
+
+            competition = args.competition
+            if not competition:
+                if args.league == "EPL":
+                    competition = "English Premier League"
+                else:
+                    competition = args.league
+
+            summary = ingest_fixtures_odds_api(
+                conn,
+                api_key=settings.the_odds_api_key,
+                sport_key=args.sport_key,
+                league_code=args.league,
+                competition=competition,
+                season=args.season,
+                raw_dir=raw_dir,
+                base_url=settings.the_odds_api_base_url,
+                max_requests=args.max_requests,
+                dry_run=args.dry_run,
+                mock_events=mock_events,
+            )
+            if args.json:
+                print(json.dumps(summary, indent=2))
+            else:
+                for k, v in summary.items():
+                    print(f"{k}: {v}")
+            return 0
+
+
         if args.command == "fetch-odds":
             preplay_window_minutes = (
                 args.preplay_window_minutes
@@ -1072,7 +1139,33 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(result, indent=2))
             else:
                 for k, v in result.items():
-                    print(f"{k}={v}")
+                    print(f"{k}: {v}")
+            return 0
+
+        if args.command == "provider-probe-api-football-fixtures":
+            from scorerecord.ingest.api_football_probe import probe_api_football_fixtures
+
+            raw_dir = Path(settings.raw_dir) if settings.raw_dir else None
+            input_json_path = Path(args.input_json) if args.input_json else None
+
+            result = probe_api_football_fixtures(
+                conn=conn,
+                api_key=settings.api_football_key,
+                base_url=settings.api_football_base_url,
+                league_code=args.league,
+                api_football_league_id=args.api_football_league_id,
+                season=args.season,
+                max_requests=args.max_requests,
+                include_status=args.include_status,
+                input_json=input_json_path,
+                raw_dir=raw_dir,
+            )
+
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                for k, v in result.items():
+                    print(f"{k}: {v}")
             return 0
 
         if args.command == "goals-v2-lambda-benchmark":
@@ -1187,6 +1280,17 @@ def main(argv: list[str] | None = None) -> int:
                 "schema_migration",
             ]:
                 print(f"{table}: {table_count(conn, table)}")
+        elif args.command == "multi-league-readiness-report":
+            leagues = list(_parse_str_tuple(args.leagues))
+            report = audit_leagues(conn, leagues)
+            if args.json:
+                print(json.dumps(report, indent=2))
+            else:
+                print("Global Blockers:", report["global_blockers"])
+                print("Schema Readiness:", report["schema_readiness"])
+                for league in report["league_reports"]:
+                    print(league)
+                print("Next phase:", report["recommended_next_phase"])
             return 0
 
     return 1

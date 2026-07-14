@@ -489,3 +489,31 @@ Technical work:
 
 Golden rule: keep infrastructure reusable, ship the useful forecast view early, and do
 not confuse a reasonable forecast with a profitable strategy.
+
+
+## Phase 13 - Daily Multi-League Forecast Pipeline
+
+Objective: Expand ScoreRecord from a single World Cup tournament to a fully automated daily multi-league forecast pipeline.
+
+### Phase 13.0 — Multi-League Forecast Readiness Audit
+### Phase 13 — Multi-League Automation
+- **13.0 Multi-League Readiness Audit** (CLOSED)
+  - Readiness CLI and baseline gap analysis.
+- **13.1 Fixture Schema + Provider Pilot** (CLOSED)
+  - Safely migrated `fixture` schema (`league_code`, `competition`, `season`).
+  - Evaluated and integrated Odds-API.io as the initial fixture provider for EPL pilot.
+  - Implemented `ingest-fixtures-odds-api` dry-run mode for evaluation.
+- **13.2 Multi-League Prediction Flow** (IN PROGRESS)
+  - Established The Odds API as the primary live fixture provider for the EPL pilot.
+  - Implemented `provider-probe-api-football-fixtures` as a read-only secondary/backup provider probe for stable league/team/fixture IDs and stats.
+  - Hardened authentication and error handling for provider polling logic.
+  - Daily polling of fixtures and predictions for pilot league (EPL). (Pending remote live-run)
+  - GUI league filtering.blockers.
+
+### Future 13.X
+- Generate predictions for all supported leagues (requires model ratings).
+- Add GUI competition filters to navigate the multi-league data cleanly.
+- Add daily timer for automated ingest and updates.
+
+Conditions for inclusion:
+Only include a league if future fixtures are ingested, teams can be mapped, model ratings exist, predictions can be generated, and the GUI can display them cleanly.

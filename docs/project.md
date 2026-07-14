@@ -133,6 +133,7 @@ scorerecord compute-edge --dry-run
 scorerecord recommend --dry-run
 scorerecord compute-clv --dry-run
 scorerecord db-summary
+scorerecord provider-probe-api-football-fixtures
 ```
 
 ## Quality Gates
@@ -906,3 +907,10 @@ Output:
 - Added fixture resolution quality reporting.
 - Added accent/case-folded alias keys.
 - Added `scorer_goal_history` to exclude own goals from future scorer modeling.
+
+
+### Multi-League Integration
+- **Phase 13.0:** Readiness audit built (`multi-league-readiness-report`) identifying the `fixture` schema block.
+- **Phase 13.1:** Schema safely migrated (`version=7`). Odds API selected as the initial EPL pilot fixture provider. API-Football reserved as future robust backup. Ingest tool `ingest-fixtures-odds-api` added in dry-run mode. Product remains strictly FORECAST_ONLY / PAPER_ONLY.
+- **Next:** EPL pilot data ingestion and automation flow, adding GUI league filters.
+- All tasks in Phase 13.0 were read-only; no schema migrations or external API calls were made.

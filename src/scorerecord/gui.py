@@ -6,7 +6,7 @@ import html
 import json
 import os
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,8 +24,8 @@ from scorerecord.odds_horizons import (
     OddsHorizonCoverage,
     load_fixture_odds_horizon_coverage,
 )
-from scorerecord.time_utils import parse_kickoff_utc
 from scorerecord.settings import Settings
+from scorerecord.time_utils import parse_kickoff_utc
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -41,9 +41,9 @@ RECREATIONAL_DISCLAIMER = """
 <div style="background-color: #fff3cd; color: #856404; padding: 10px; border-radius: 5px; \
 margin-bottom: 20px; text-align: center; font-size: 14px; border: 1px solid #ffeeba;">
     <strong>Atención:</strong> ScoreRecord muestra pronósticos del modelo \
-para análisis y entretenimiento. 
+para análisis y entretenimiento.
     No es asesoría financiera ni recomendación de apuesta. \
-El modelo no ha demostrado ganarle al mercado de forma consistente. 
+El modelo no ha demostrado ganarle al mercado de forma consistente.
     Úsalo como registro y pronóstico recreativo, no como una forma de ganar dinero.
     {link}
 </div>
@@ -127,6 +127,7 @@ class ForecastFixture:
     snapshots: list[ForecastSnapshotView]
     odds_coverage: list[OddsMarketCoverage]
     odds_horizons: list[OddsHorizonCoverage]
+    paper_picks: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,8 @@ class ForecastData:
     market_validation_status: str
     quality_items: list[ForecastQualityItem]
     empty_state: str | None
+    view_mode: str = "all"
+    research_models: list[dict[str, Any]] = field(default_factory=list)
 
 
 def serve_dashboard(
@@ -177,7 +180,7 @@ def serve_dashboard(
                 return
             if parsed.path.startswith("/match/"):
                 fixture_id = parsed.path.removeprefix("/match/").strip("/")
-                self._render_match(fixture_id)
+                self._render_match(fixture_id, params)
                 return
             if parsed.path == "/audit" or mode == "audit":
                 self._render_audit(params)
@@ -186,9 +189,12 @@ def serve_dashboard(
 
         def _render_today(self, params: dict[str, list[str]]) -> None:
             date_filter = _parse_date(params.get("date", [""])[0])
+            view_mode = str(params.get("view", ["all"])[0]).strip().lower()
+            if view_mode not in ("all", "forecast", "paper", "research"):
+                view_mode = "all"
             try:
                 with connect(db_path) as conn:
-                    data = load_forecast_data(conn, target_date=date_filter)
+                    data = load_forecast_data(conn, target_date=date_filter, view_mode=view_mode, settings=settings)
                 body = render_today_forecast(
                     data, settings=settings, refresh_seconds=refresh_seconds
                 )
@@ -196,10 +202,13 @@ def serve_dashboard(
                 body = render_error(exc)
             self._write(body)
 
-        def _render_match(self, fixture_id: str) -> None:
+        def _render_match(self, fixture_id: str, params: dict[str, list[str]]) -> None:
+            view_mode = str(params.get("view", ["all"])[0]).strip().lower()
+            if view_mode not in ("all", "forecast", "paper", "research"):
+                view_mode = "all"
             try:
                 with connect(db_path) as conn:
-                    data = load_forecast_data(conn, fixture_id=fixture_id)
+                    data = load_forecast_data(conn, fixture_id=fixture_id, view_mode=view_mode, settings=settings)
                 body = render_match_forecast(data, fixture_id, settings=settings)
             except Exception as exc:  # pragma: no cover - defensive web path
                 body = render_error(exc)
@@ -254,6 +263,8 @@ def load_forecast_data(
     fixture_id: str | None = None,
     display_tz_name: str | None = None,
     now_utc: datetime | None = None,
+    view_mode: str = "all",
+    settings: Settings | None = None,
 ) -> ForecastData:
     display_tz = _display_tz(display_tz_name)
     now = now_utc or datetime.now(UTC)
@@ -287,6 +298,16 @@ def load_forecast_data(
     snapshots_by_fixture = _group_forecast_snapshots(
         _forecast_snapshot_rows(conn, [str(row["fixture_id"]) for row in rows])
     )
+    paper_picks_by_fixture: dict[str, list[dict[str, Any]]] = {}
+    if view_mode in ("all", "paper"):
+        run_options = _recommendation_runs(conn)
+        rec_run_id = int(run_options[0]["run_id"]) if run_options else None
+        if rec_run_id is not None:
+            # We fetch recommendations. For /match/<id> date_filter is None, for /today target_date is passed.
+            raw_picks = _recommendation_rows(conn, rec_run_id, date_filter=selected_date if fixture_id is None else None, market_filter=None)
+            for p in raw_picks:
+                fix_id = str(p["fixture_id"])
+                paper_picks_by_fixture.setdefault(fix_id, []).append(dict(p))
     fixtures: list[ForecastFixture] = []
     for row in rows:
         fixture = _forecast_fixture_from_row(
@@ -295,6 +316,7 @@ def load_forecast_data(
             snapshots_by_fixture.get(str(row["fixture_id"]), []),
             odds_coverage_by_fixture.get(str(row["fixture_id"]), []),
             odds_horizons_by_fixture.get(str(row["fixture_id"]), []),
+            paper_picks_by_fixture.get(str(row["fixture_id"]), []),
             display_tz=display_tz,
             selected_date=selected_date if fixture_id is None else None,
             now_utc=now,
@@ -322,6 +344,33 @@ def load_forecast_data(
         empty_state = "SIN PARTIDOS"
     elif not any(fixture.markets for fixture in fixtures):
         empty_state = "SIN PREDICCIONES"
+    research_models: list[dict[str, Any]] = []
+    if view_mode == "research" and settings is not None:
+        outputs_dir = settings.raw_dir.parent / "outputs"
+        benchmarks_dir = outputs_dir / "benchmarks"
+        for sub in ["benchmarks", "backtests", "backtests-smoke", "coverage", "diagnostics"]:
+            d_dir = outputs_dir / sub
+            if d_dir.exists():
+                for f in d_dir.glob("*.json"):
+                    if "metadata" in f.name or "benchmark" in f.name or "audit" in f.name or "decision" in f.name or "coverage" in f.name or "probe" in f.name:
+                        try:
+                            d = json.loads(f.read_text("utf-8"))
+                            st = d.get("benchmark_state") or d.get("overall_state") or d.get("overall", {}).get("benchmark_state", "UNKNOWN")
+
+                            # Additional inspection for Goals V2
+                            if "goals_v2" in f.name:
+                                m_st = d.get("market_status")
+                                if m_st:
+                                    st = f"{st} | {m_st}"
+
+                            research_models.append({
+                                "name": f"{sub}/{f.name}",
+                                "file": f.name,
+                                "state": st,
+                                "status": "RESEARCH_ONLY / no conectado a fixtures actuales"
+                            })
+                        except Exception: pass
+
     return ForecastData(
         target_date=selected_date,
         previous_date=previous_date,
@@ -339,13 +388,40 @@ def load_forecast_data(
         market_validation_status=validation_status,
         quality_items=quality_items,
         empty_state=empty_state,
+        view_mode=view_mode,
+        research_models=research_models,
     )
 
 
 def render_today_forecast(data: ForecastData, *, settings: Settings | None = None, refresh_seconds: int = 60) -> str:
-    cards = "".join(_forecast_card(fixture) for fixture in data.fixtures)
-    if not cards:
-        cards = _empty_forecast_state(data.empty_state or "SIN PARTIDOS")
+    cards = ""
+    view_mode = data.view_mode
+    if view_mode == "research":
+        cards = "<h3>Modelos de investigación disponibles</h3><ul>"
+        if not data.research_models:
+            cards += "<li>No hay modelos de investigación en outputs/</li>"
+        else:
+            for rm in data.research_models:
+                cards += f'''<li>
+                    <strong>Modelo:</strong> {rm['name']}<br>
+                    <strong>Estado interno:</strong> {rm['state']}<br>
+                    <strong>Estado actual:</strong> {rm['status']}<br>
+                </li>'''
+        cards += "</ul>"
+    else:
+        for fixture in data.fixtures:
+            if view_mode == "paper" and not fixture.paper_picks:
+                continue
+            if view_mode == "forecast" and not fixture.primary:
+                continue
+            cards += _forecast_card(fixture, view_mode)
+
+        if not cards:
+            if view_mode == "paper":
+                cards = _empty_forecast_state("No hay paper picks recreativos para esta fecha. Puedes ver pronósticos del modelo en la vista Todo o Pronósticos.")
+            else:
+                cards = _empty_forecast_state(data.empty_state or "SIN PARTIDOS")
+
     return f"""<!doctype html>
 <html lang="es" data-theme="scorerecord">
 <head>
@@ -363,13 +439,14 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
     {_forecast_quality_panel(data)}
     {_forecast_stats(data)}
     <section class="forecast-toolbar">
-      <a class="btn ghost" href="/today?date={_e(data.previous_date)}">Anterior</a>
+      <a class="btn ghost" href="/today?date={_e(data.previous_date)}&view={_e(data.view_mode)}">Anterior</a>
       <form method="get" action="/today" class="date-form">
+        <input type="hidden" name="view" value="{_e(data.view_mode)}">
         <label for="date">Fecha</label>
         <input id="date" name="date" type="date" value="{_e(data.target_date)}">
         <button class="btn" type="submit">Ver</button>
       </form>
-      <a class="btn ghost" href="/today?date={_e(data.next_date)}">Siguiente</a>
+      <a class="btn ghost" href="/today?date={_e(data.next_date)}&view={_e(data.view_mode)}">Siguiente</a>
       <a class="btn ghost" href="/audit">Auditoria</a>
     </section>
     <section class="match-grid">{cards}</section>
@@ -383,7 +460,7 @@ def render_match_forecast(data: ForecastData, fixture_id: str, *, settings: Sett
     if fixture is None:
         content = _empty_forecast_state("PARTIDO NO ENCONTRADO")
     else:
-        content = _match_detail(fixture)
+        content = _match_detail(fixture, view_mode=data.view_mode)
     return f"""<!doctype html>
 <html lang="es" data-theme="scorerecord">
 <head>
@@ -694,6 +771,7 @@ def _forecast_fixture_from_row(
     snapshots: list[ForecastSnapshotView],
     odds_coverage: list[OddsMarketCoverage],
     odds_horizons: list[OddsHorizonCoverage],
+    paper_picks: list[dict[str, Any]],
     *,
     display_tz: ZoneInfo,
     selected_date: str | None,
@@ -747,6 +825,7 @@ def _forecast_fixture_from_row(
         snapshots=snapshots,
         odds_coverage=odds_coverage,
         odds_horizons=odds_horizons,
+        paper_picks=paper_picks,
     )
 
 
@@ -790,8 +869,11 @@ def _forecast_nav(data: ForecastData) -> str:
         <div class="subline">Mundial / selecciones - pronostico estadistico</div>
       </div>
       <nav>
-        <a href="/today?date={_e(data.target_date)}">Hoy</a>
-        <a href="/audit">Auditoria</a>
+        <a href="/today?date={_e(data.target_date)}&view=all">Todo</a>
+        <a href="/today?date={_e(data.target_date)}&view=forecast">Pronósticos</a>
+        <a href="/today?date={_e(data.target_date)}&view=paper">Paper recreativo</a>
+        <a href="/today?date={_e(data.target_date)}&view=research">Investigación</a>
+        <a href="/audit">Audit</a>
         <span class="badge forecast">FORECAST_ONLY</span>
       </nav>
     </header>
@@ -856,9 +938,58 @@ def _forecast_stats(data: ForecastData) -> str:
     return f'<section class="forecast-stats">{cells}</section>'
 
 
-def _forecast_card(fixture: ForecastFixture) -> str:
+
+def _render_paper_picks(paper_picks: list[dict[str, Any]]) -> str:
+    if not paper_picks:
+        return ""
+
+    rows_html = ""
+    for p in paper_picks:
+        market = p.get("market", "")
+        selection = p.get("selection", "")
+        bookmaker = p.get("bookmaker", "")
+        market_odds = p.get("market_odds")
+        model_prob = p.get("model_prob")
+        generated_utc = str(p.get("generated_utc", ""))
+
+        rows_html += f'''
+        <tr>
+            <td>{_e(market)}</td>
+            <td>{_e(selection)}</td>
+            <td>{_e(bookmaker)}</td>
+            <td>{_num(market_odds)}</td>
+            <td>{_pct(model_prob)}</td>
+            <td>{_e(generated_utc[:16])}</td>
+            <td><span class="label">PAPER_ONLY / NO VALIDADO</span></td>
+        </tr>'''
+
+    return f'''
+    <div class="paper-picks-section">
+      <h4>Paper picks recreativos</h4>
+      <p class="text-muted"><small>Estos picks son simulados/recreativos. No han demostrado ganarle al mercado.</small></p>
+      <table>
+        <thead>
+          <tr>
+            <th>Mercado</th>
+            <th>Selección</th>
+            <th>Bookmaker</th>
+            <th>Cuota</th>
+            <th>Prob. Modelo</th>
+            <th>Generado</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows_html}
+        </tbody>
+      </table>
+    </div>
+    '''
+
+def _forecast_card(fixture: ForecastFixture, view_mode: str = "all") -> str:
     primary = _primary_forecasts_block(fixture)
     markets = _forecast_market_chips(fixture.markets[:8])
+    paper_html = _render_paper_picks(fixture.paper_picks) if view_mode in ("all", "paper") else ""
     return f"""
     <article class="match-card {fixture.state}">
       <div class="match-card-head">
@@ -870,9 +1001,10 @@ def _forecast_card(fixture: ForecastFixture) -> str:
         <span class="state {fixture.state}">{_e(fixture.state_label)}</span>
       </div>
       {primary}
+      {paper_html}
       <div class="market-chips">{markets}</div>
       <div class="card-actions">
-        <a class="btn" href="/match/{_e(fixture.fixture_id)}">Detalle</a>
+        <a class="btn" href="/match/{_e(fixture.fixture_id)}?view={_e(view_mode)}">Detalle</a>
       </div>
     </article>
     """
@@ -897,11 +1029,11 @@ def _primary_forecast_item(market: ForecastMarket) -> str:
     signal = forecast_signal_strength(market.prob)
     return f"""
         <div class="primary-pick {signal.css_class}" data-signal="{_e(signal.code)}">
-          <span>Principal {_e(_forecast_family_label(market))}</span>
+          <span>Pronóstico recomendado del modelo ({_e(_forecast_family_label(market))})</span>
           <strong>{_e(signal.label)}</strong>
           <em>{_e(_forecast_diagnostic_label(market))}</em>
           <small>
-            Fuerza de senal: distancia a 50%, no validada contra resultados.
+            NO VALIDADO CONTRA MERCADO. Úsalo solo de forma recreativa.
           </small>
         </div>
         """
@@ -926,7 +1058,7 @@ def _quality_class(status: str) -> str:
     return f"quality-{status.lower().replace('_', '-')}"
 
 
-def _match_detail(fixture: ForecastFixture) -> str:
+def _match_detail(fixture: ForecastFixture, view_mode: str = "all") -> str:
     snapshots = _forecast_snapshot_section(fixture)
     has_complete_odds = any(cov.status == "COVERAGE_OK" for cov in fixture.odds_coverage)
     if has_complete_odds:
@@ -964,7 +1096,7 @@ informativa, no una señal de apuesta.</em>
         rows = '<tr><td colspan="6" class="empty">No hay mercados de goles para mostrar.</td></tr>'
     return f"""
     <section class="match-detail">
-      <a class="btn ghost" href="/today?date={_e(fixture.display_date or '')}">Volver</a>
+      <a class="btn ghost" href="/today?date={_e(fixture.display_date or '')}&view={_e(view_mode)}">Volver</a>
       <div class="detail-head">
         <div>
           <div class="kickoff">{_e(fixture.display_time)} - {_e(fixture.display_date or '')}</div>

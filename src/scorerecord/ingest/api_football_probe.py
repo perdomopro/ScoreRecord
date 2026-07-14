@@ -8,6 +8,11 @@ import urllib.request
 from typing import Any
 from urllib.parse import urlencode
 
+import sqlite3
+from datetime import datetime, UTC
+from pathlib import Path
+from scorerecord.aliases import normalize_key
+
 
 def resolve_aliases(
     leagues_data: list[dict[str, Any]], requested: tuple[str, ...]
@@ -357,3 +362,185 @@ def probe_api_football(
     report["free_plan_limit_warning"] = requests_made > 50
 
     return report
+
+
+def probe_api_football_fixtures(
+    conn: sqlite3.Connection,
+    api_key: str | None,
+    base_url: str,
+    league_code: str,
+    api_football_league_id: int,
+    season: int,
+    max_requests: int,
+    include_status: bool = False,
+    input_json: Path | None = None,
+    raw_dir: Path | None = None,
+) -> dict[str, Any]:
+    
+    empty_result = {
+        "status": "OK",
+        "provider": "api_football",
+        "league": league_code,
+        "api_football_league_id": api_football_league_id,
+        "season": season,
+        "api_requests_used": 0,
+        "quota_remaining": -1,
+        "quota_limit": -1,
+        "teams_seen": 0,
+        "fixtures_seen": 0,
+        "sample_fixture_ids": [],
+        "sample_team_names": [],
+        "mapped_team_count": 0,
+        "unmapped_team_count": 0,
+        "unmapped_team_names": [],
+        "pagination_detected": False,
+        "raw_files_written": [],
+        "recommended_provider_role": "NOT_USABLE"
+    }
+
+    if not input_json and not api_key:
+        return {**empty_result, "status": "AUTH_MISSING"}
+
+    required_requests = 3 if include_status else 2
+    if not input_json and max_requests < required_requests:
+        return {**empty_result, "status": "MAX_REQUESTS_TOO_LOW"}
+
+    api_requests_used = 0
+    quota_remaining = -1
+    quota_limit = -1
+    pagination_detected = False
+    raw_files_written = []
+
+    def save_raw(name: str, data: dict) -> None:
+        if raw_dir:
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            path = raw_dir / f"api_football_{name}_{timestamp}.json"
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            raw_files_written.append(str(path))
+
+    def check_resp(resp_dict: dict) -> tuple[str, list]:
+        nonlocal pagination_detected
+        errors = resp_dict.get("errors")
+        if errors:
+            return "API_FOOTBALL_ERROR", []
+        
+        response = resp_dict.get("response")
+        if response is None:
+            return "INVALID_RESPONSE", []
+            
+        paging = resp_dict.get("paging", {})
+        if paging.get("total", 0) > 1:
+            pagination_detected = True
+            
+        return "OK", response
+
+    if input_json:
+        try:
+            data = json.loads(input_json.read_text(encoding="utf-8"))
+            teams_data = data.get("teams", {})
+            fixtures_data = data.get("fixtures", {})
+        except Exception:
+            return {**empty_result, "status": "INVALID_RESPONSE"}
+    else:
+        def fetch(endpoint: str) -> dict | str:
+            nonlocal api_requests_used, quota_remaining, quota_limit
+            url = f"{base_url.rstrip('/')}{endpoint}"
+            req = urllib.request.Request(url, headers={"x-apisports-key": api_key})
+            api_requests_used += 1
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    headers = resp.headers
+                    rem = headers.get("x-ratelimit-requests-remaining") or headers.get("X-Ratelimit-Remaining")
+                    lim = headers.get("x-ratelimit-limit") or headers.get("x-ratelimit-requests-limit")
+                    if rem is not None:
+                        quota_remaining = int(rem)
+                    if lim is not None:
+                        quota_limit = int(lim)
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    return "AUTH_FAILED"
+                if e.code == 429:
+                    return "RATE_LIMITED"
+                return "API_ERROR"
+            except Exception:
+                return "INVALID_RESPONSE"
+
+        if include_status:
+            status_data = fetch("/status")
+            if isinstance(status_data, str):
+                return {**empty_result, "status": status_data, "api_requests_used": api_requests_used}
+            save_raw("status", status_data)
+
+        teams_data = fetch(f"/teams?league={api_football_league_id}&season={season}")
+        if isinstance(teams_data, str):
+            return {**empty_result, "status": teams_data, "api_requests_used": api_requests_used}
+        save_raw("teams", teams_data)
+
+        fixtures_data = fetch(f"/fixtures?league={api_football_league_id}&season={season}")
+        if isinstance(fixtures_data, str):
+            return {**empty_result, "status": fixtures_data, "api_requests_used": api_requests_used}
+        save_raw("fixtures", fixtures_data)
+
+    t_status, t_list = check_resp(teams_data)
+    if t_status != "OK":
+        return {**empty_result, "status": t_status, "api_requests_used": api_requests_used, "quota_remaining": quota_remaining, "quota_limit": quota_limit, "raw_files_written": raw_files_written}
+
+    f_status, f_list = check_resp(fixtures_data)
+    if f_status != "OK":
+        return {**empty_result, "status": f_status, "api_requests_used": api_requests_used, "quota_remaining": quota_remaining, "quota_limit": quota_limit, "raw_files_written": raw_files_written}
+
+    all_names = set()
+    sample_teams = set()
+    sample_fixtures = []
+
+    for t_node in t_list:
+        name = t_node.get("team", {}).get("name")
+        if name:
+            all_names.add(name)
+            if len(sample_teams) < 3:
+                sample_teams.add(name)
+
+    for f_node in f_list:
+        sample_fixtures.append(f_node.get("fixture", {}).get("id"))
+        t_home = f_node.get("teams", {}).get("home", {}).get("name")
+        t_away = f_node.get("teams", {}).get("away", {}).get("name")
+        if t_home:
+            all_names.add(t_home)
+        if t_away:
+            all_names.add(t_away)
+
+    mapped_count = 0
+    unmapped_names = []
+    
+    for name in sorted(all_names):
+        norm = normalize_key(name)
+        row = None
+        if norm:
+            row = conn.execute("SELECT team_id FROM team_alias WHERE alias_key = ?", (norm,)).fetchone()
+        if row:
+            mapped_count += 1
+        else:
+            unmapped_names.append(name)
+
+    return {
+        "status": "OK",
+        "provider": "api_football",
+        "league": league_code,
+        "api_football_league_id": api_football_league_id,
+        "season": season,
+        "api_requests_used": api_requests_used,
+        "quota_remaining": quota_remaining,
+        "quota_limit": quota_limit,
+        "teams_seen": len(t_list),
+        "fixtures_seen": len(f_list),
+        "sample_fixture_ids": sample_fixtures[:3],
+        "sample_team_names": list(sample_teams),
+        "mapped_team_count": mapped_count,
+        "unmapped_team_count": len(unmapped_names),
+        "unmapped_team_names": unmapped_names,
+        "pagination_detected": pagination_detected,
+        "raw_files_written": raw_files_written,
+        "recommended_provider_role": "BACKUP"
+    }

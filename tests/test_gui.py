@@ -398,8 +398,8 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert data.fixtures[0].primary.selection == "over"
     assert "FORECAST_ONLY" in html
     assert "Pronosticos principales del modelo" in html
-    assert "Principal GOLES" in html
-    assert "Principal BTTS" in html
+    assert "Pronóstico recomendado del modelo" in html
+    assert "Pronóstico recomendado del modelo (BTTS)" in html
     assert 'data-signal="NO_SIGNAL"' in html
     assert html.count('data-signal="NO_SIGNAL"') >= 2
     assert "Sin senal clara" in html

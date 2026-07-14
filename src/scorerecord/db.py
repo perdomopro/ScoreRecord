@@ -8,7 +8,7 @@ from pathlib import Path
 from scorerecord.aliases import normalize_key
 from scorerecord.time_utils import format_utc, parse_kickoff_utc
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 _MIGRATION_NAMES = {
     1: "initial_schema",
     2: "compatibility_columns_and_alias_keys",
@@ -16,6 +16,7 @@ _MIGRATION_NAMES = {
     4: "historical_odds_metadata",
     5: "forecast_snapshot",
     6: "forecast_snapshot_quality_status",
+    7: "multi_league_fixture_schema",
 }
 
 
@@ -138,6 +139,33 @@ def _run_lightweight_migrations(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "recommendation", "high_edge_reason", "TEXT")
     _add_column_if_missing(conn, "recommendation", "paper", "INTEGER NOT NULL DEFAULT 1")
     _add_column_if_missing(conn, "edge_analysis", "elo_diff", "REAL")
+    _add_column_if_missing(conn, "fixture", "league_code", "TEXT")
+    _add_column_if_missing(conn, "fixture", "competition", "TEXT")
+    _add_column_if_missing(conn, "fixture", "season", "TEXT")
+    _add_column_if_missing(conn, "fixture", "source_event_id", "TEXT")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fixture_league_kickoff
+          ON fixture(league_code, kickoff_utc)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_fixture_source_event
+          ON fixture(source, source_event_id)
+          WHERE source IS NOT NULL AND source_event_id IS NOT NULL
+        """
+    )
+    conn.execute(
+        """
+        UPDATE fixture
+        SET league_code = 'WORLD_CUP_2026',
+            competition = 'FIFA World Cup 2026',
+            season = '2026'
+        WHERE league_code IS NULL
+          AND (source = 'openfootball' OR fixture_id LIKE 'wc2026-%')
+        """
+    )
     _add_column_if_missing(conn, "edge_analysis", "close_match", "INTEGER")
     _add_column_if_missing(conn, "edge_analysis", "raw_implied_prob", "REAL")
     _add_column_if_missing(conn, "edge_analysis", "market_overround", "REAL")
@@ -254,7 +282,7 @@ def _ensure_schema_migration_table(conn: sqlite3.Connection) -> None:
 def _backfill_fixture_kickoff_utc(conn: sqlite3.Connection) -> None:
     if not _table_exists(conn, "fixture"):
         return
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(fixture)")}
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(fixture)")}
     if "kickoff_utc" not in columns or "kickoff_local" not in columns:
         return
     rows = conn.execute(
@@ -295,7 +323,7 @@ def _add_column_if_missing(
     column_name: str,
     definition: str,
 ) -> None:
-    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})")}
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})")}
     if column_name not in columns:
         try:
             conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")

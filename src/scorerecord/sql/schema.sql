@@ -78,6 +78,10 @@ CREATE TABLE IF NOT EXISTS fixture (
   away_score INTEGER,
   ground TEXT,
   source TEXT NOT NULL DEFAULT 'openfootball',
+  source_event_id TEXT,
+  league_code TEXT,
+  competition TEXT,
+  season TEXT,
   updated_utc TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
