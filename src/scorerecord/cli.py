@@ -478,6 +478,7 @@ def main(argv: list[str] | None = None) -> int:
             host=args.host,
             port=args.port,
             refresh_seconds=args.refresh_seconds,
+            settings=settings,
         )
         return 0
 
