@@ -439,7 +439,9 @@ Maturity:
 - **Phase 10.0:** Shots/SOT Feasibility Audit — **CLOSED** (`V2_ELIGIBLE` for top leagues)
 - **Phase 10.1:** Shots/SOT Process Rating Prototype — **CLOSED** (`PROCESS_PROMISING`. Goals V2 path proceeds.)
 - **Phase 10.2:** Goals V2 Lambda Modeling — **CLOSED** (Strict weekly prequential, 0 external API calls)
-- **Phase 10.3:** Market benchmark for Goals V2 — **NEXT**
+- **Phase 10.3:** Market benchmark for Goals V2 — **CLOSED** (`MARKET_REJECTED`. Beaten by market preclose odds. No paper candidates unlocked.)
+- **Phase 11.2.0:** Multi-book Sharp/Soft Coverage Audit — **CLOSED** (`NOT_FEASIBLE`. Local DB lacks sharp reference books. Betting paths remain explicitly blocked.)
+- **Phase 12:** Recreational Forecast-only Framing — **CLOSED** (Web GUI reframed to emphasize model vs market without betting recommendations. Clean, neutral language used.)
 
 ## Phase 8 - Market-Anchored Residual Model (Status: CLOSED, RESIDUAL_INCONCLUSIVE)
 

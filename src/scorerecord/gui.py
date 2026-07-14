@@ -25,6 +25,7 @@ from scorerecord.odds_horizons import (
     load_fixture_odds_horizon_coverage,
 )
 from scorerecord.time_utils import parse_kickoff_utc
+from scorerecord.settings import Settings
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -34,6 +35,31 @@ DEFAULT_MIN_PROB = 0.15
 DEFAULT_MAX_ODDS_AGE_MINUTES = 180.0
 DEFAULT_MIN_BOOKS = 2
 DEFAULT_DISPLAY_TZ = "America/Mexico_City"
+
+
+RECREATIONAL_DISCLAIMER = """
+<div style="background-color: #fff3cd; color: #856404; padding: 10px; border-radius: 5px; \
+margin-bottom: 20px; text-align: center; font-size: 14px; border: 1px solid #ffeeba;">
+    <strong>Atención:</strong> ScoreRecord muestra pronósticos del modelo \
+para análisis y entretenimiento. 
+    No es asesoría financiera ni recomendación de apuesta. \
+El modelo no ha demostrado ganarle al mercado de forma consistente. 
+    Úsalo como registro y pronóstico recreativo, no como una forma de ganar dinero.
+    {link}
+</div>
+"""
+
+def _recreational_warning_banner(settings: Settings | None) -> str:
+    if not settings:
+        return ""
+    link = ""
+    if settings.responsible_gambling_url:
+        link = (
+            f'<br><a href="{html.escape(settings.responsible_gambling_url)}" '
+            'target="_blank" style="color: #856404; text-decoration: underline;">'
+            'Más información sobre juego responsable</a>'
+        )
+    return RECREATIONAL_DISCLAIMER.format(link=link)
 
 
 @dataclass(frozen=True)
@@ -129,6 +155,7 @@ def serve_dashboard(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     refresh_seconds: int = 60,
+    settings: Settings | None = None,
 ) -> None:
     with connect(db_path) as conn:
         init_db(conn)
@@ -162,7 +189,9 @@ def serve_dashboard(
             try:
                 with connect(db_path) as conn:
                     data = load_forecast_data(conn, target_date=date_filter)
-                body = render_today_forecast(data, refresh_seconds=refresh_seconds)
+                body = render_today_forecast(
+                    data, settings=settings, refresh_seconds=refresh_seconds
+                )
             except Exception as exc:  # pragma: no cover - defensive web path
                 body = render_error(exc)
             self._write(body)
@@ -171,7 +200,7 @@ def serve_dashboard(
             try:
                 with connect(db_path) as conn:
                     data = load_forecast_data(conn, fixture_id=fixture_id)
-                body = render_match_forecast(data, fixture_id)
+                body = render_match_forecast(data, fixture_id, settings=settings)
             except Exception as exc:  # pragma: no cover - defensive web path
                 body = render_error(exc)
             self._write(body)
@@ -313,7 +342,7 @@ def load_forecast_data(
     )
 
 
-def render_today_forecast(data: ForecastData, *, refresh_seconds: int) -> str:
+def render_today_forecast(data: ForecastData, *, settings: Settings | None = None, refresh_seconds: int = 60) -> str:
     cards = "".join(_forecast_card(fixture) for fixture in data.fixtures)
     if not cards:
         cards = _empty_forecast_state(data.empty_state or "SIN PARTIDOS")
@@ -329,6 +358,7 @@ def render_today_forecast(data: ForecastData, *, refresh_seconds: int) -> str:
 <body class="forecast-page">
   {_forecast_nav(data)}
   <main class="forecast-shell">
+    {_recreational_warning_banner(settings)}
     {_forecast_warning_banner(data)}
     {_forecast_quality_panel(data)}
     {_forecast_stats(data)}
@@ -348,7 +378,7 @@ def render_today_forecast(data: ForecastData, *, refresh_seconds: int) -> str:
 </html>"""
 
 
-def render_match_forecast(data: ForecastData, fixture_id: str) -> str:
+def render_match_forecast(data: ForecastData, fixture_id: str, *, settings: Settings | None = None) -> str:
     fixture = next((item for item in data.fixtures if item.fixture_id == fixture_id), None)
     if fixture is None:
         content = _empty_forecast_state("PARTIDO NO ENCONTRADO")
@@ -365,6 +395,7 @@ def render_match_forecast(data: ForecastData, fixture_id: str) -> str:
 <body class="forecast-page">
   {_forecast_nav(data)}
   <main class="forecast-shell">
+    {_recreational_warning_banner(settings)}
     {_forecast_warning_banner(data)}
     {_forecast_quality_panel(data)}
     {content}
@@ -897,8 +928,25 @@ def _quality_class(status: str) -> str:
 
 def _match_detail(fixture: ForecastFixture) -> str:
     snapshots = _forecast_snapshot_section(fixture)
-    odds_coverage = _odds_coverage_section(fixture)
-    odds_horizons = _odds_horizon_section(fixture)
+    has_complete_odds = any(cov.status == "COVERAGE_OK" for cov in fixture.odds_coverage)
+    if has_complete_odds:
+        odds_section = f"""
+        <section class="modelo-vs-mercado">
+            <h2>Modelo vs mercado</h2>
+            <p class="muted" style="font-size: 0.9em; margin-bottom: 10px;">
+                <em>Nota: El mercado suele ser una referencia fuerte; esta comparación es \
+informativa, no una señal de apuesta.</em>
+            </p>
+            {_odds_coverage_section(fixture)}
+            {_odds_horizon_section(fixture)}
+        </section>
+        """
+    else:
+        odds_section = (
+            '<p class="muted">Datos de mercado incompletos; comparativa Modelo vs '
+            'mercado no disponible.</p>'
+        )
+
     rows = "".join(
         f"""
         <tr>
@@ -940,8 +988,7 @@ def _match_detail(fixture: ForecastFixture) -> str:
         El precio teorico sale de 1 / probabilidad del modelo. No es una cuota real,
         no incluye prorroga ni penales, y no es recomendacion de apuesta.
       </p>
-      {odds_coverage}
-      {odds_horizons}
+      {odds_section}
     </section>
     """
 

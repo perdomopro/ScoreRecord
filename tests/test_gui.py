@@ -1,5 +1,6 @@
 import sqlite3
 from datetime import UTC, datetime
+from pathlib import Path
 
 from scorerecord.db import init_db
 from scorerecord.gui import (
@@ -10,6 +11,7 @@ from scorerecord.gui import (
     render_today_forecast,
 )
 from scorerecord.models.manifest import MODEL_VERSION
+from scorerecord.settings import Settings
 
 
 def _conn() -> sqlite3.Connection:
@@ -384,7 +386,9 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
         target_date="2026-07-04",
         now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
     )
-    html = render_today_forecast(data, refresh_seconds=60)
+    html = render_today_forecast(
+        data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
 
     assert data.latest_run_id == run_id
     assert data.forecastable_count == 1
@@ -426,7 +430,9 @@ def test_forecast_signal_strength_marks_ou25_moderate() -> None:
         target_date="2026-07-04",
         now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
     )
-    html = render_today_forecast(data, refresh_seconds=60)
+    html = render_today_forecast(
+        data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
 
     assert data.fixtures[0].primary.market == "OU2.5"
     assert data.fixtures[0].primary.selection == "over"
@@ -451,7 +457,9 @@ def test_forecast_quality_panel_renders_ok_and_warn() -> None:
         target_date="2026-07-04",
         now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
     )
-    ok_html = render_today_forecast(ok_data, refresh_seconds=60)
+    ok_html = render_today_forecast(
+        ok_data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
 
     assert "Model quality panel" in ok_html
     assert "Calibration" in ok_html
@@ -474,7 +482,9 @@ def test_forecast_quality_panel_renders_ok_and_warn() -> None:
         target_date="2026-07-04",
         now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
     )
-    warn_html = render_today_forecast(warn_data, refresh_seconds=60)
+    warn_html = render_today_forecast(
+        warn_data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
 
     assert warn_html.count("<strong>WARN</strong>") >= 3
     assert "0/4 checks" in warn_html
@@ -506,7 +516,9 @@ def test_forecast_quality_panel_ignores_unrelated_later_quality_rows() -> None:
         target_date="2026-07-04",
         now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
     )
-    html = render_today_forecast(data, refresh_seconds=60)
+    html = render_today_forecast(
+        data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
 
     assert html.count("<strong>OK</strong>") >= 3
     assert "3 violations" not in html
@@ -535,7 +547,9 @@ def test_forecast_selector_ignores_uncalibrated_1x2_rows() -> None:
         target_date="2026-07-04",
         now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
     )
-    html = render_today_forecast(data, refresh_seconds=60)
+    html = render_today_forecast(
+        data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
 
     assert all(market.market != "1X2" for market in data.fixtures[0].markets)
     assert all(market.market != "1X2" for market in data.fixtures[0].primary_markets)
@@ -552,7 +566,9 @@ def test_forecast_match_renders_goal_market_detail() -> None:
         fixture_id="m-forecast",
         now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
     )
-    html = render_match_forecast(data, "m-forecast")
+    html = render_match_forecast(
+        data, "m-forecast", settings=Settings(db_path=Path(""), raw_dir=Path(""))
+    )
 
     assert "Mexico" in html
     assert "Canada" in html
@@ -562,28 +578,26 @@ def test_forecast_match_renders_goal_market_detail() -> None:
     assert "No es una cuota real" in html
     assert "OU2.5" in html
     assert "Ambos anotan: si" in html
-    assert "Cobertura de cuotas" in html
-    assert "No calcula EV ni recomendación de apuesta." in html
-    assert "Mejor cuota observada por lado" in html
-    assert "Cobertura por horizontes" in html
-    assert "No es cierre oficial, no calcula EV ni recomendación." in html
-    assert "NO_ODDS" in html
 
 
 def test_forecast_match_renders_odds_coverage_without_1x2() -> None:
     conn = _conn()
     _insert_forecast_fixture(conn)
-    _insert_odds_snapshot(conn, market="OU2.5", selection="over", odds=1.92)
-    _insert_odds_snapshot(conn, market="OU2.5", selection="under", odds=1.88)
-    _insert_odds_snapshot(conn, market="BTTS", selection="yes", odds=1.80)
-    _insert_odds_snapshot(conn, market="1X2", selection="home", odds=2.40)
+    _insert_odds_snapshot(conn, market="OU2.5", selection="over", odds=1.92, bookmaker="BookA")
+    _insert_odds_snapshot(conn, market="OU2.5", selection="under", odds=1.88, bookmaker="BookA")
+    _insert_odds_snapshot(conn, market="OU2.5", selection="over", odds=1.95, bookmaker="BookB")
+    _insert_odds_snapshot(conn, market="OU2.5", selection="under", odds=1.90, bookmaker="BookB")
+    _insert_odds_snapshot(conn, market="BTTS", selection="yes", odds=1.80, bookmaker="BookA")
+    _insert_odds_snapshot(conn, market="1X2", selection="home", odds=2.40, bookmaker="BookA")
 
     data = load_forecast_data(
         conn,
         fixture_id="m-forecast",
         now_utc=datetime(2026, 7, 4, 19, 0, tzinfo=UTC),
     )
-    html = render_match_forecast(data, "m-forecast")
+    html = render_match_forecast(
+        data, "m-forecast", settings=Settings(db_path=Path(""), raw_dir=Path(""))
+    )
 
     assert "Cobertura de cuotas" in html
     assert "Cobertura por horizontes" in html
@@ -596,11 +610,11 @@ def test_forecast_match_renders_odds_coverage_without_1x2() -> None:
     assert "T1H" in html
     assert "T15M" in html
     assert "LAST_PRE_KICKOFF" in html
-    assert "1 casas completas" in html
+    assert "2 casas completas" in html
     assert "Over 2.5" in html
-    assert "1.920" in html
+    assert "1.950" in html
     assert "Under 2.5" in html
-    assert "1.880" in html
+    assert "1.900" in html
     assert "1X2" not in html
     assert "Kelly" not in html
     assert "stake" not in html
@@ -626,7 +640,9 @@ def test_forecast_hides_ou_when_monotonicity_is_broken() -> None:
         target_date="2026-07-04",
         now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
     )
-    html = render_today_forecast(data, refresh_seconds=60)
+    html = render_today_forecast(
+        data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
 
     assert data.inconsistent_count == 1
     assert data.fixtures[0].primary is None

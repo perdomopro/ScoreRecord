@@ -14,6 +14,7 @@ class Settings:
     odds_api_io_bookmakers: str = "Bet365,Unibet"
     odds_api_io_league: str = "international-fifa-world-cup"
     thestatsapi_key: str | None = None
+    responsible_gambling_url: str | None = None
 
 
 def load_settings() -> Settings:
@@ -28,6 +29,7 @@ def load_settings() -> Settings:
         odds_api_io_bookmakers=os.getenv("ODDS_API_IO_BOOKMAKERS", "Bet365,Unibet"),
         odds_api_io_league=os.getenv("ODDS_API_IO_LEAGUE", "international-fifa-world-cup"),
         thestatsapi_key=os.getenv("THESTATSAPI_KEY") or None,
+        responsible_gambling_url=os.getenv("RESPONSIBLE_GAMBLING_URL") or None,
     )
 
 

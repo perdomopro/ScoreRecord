@@ -2,6 +2,7 @@ import json
 import math
 import sqlite3
 from datetime import UTC, datetime
+from pathlib import Path
 
 from scorerecord.db import init_db
 from scorerecord.forecast_snapshots import (
@@ -10,6 +11,7 @@ from scorerecord.forecast_snapshots import (
     settle_forecast_snapshots,
 )
 from scorerecord.gui import load_forecast_data, render_match_forecast
+from scorerecord.settings import Settings
 
 MODEL_VERSION = "test-forecast-v1"
 
@@ -265,7 +267,7 @@ def test_match_view_renders_frozen_and_settled_forecast() -> None:
         fixture_id="m1",
         now_utc=datetime(2026, 7, 5, 1, 0, tzinfo=UTC),
     )
-    html = render_match_forecast(data, "m1")
+    html = render_match_forecast(data, "m1", settings=Settings(db_path=Path(""), raw_dir=Path("")))
 
     assert "Forecast congelado" in html
     assert "OU2.5" in html

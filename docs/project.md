@@ -270,6 +270,24 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 
 ## Change Log
 
+### 2026-07-14 - Phase 11.2.0 Multi-book Sharp/Soft Coverage Audit and Phase 12 Recreational Forecast-only Framing
+
+- Phase 11.2.0 audit revealed that the local DB lacks sharp reference bookmakers (only soft books like Bet365 and Unibet are captured).
+- Result: `NOT_FEASIBLE`. Soft-vs-sharp CLV strategies cannot be explored with the current data.
+- Betting paths (Phase 6, EV, Kelly, stake) remain explicitly BLOCKED.
+- Initiated Phase 12 to permanently reframe the GUI as a neutral, recreational, and informational forecast product.
+- Replaced "primary pick", "bet", and "value" language with "Modelo vs mercado" and "Forecast".
+- Added a `RECREATIONAL_DISCLAIMER` advising that the product is for research and entertainment only, alongside a `responsible_gambling_url`.
+- Updated test suite with token-based forbidden language rules to enforce the non-betting stance.
+- Both Phase 11.2.0 and Phase 12 are CLOSED.
+
+### 2026-07-12 - Phase 10.3 Goals V2 Market Benchmark (OU2.5)
+
+- Benchmarked Goals V2 lambda predictions against historical average preclose OU2.5 market odds on the homeserver.
+- Ran canonical walk-forward over 6 leagues spanning 2021-08 to 2025-05 (9,362 matched fixtures).
+- Benchmark state: `MARKET_REJECTED`. The Goals V2 model logloss (0.68079) was definitively beaten by the market (0.67326). `delta_gpp_vs_market_preclose` = +0.00752, CI = [+0.0056, +0.0094].
+- While the process-enhanced lambda is a statistically significant improvement over internal goal baselines, it is not competitive with the market. Phase 10 is formally closed. No paper candidates unlocked.
+
 ### 2026-07-12 - Phase 10.2 Goals V2 Lambda Modeling
 
 - Model improved the joint logloss in all 6 evaluated leagues (`EPL, LA_LIGA, SERIE_A, BUNDESLIGA, LIGUE_1, CHAMPIONSHIP`) and all evaluated seasons.

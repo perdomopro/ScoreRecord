@@ -457,7 +457,10 @@ def main(argv: list[str] | None = None) -> int:
     ss_audit.add_argument("--leagues", required=True, help="Comma-separated leagues")
     ss_audit.add_argument(
         "--sharp-books",
-        default="Pinnacle,Pinnacle Sports,Pinnacle (PS3838),PS3838,Betfair Exchange,Matchbook,Smarkets,SBOBET,188BET",
+        default=(
+            "Pinnacle,Pinnacle Sports,Pinnacle (PS3838),PS3838,"
+            "Betfair Exchange,Matchbook,Smarkets,SBOBET,188BET"
+        ),
         help="Comma-separated list of sharp bookies",
     )
     ss_audit.add_argument("--json", action="store_true")

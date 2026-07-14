@@ -69,9 +69,12 @@ def run_sharp_soft_audit(
     # Initialize trackers
     tables_checked = ["historical_odds", "odds_snapshots"]
     bookmakers_found = set()
-    sharp_found = set()
-    soft_found = set()
-    agg_found = set()
+    ho_sharp_found = set()
+    ho_soft_found = set()
+    ho_agg_found = set()
+    os_sharp_found = set()
+    os_soft_found = set()
+    os_agg_found = set()
 
     source_stats = {
         "historical_odds": {
@@ -115,7 +118,8 @@ def run_sharp_soft_audit(
         """
         SELECT ho.source_event_id, ho.bookmaker, ho.market, hm.league_code, hm.match_date
         FROM historical_odds ho
-        JOIN historical_match hm ON ho.source = hm.source AND ho.source_event_id = hm.source_event_id
+        JOIN historical_match hm
+          ON ho.source = hm.source AND ho.source_event_id = hm.source_event_id
         WHERE hm.match_date >= ? AND hm.match_date <= ?
     """,
         (date_from, date_to),
@@ -134,12 +138,12 @@ def run_sharp_soft_audit(
         bookmakers_found.add(norm_b)
 
         if norm_b == "aggregate":
-            agg_found.add(norm_b)
+            ho_agg_found.add(norm_b)
         elif is_sharp(norm_b, sharp_books):
-            sharp_found.add(norm_b)
+            ho_sharp_found.add(norm_b)
             ho_fixtures_sharp.add(fix_id)
         else:
-            soft_found.add(norm_b)
+            ho_soft_found.add(norm_b)
             ho_fixtures_soft.add(fix_id)
 
     source_stats["historical_odds"]["fixtures_with_sharp"] = len(ho_fixtures_sharp)
@@ -148,7 +152,7 @@ def run_sharp_soft_audit(
         ho_fixtures_sharp.intersection(ho_fixtures_soft)
     )
     source_stats["historical_odds"]["distinct_bookmakers"] = (
-        len(sharp_found) + len(soft_found) + len(agg_found)
+        len(ho_sharp_found) + len(ho_soft_found) + len(ho_agg_found)
     )
 
     # Query odds_snapshots
@@ -157,9 +161,11 @@ def run_sharp_soft_audit(
         SELECT os.fixture_id, os.bookmaker, os.market, f.kickoff_utc, os.snapshot_at, hm.league_code
         FROM odds_snapshots os
         JOIN fixture f ON os.fixture_id = f.fixture_id
-        LEFT JOIN historical_match hm ON f.fixture_id = hm.source_event_id AND hm.source = os.source
+        LEFT JOIN historical_match hm
+          ON f.fixture_id = hm.source_event_id AND hm.source = os.source
         WHERE (f.kickoff_utc >= ? AND f.kickoff_utc <= ? || 'T23:59:59Z') 
-           OR (f.kickoff_utc IS NULL AND os.snapshot_at >= ? AND os.snapshot_at <= ? || 'T23:59:59Z')
+           OR (f.kickoff_utc IS NULL AND os.snapshot_at >= ?
+               AND os.snapshot_at <= ? || 'T23:59:59Z')
     """,
         (date_from, date_to, date_from, date_to),
     )
@@ -199,13 +205,13 @@ def run_sharp_soft_audit(
         is_so = False
 
         if norm_b == "aggregate":
-            agg_found.add(norm_b)
+            os_agg_found.add(norm_b)
         elif is_sharp(norm_b, sharp_books):
-            sharp_found.add(norm_b)
+            os_sharp_found.add(norm_b)
             os_fixtures_sharp.add(fix_id)
             is_s = True
         else:
-            soft_found.add(norm_b)
+            os_soft_found.add(norm_b)
             os_fixtures_soft.add(fix_id)
             is_so = True
 
@@ -263,10 +269,10 @@ def run_sharp_soft_audit(
 
     # Calculate fixtures_with_sharp_and_soft_same_horizon
     same_hz_count = 0
-    for fix_id, mkts in os_horizons.items():
+    for _fix_id, mkts in os_horizons.items():
         has_both = False
-        for mkt, hzs in mkts.items():
-            for hz, books in hzs.items():
+        for _mkt, hzs in mkts.items():
+            for _hz, books in hzs.items():
                 if len(books["sharp"]) > 0 and len(books["soft"]) > 0:
                     has_both = True
                     break
@@ -282,6 +288,19 @@ def run_sharp_soft_audit(
     source_stats["odds_snapshots"]["fixtures_with_null_kickoff_utc"] = null_kickoff
     source_stats["odds_snapshots"]["min_snapshot_at"] = min_snap if min_snap != "9999" else None
     source_stats["odds_snapshots"]["max_snapshot_at"] = max_snap if max_snap != "0000" else None
+    source_stats["odds_snapshots"]["distinct_bookmakers"] = (
+        len(os_sharp_found) + len(os_soft_found) + len(os_agg_found)
+    )
+
+    if (
+        source_stats["odds_snapshots"]["min_snapshot_at"]
+        and source_stats["odds_snapshots"]["max_snapshot_at"]
+    ):
+        min_dt = parse_datetime_utc(source_stats["odds_snapshots"]["min_snapshot_at"])
+        max_dt = parse_datetime_utc(source_stats["odds_snapshots"]["max_snapshot_at"])
+        source_stats["odds_snapshots"]["actual_history_days"] = (
+            max_dt - min_dt
+        ).total_seconds() / 86400.0
 
     # State Logic
     def get_state(fixtures_with_both, has_close):
@@ -318,6 +337,18 @@ def run_sharp_soft_audit(
         if same_hz_count < 200:
             blockers.append(f"Volume too low ({same_hz_count} fixtures) for robust edge modeling.")
 
+    has_unknown_league = any(ml.startswith("UNKNOWN_") for ml in ml_coverage_final)
+    if has_unknown_league:
+        blockers.append("Warning: Some fixtures mapped to UNKNOWN leagues in odds_snapshots.")
+
+    if "OU2.5" in markets:
+        has_ou25 = any(ml.endswith("_OU2.5") for ml in ml_coverage_final)
+        if not has_ou25 and source_stats["odds_snapshots"]["snapshot_count"] > 0:
+            blockers.append(
+                "Warning: OU2.5 requested but completely absent from odds_snapshots. "
+                "Stored under 'totals'?"
+            )
+
     # Fair price warning comment
     # Note: A true fair price should account for back/lay spread and commission on exchanges.
     # For this audit, we just detect coverage existence.
@@ -331,11 +362,16 @@ def run_sharp_soft_audit(
         historical_odds_state=ho_state,
         odds_snapshots_state=os_state,
         overall_state=overall_state,
-        bookmaker_level_available=len(sharp_found) > 0 or len(soft_found) > 0,
+        bookmaker_level_available=(
+            len(ho_sharp_found) > 0
+            or len(ho_soft_found) > 0
+            or len(os_sharp_found) > 0
+            or len(os_soft_found) > 0
+        ),
         bookmakers_found=list(bookmakers_found),
-        sharp_candidates_found=list(sharp_found),
-        soft_candidates_found=list(soft_found),
-        aggregate_candidates_found=list(agg_found),
+        sharp_candidates_found=list(ho_sharp_found.union(os_sharp_found)),
+        soft_candidates_found=list(ho_soft_found.union(os_soft_found)),
+        aggregate_candidates_found=list(ho_agg_found.union(os_agg_found)),
         source_coverage=source_stats,
         market_league_coverage=ml_coverage_final,
         bookmaker_market_coverage={},

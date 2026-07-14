@@ -406,16 +406,24 @@ def test_no_external_api_imports():
 
 def test_no_ev_kelly_stake_value_language():
     """Output contains no EV, Kelly, stake, value, recommendation language."""
+    import re
     report_fields = {f.name for f in dataclasses.fields(GoalsV2MarketBenchmarkReport)}
-    forbidden = {"ev", "kelly", "stake", "value", "recommendation", "paper_candidate"}
+    forbidden_tokens = {
+        "ev",
+        "expected_value",
+        "kelly",
+        "stake",
+        "value",
+        "recommendation",
+        "paper_candidate",
+    }
 
     for field_name in report_fields:
-        # Split by underscore and check whole tokens, not substrings
-        tokens = set(field_name.lower().split("_"))
-        for word in forbidden:
-            assert word not in tokens, (
-                f"Forbidden language '{word}' found in field: {field_name}"
-            )
+        lower = field_name.lower()
+        tokens = set(re.split(r"[^a-z0-9]+", lower))
+        assert not (tokens & forbidden_tokens), (
+            f"Forbidden token found in field: {field_name}"
+        )
 
     # Also check the source file text
     src = (
@@ -428,7 +436,7 @@ def test_no_ev_kelly_stake_value_language():
     tree = ast.parse(src)
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for word in forbidden:
+            for word in forbidden_tokens:
                 assert word not in node.name.lower(), (
                     f"Forbidden language '{word}' in function: {node.name}"
                 )
