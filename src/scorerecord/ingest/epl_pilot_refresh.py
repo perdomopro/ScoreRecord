@@ -13,7 +13,7 @@ from scorerecord.runs import ingest_run
 
 def _health_status(conn: sqlite3.Connection) -> str:
     checks = db_health_checks(conn)
-    return "OK" if all(c.status == "PASS" for c in checks) else "DB_HEALTH_FAILED"
+    return "OK" if all(c.status == "OK" for c in checks) else "DB_HEALTH_FAILED"
 
 def run_epl_pilot_refresh(
     conn: sqlite3.Connection,
