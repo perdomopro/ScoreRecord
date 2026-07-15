@@ -98,7 +98,8 @@ def publish_fixture_predictions(
         query = """
             SELECT
               fixture_id, kickoff_local, kickoff_utc, home_id, away_id,
-              home_placeholder, away_placeholder, home_score, away_score
+              home_placeholder, away_placeholder, home_score, away_score,
+              league_code, competition
             FROM fixture
         """
         params = []
@@ -204,6 +205,18 @@ def _fixture_as_match_feature(conn: sqlite3.Connection, fixture: sqlite3.Row) ->
     away_id = int(fixture["away_id"])
     elo_home = _latest_elo(conn, home_id)
     elo_away = _latest_elo(conn, away_id)
+    
+    league_code = fixture["league_code"]
+    if league_code == "WORLD_CUP_2026":
+        neutral = 1
+        tournament = "FIFA World Cup"
+    elif league_code == "EPL":
+        neutral = 0
+        tournament = "EPL"
+    else:
+        neutral = 1
+        tournament = fixture["competition"] or "Unknown"
+
     return MatchFeature(
         source_match_id=fixture["fixture_id"],
         match_date=str(kickoff)[:10],
@@ -211,8 +224,8 @@ def _fixture_as_match_feature(conn: sqlite3.Connection, fixture: sqlite3.Row) ->
         away_id=away_id,
         home_score=0,
         away_score=0,
-        neutral=1,
-        tournament="FIFA World Cup",
+        neutral=neutral,
+        tournament=tournament,
         elo_home_pre=elo_home if elo_home is not None else 1500.0,
         elo_away_pre=elo_away if elo_away is not None else 1500.0,
     )
@@ -395,12 +408,18 @@ def _record_fixture_elo_quality(
             away_elo = 1500.0
         elo_diffs.append(home_elo - away_elo)
 
+    has_epl = any(f["league_code"] == "EPL" for f in resolved)
+    neutral_assumption = (
+        "league fixture home advantage enabled" if has_epl
+        else "World Cup fixtures are treated as neutral-site matches"
+    )
+
     details = {
         "resolved_fixtures": len(resolved),
         "team_slots": len(resolved) * 2,
         "missing_team_rating_slots": missing,
         "fallback_rating": 1500.0,
-        "neutral_assumption": "World Cup fixtures are treated as neutral-site matches",
+        "neutral_assumption": neutral_assumption,
         "min_elo_diff": min(elo_diffs) if elo_diffs else None,
         "max_elo_diff": max(elo_diffs) if elo_diffs else None,
     }

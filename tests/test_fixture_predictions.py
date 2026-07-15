@@ -21,8 +21,8 @@ def test_fixture_feature_uses_latest_team_rating_elo() -> None:
     conn.execute("INSERT INTO team (team_id, canonical, canonical_key) VALUES (2, 'B', 'b')")
     conn.execute(
         """
-        INSERT INTO fixture (fixture_id, kickoff_local, home_id, away_id)
-        VALUES ('f1', '2026-06-27 17:00 UTC-4', 1, 2)
+        INSERT INTO fixture (fixture_id, kickoff_local, home_id, away_id, league_code, competition)
+        VALUES ('f1', '2026-06-27 17:00 UTC-4', 1, 2, 'WORLD_CUP_2026', 'FIFA World Cup')
         """
     )
     conn.execute(
@@ -54,8 +54,8 @@ def test_fixture_feature_falls_back_to_1500_when_elo_missing() -> None:
     conn.execute("INSERT INTO team (team_id, canonical, canonical_key) VALUES (2, 'B', 'b')")
     conn.execute(
         """
-        INSERT INTO fixture (fixture_id, kickoff_local, home_id, away_id)
-        VALUES ('f1', '2026-06-27 17:00 UTC-4', 1, 2)
+        INSERT INTO fixture (fixture_id, kickoff_local, home_id, away_id, league_code, competition)
+        VALUES ('f1', '2026-06-27 17:00 UTC-4', 1, 2, 'WORLD_CUP_2026', 'FIFA World Cup')
         """
     )
     fixture = conn.execute("SELECT * FROM fixture WHERE fixture_id = 'f1'").fetchone()
@@ -64,6 +64,24 @@ def test_fixture_feature_falls_back_to_1500_when_elo_missing() -> None:
 
     assert match.elo_home_pre == 1500.0
     assert match.elo_away_pre == 1500.0
+
+
+def test_fixture_feature_epl_neutrality() -> None:
+    conn = _conn()
+    conn.execute("INSERT INTO team (team_id, canonical, canonical_key) VALUES (1, 'A', 'a')")
+    conn.execute("INSERT INTO team (team_id, canonical, canonical_key) VALUES (2, 'B', 'b')")
+    conn.execute(
+        """
+        INSERT INTO fixture (fixture_id, kickoff_local, home_id, away_id, league_code, competition)
+        VALUES ('f1', '2026-08-15 15:00 UTC+1', 1, 2, 'EPL', 'English Premier League')
+        """
+    )
+    fixture = conn.execute("SELECT * FROM fixture WHERE fixture_id = 'f1'").fetchone()
+
+    match = _fixture_as_match_feature(conn, fixture)
+
+    assert match.neutral == 0
+    assert match.tournament == 'EPL'
 
 
 def test_prediction_sanity_records_ou_monotonicity_violations() -> None:
