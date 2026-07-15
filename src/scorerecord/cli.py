@@ -967,7 +967,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "run-epl-pilot-refresh":
             from scorerecord.ingest.epl_pilot_refresh import run_epl_pilot_refresh
             
-            outputs_dir = Path(settings.raw_dir).parent / "outputs" if settings.raw_dir else None
+            outputs_dir = Path.cwd() / "outputs"
 
             result = run_epl_pilot_refresh(
                 conn=conn,
