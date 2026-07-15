@@ -129,6 +129,22 @@ def main(argv: list[str] | None = None) -> int:
     historical_odds_report.add_argument("--market", default="1X2", help="1X2 or OU2.5.")
 
     subparsers.add_parser("build-elo", help="Rebuild Elo ratings from match_history.")
+
+    # bridge-club-history
+    parser_bridge = subparsers.add_parser("bridge-club-history", help="Bridge historical matches to canonical match history")
+    parser_bridge.add_argument("--league", required=True, help="League code (e.g. EPL)")
+    parser_bridge.add_argument("--source", required=True, help="Source name (e.g. football-data)")
+    parser_bridge.add_argument("--from-season", required=True, help="From season (e.g. 2021-2022)")
+    parser_bridge.add_argument("--to-season", required=True, help="To season (e.g. 2025-2026)")
+    parser_bridge.add_argument("--allow-create-teams", action="store_true", help="Allow creating teams")
+    parser_bridge.add_argument("--dry-run", action="store_true", help="Do not write to db")
+    parser_bridge.add_argument("--json", action="store_true", help="Output JSON")
+
+    # alias-gap-report
+    parser_alias = subparsers.add_parser("alias-gap-report", help="Report gaps in team aliases")
+    parser_alias.add_argument("--names", required=True, help="Comma separated list of names")
+    parser_alias.add_argument("--json", action="store_true", help="Output JSON")
+
     subparsers.add_parser("quality-report", help="Print data quality checks.")
     walk_forward = subparsers.add_parser("walk-forward", help="Backtest 1X2 with walk-forward.")
     walk_forward.add_argument("--start-year", type=int, default=2021)
@@ -159,7 +175,18 @@ def main(argv: list[str] | None = None) -> int:
         default="1.5,2.5,3.5",
         help="Comma-separated over/under lines.",
     )
-    predict_fixtures.add_argument("--exact-top-n", type=int, default=5)
+    predict_fixtures.add_argument(
+        "--exact-top-n",
+        type=int,
+        default=5,
+        help="Number of exact scorelines to store.",
+    )
+    predict_fixtures.add_argument(
+        "--league",
+        type=str,
+        default=None,
+        help="Filter predictions to a specific league_code (e.g., EPL).",
+    )
     freeze_forecast = subparsers.add_parser(
         "freeze-forecast-snapshot",
         help="Freeze forecast-only GUI principals before kickoff.",
@@ -193,16 +220,41 @@ def main(argv: list[str] | None = None) -> int:
     fixtures_odds.add_argument("--max-requests", type=int, default=1)
 
     fixtures_odds_io = subparsers.add_parser("ingest-fixtures-odds-api-io", help="Fetch fixtures from odds-api.io.")
-    fixtures_odds_io.add_argument("--league", required=True)
-    fixtures_odds_io.add_argument("--sport", required=True)
-    fixtures_odds_io.add_argument("--league-slug", required=True)
-    fixtures_odds_io.add_argument("--season", required=True)
-    fixtures_odds_io.add_argument("--competition", required=True)
-    fixtures_odds_io.add_argument("--input-json", help="Path to local JSON file for offline dry-run")
-    fixtures_odds_io.add_argument("--verify-league-slug", action="store_true")
-    fixtures_odds_io.add_argument("--dry-run", action="store_true")
-    fixtures_odds_io.add_argument("--json", action="store_true")
-    fixtures_odds_io.add_argument("--max-requests", type=int, default=1)
+    fixtures_odds_io.add_argument("--sport", default="soccer_epl", help="Odds-API sport key")
+    fixtures_odds_io.add_argument("--league", default="EPL", help="Internal league code")
+    fixtures_odds_io.add_argument(
+        "--league-slug", default="premier-league", help="odds-api.io league slug"
+    )
+    fixtures_odds_io.add_argument(
+        "--competition", default="English Premier League", help="Internal competition name"
+    )
+    fixtures_odds_io.add_argument("--season", default="2026-2027", help="Internal season")
+    fixtures_odds_io.add_argument(
+        "--max-requests", type=int, default=1, help="Max requests to make"
+    )
+    fixtures_odds_io.add_argument(
+        "--input-json", type=str, help="Skip fetch and ingest from local JSON"
+    )
+    fixtures_odds_io.add_argument(
+        "--verify-league-slug", action="store_true", help="Fetch /leagues first to verify slug"
+    )
+
+    epl_pilot = subparsers.add_parser(
+        "run-epl-pilot-refresh", help="Controlled daily refresh for EPL pilot."
+    )
+    epl_pilot.add_argument("--league", default="EPL", help="Internal league code")
+    epl_pilot.add_argument(
+        "--league-slug", default="england-premier-league", help="odds-api.io league slug"
+    )
+    epl_pilot.add_argument(
+        "--competition", default="English Premier League", help="Internal competition name"
+    )
+    epl_pilot.add_argument("--season", default="2026-2027", help="Internal season")
+    epl_pilot.add_argument("--max-requests", type=int, default=1, help="Max requests to make")
+    epl_pilot.add_argument(
+        "--dry-run", action="store_true", help="Do not write DB changes or publish predictions"
+    )
+    epl_pilot.add_argument("--json", action="store_true", help="Print output as JSON")
 
     odds = subparsers.add_parser("fetch-odds", help="Fetch raw odds from Odds-API.io.")
     odds.add_argument("--sport", default="soccer")
@@ -706,6 +758,33 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Built Elo ratings for {count} teams")
             return 0
 
+        if args.command == "bridge-club-history":
+            from scorerecord.ingest.bridge import bridge_club_history
+            res = bridge_club_history(
+                conn,
+                league=args.league,
+                source=args.source,
+                from_season=args.from_season,
+                to_season=args.to_season,
+                dry_run=args.dry_run,
+                allow_create_teams=args.allow_create_teams,
+            )
+            if args.json:
+                print(json.dumps(res.to_dict(), indent=2))
+            else:
+                print(res.to_dict())
+            return 0 if res.status in ("OK", "OK_WITH_SKIPPED_ROWS", "DRY_RUN_ONLY_MISSING_TEAMS") else 1
+
+        if args.command == "alias-gap-report":
+            from scorerecord.aliases import alias_gap_report
+            names = [n.strip() for n in args.names.split(",")]
+            res = alias_gap_report(conn, names)
+            if args.json:
+                print(json.dumps(res, indent=2))
+            else:
+                print(res)
+            return 0
+
         if args.command == "quality-report":
             report = fixture_resolution_report(conn)
             aliases = historical_alias_report(conn)
@@ -776,6 +855,7 @@ def main(argv: list[str] | None = None) -> int:
                 ou_lines=ou_lines,
                 exact_top_n=args.exact_top_n,
                 cwd=Path.cwd(),
+                league=args.league,
             )
             print(summary.as_row())
             return 0
@@ -883,6 +963,32 @@ def main(argv: list[str] | None = None) -> int:
                 for k, v in result.items():
                     print(f"{k}: {v}")
             return 0
+        
+        if args.command == "run-epl-pilot-refresh":
+            from scorerecord.ingest.epl_pilot_refresh import run_epl_pilot_refresh
+            
+            outputs_dir = Path(settings.raw_dir).parent / "outputs" if settings.raw_dir else None
+
+            result = run_epl_pilot_refresh(
+                conn=conn,
+                api_key=settings.odds_api_io_key,
+                base_url=settings.odds_api_io_base_url,
+                league_code=args.league,
+                league_slug=args.league_slug,
+                competition=args.competition,
+                season=args.season,
+                max_requests=args.max_requests,
+                dry_run=args.dry_run,
+                outputs_dir=outputs_dir,
+            )
+
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                for k, v in result.items():
+                    print(f"{k}: {v}")
+            return 0 if result["status"] == "OK" else 1
+            
         if args.command == "fetch-odds":
             preplay_window_minutes = (
                 args.preplay_window_minutes

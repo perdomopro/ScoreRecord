@@ -46,3 +46,22 @@ def test_get_or_create_prefers_seeded_canonical_team_on_alias_tie() -> None:
     resolved_id = get_or_create_team(conn, "Bosnia & Herzegovina")
 
     assert resolved_id == historical_id
+
+def test_alias_gap_report() -> None:
+    conn = _conn()
+    get_or_create_team(conn, "Arsenal FC")
+    get_or_create_team(conn, "Manchester City")
+    
+    from scorerecord.aliases import alias_gap_report
+    
+    res = alias_gap_report(conn, ["Arsenal FC", "Manchester City", "Unknown FC"])
+    
+    assert len(res) == 3
+    
+    arsenal = next(r for r in res if r["external_name"] == "Arsenal FC")
+    assert arsenal["exact_alias_match"] is True
+    assert arsenal["missing_team"] is False
+    
+    unknown = next(r for r in res if r["external_name"] == "Unknown FC")
+    assert unknown["exact_alias_match"] is False
+    assert unknown["missing_team"] is True

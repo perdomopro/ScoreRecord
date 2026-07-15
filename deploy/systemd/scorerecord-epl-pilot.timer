@@ -1,0 +1,12 @@
+[Unit]
+Description=Run ScoreRecord daily EPL pilot refresh
+# DO NOT ENABLE AUTOMATICALLY. Requires manual approval.
+
+[Timer]
+# Offset from World Cup daily job (08:00:00)
+OnCalendar=*-*-* 08:30:00
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

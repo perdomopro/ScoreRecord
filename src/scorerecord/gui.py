@@ -111,6 +111,8 @@ class ForecastFixture:
     stage: str | None
     group_name: str | None
     ground: str | None
+    league_code: str | None
+    competition: str | None
     home: str
     away: str
     is_resolved: bool
@@ -149,6 +151,7 @@ class ForecastData:
     quality_items: list[ForecastQualityItem]
     empty_state: str | None
     view_mode: str = "all"
+    league_filter: str = "ALL"
     research_models: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -190,11 +193,20 @@ def serve_dashboard(
         def _render_today(self, params: dict[str, list[str]]) -> None:
             date_filter = _parse_date(params.get("date", [""])[0])
             view_mode = str(params.get("view", ["all"])[0]).strip().lower()
+            league_filter = str(params.get("league", ["all"])[0]).strip().upper()
             if view_mode not in ("all", "forecast", "paper", "research"):
                 view_mode = "all"
+            if league_filter not in ("ALL", "EPL", "WORLD_CUP_2026"):
+                league_filter = "ALL"
             try:
                 with connect(db_path) as conn:
-                    data = load_forecast_data(conn, target_date=date_filter, view_mode=view_mode, settings=settings)
+                    data = load_forecast_data(
+                        conn, 
+                        target_date=date_filter, 
+                        view_mode=view_mode, 
+                        league_filter=league_filter,
+                        settings=settings
+                    )
                 body = render_today_forecast(
                     data, settings=settings, refresh_seconds=refresh_seconds
                 )
@@ -204,11 +216,20 @@ def serve_dashboard(
 
         def _render_match(self, fixture_id: str, params: dict[str, list[str]]) -> None:
             view_mode = str(params.get("view", ["all"])[0]).strip().lower()
+            league_filter = str(params.get("league", ["all"])[0]).strip().upper()
             if view_mode not in ("all", "forecast", "paper", "research"):
                 view_mode = "all"
+            if league_filter not in ("ALL", "EPL", "WORLD_CUP_2026"):
+                league_filter = "ALL"
             try:
                 with connect(db_path) as conn:
-                    data = load_forecast_data(conn, fixture_id=fixture_id, view_mode=view_mode, settings=settings)
+                    data = load_forecast_data(
+                        conn, 
+                        fixture_id=fixture_id, 
+                        view_mode=view_mode, 
+                        league_filter=league_filter,
+                        settings=settings
+                    )
                 body = render_match_forecast(data, fixture_id, settings=settings)
             except Exception as exc:  # pragma: no cover - defensive web path
                 body = render_error(exc)
@@ -264,6 +285,7 @@ def load_forecast_data(
     display_tz_name: str | None = None,
     now_utc: datetime | None = None,
     view_mode: str = "all",
+    league_filter: str = "ALL",
     settings: Settings | None = None,
 ) -> ForecastData:
     display_tz = _display_tz(display_tz_name)
@@ -276,7 +298,7 @@ def load_forecast_data(
     prediction_rows = _forecast_prediction_rows(conn, latest_run_id)
     predictions_by_fixture = _group_forecast_predictions(prediction_rows)
     quality_items = forecast_quality_items(conn, latest_run_id)
-    rows = _forecast_fixture_rows(conn, fixture_id=fixture_id)
+    rows = _forecast_fixture_rows(conn, fixture_id=fixture_id, league_filter=league_filter)
     odds_coverage_by_fixture: dict[str, list[OddsMarketCoverage]] = {}
     odds_horizons_by_fixture: dict[str, list[OddsHorizonCoverage]] = {}
     if fixture_id is not None:
@@ -341,7 +363,7 @@ def load_forecast_data(
     if latest_run_id is None:
         empty_state = "SIN DATOS"
     elif not fixtures:
-        empty_state = "SIN PARTIDOS"
+        empty_state = "No hay partidos para esta liga en esta fecha." if league_filter != "ALL" else "SIN PARTIDOS"
     elif not any(fixture.markets for fixture in fixtures):
         empty_state = "SIN PREDICCIONES"
     research_models: list[dict[str, Any]] = []
@@ -389,6 +411,7 @@ def load_forecast_data(
         quality_items=quality_items,
         empty_state=empty_state,
         view_mode=view_mode,
+        league_filter=league_filter,
         research_models=research_models,
     )
 
@@ -396,6 +419,19 @@ def load_forecast_data(
 def render_today_forecast(data: ForecastData, *, settings: Settings | None = None, refresh_seconds: int = 60) -> str:
     cards = ""
     view_mode = data.view_mode
+    league = data.league_filter
+
+    # League navigation
+    def lcls(tgt: str) -> str:
+        return "btn primary" if league == tgt else "btn ghost"
+    league_nav = f"""
+    <section class="forecast-toolbar league-nav">
+      <a class="{lcls('ALL')}" href="/today?date={_e(data.target_date)}&view={_e(view_mode)}&league=ALL">Todo</a>
+      <a class="{lcls('WORLD_CUP_2026')}" href="/today?date={_e(data.target_date)}&view={_e(view_mode)}&league=WORLD_CUP_2026">Mundial 2026</a>
+      <a class="{lcls('EPL')}" href="/today?date={_e(data.target_date)}&view={_e(view_mode)}&league=EPL">Premier League</a>
+    </section>
+    """
+
     if view_mode == "research":
         cards = "<h3>Modelos de investigación disponibles</h3><ul>"
         if not data.research_models:
@@ -409,18 +445,48 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
                 </li>'''
         cards += "</ul>"
     else:
+        current_comp = None
         for fixture in data.fixtures:
             if view_mode == "paper" and not fixture.paper_picks:
                 continue
             if view_mode == "forecast" and not fixture.primary:
                 continue
+            
+            # Competition Grouping
+            if league == "ALL":
+                comp_label = fixture.competition or fixture.league_code or "Otras Competiciones"
+                # Override internal constants for display
+                if comp_label == "EPL":
+                    comp_label = "English Premier League"
+                elif comp_label == "WORLD_CUP_2026":
+                    comp_label = "FIFA World Cup 2026"
+                if comp_label != current_comp:
+                    current_comp = comp_label
+                    cards += f'<h2 style="margin-top:2rem;margin-bottom:1rem;color:var(--txt-primary);border-bottom:1px solid var(--border);padding-bottom:0.5rem;">{_e(comp_label)}</h2>'
+
             cards += _forecast_card(fixture, view_mode)
 
         if not cards:
             if view_mode == "paper":
                 cards = _empty_forecast_state("No hay paper picks recreativos para esta fecha. Puedes ver pronósticos del modelo en la vista Todo o Pronósticos.")
             else:
-                cards = _empty_forecast_state(data.empty_state or "SIN PARTIDOS")
+                cards = _empty_forecast_state(data.empty_state or "No hay partidos para esta liga en esta fecha.")
+
+    # EPL specific labels
+    epl_banner = ""
+    if league == "EPL":
+        epl_banner = """
+        <div style="margin-bottom: 1rem; padding: 1rem; background: var(--bg-card); border-radius: 8px; border-left: 4px solid var(--accent);">
+          <h2 style="margin: 0 0 0.5rem 0;">Premier League &mdash; READY_FOR_PILOT</h2>
+          <div style="color: var(--txt-secondary); font-size: 0.9rem;">Piloto EPL: cobertura de ratings 90%.</div>
+        </div>
+        """
+    elif league == "WORLD_CUP_2026":
+        epl_banner = """
+        <div style="margin-bottom: 1rem; padding: 1rem; background: var(--bg-card); border-radius: 8px; border-left: 4px solid var(--accent);">
+          <h2 style="margin: 0;">Mundial 2026</h2>
+        </div>
+        """
 
     return f"""<!doctype html>
 <html lang="es" data-theme="scorerecord">
@@ -438,15 +504,18 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
     {_forecast_warning_banner(data)}
     {_forecast_quality_panel(data)}
     {_forecast_stats(data)}
+    {league_nav}
+    {epl_banner}
     <section class="forecast-toolbar">
-      <a class="btn ghost" href="/today?date={_e(data.previous_date)}&view={_e(data.view_mode)}">Anterior</a>
+      <a class="btn ghost" href="/today?date={_e(data.previous_date)}&view={_e(data.view_mode)}&league={_e(league)}">Anterior</a>
       <form method="get" action="/today" class="date-form">
         <input type="hidden" name="view" value="{_e(data.view_mode)}">
+        <input type="hidden" name="league" value="{_e(league)}">
         <label for="date">Fecha</label>
         <input id="date" name="date" type="date" value="{_e(data.target_date)}">
         <button class="btn" type="submit">Ver</button>
       </form>
-      <a class="btn ghost" href="/today?date={_e(data.next_date)}&view={_e(data.view_mode)}">Siguiente</a>
+      <a class="btn ghost" href="/today?date={_e(data.next_date)}&view={_e(data.view_mode)}&league={_e(league)}">Siguiente</a>
       <a class="btn ghost" href="/audit">Auditoria</a>
     </section>
     <section class="match-grid">{cards}</section>
@@ -460,7 +529,7 @@ def render_match_forecast(data: ForecastData, fixture_id: str, *, settings: Sett
     if fixture is None:
         content = _empty_forecast_state("PARTIDO NO ENCONTRADO")
     else:
-        content = _match_detail(fixture, view_mode=data.view_mode)
+        content = _match_detail(fixture, view_mode=data.view_mode, league=data.league_filter)
     return f"""<!doctype html>
 <html lang="es" data-theme="scorerecord">
 <head>
@@ -690,11 +759,20 @@ def _forecast_snapshot_rows(
 def _forecast_fixture_rows(
     conn: sqlite3.Connection,
     *,
-    fixture_id: str | None,
+    fixture_id: str | None = None,
+    league_filter: str | None = None,
 ) -> list[sqlite3.Row]:
     fixture_filter = "AND f.fixture_id = ?" if fixture_id else ""
     score_filter = "" if fixture_id else "AND f.home_score IS NULL AND f.away_score IS NULL"
-    params = (fixture_id,) if fixture_id else ()
+    
+    league_sql = ""
+    params: tuple[Any, ...] = ()
+    if fixture_id:
+        params = (fixture_id,)
+    elif league_filter and league_filter != "ALL":
+        league_sql = "AND f.league_code = ?"
+        params = (league_filter,)
+    
     return conn.execute(
         f"""
         SELECT
@@ -704,6 +782,8 @@ def _forecast_fixture_rows(
           f.stage,
           f.group_name,
           f.ground,
+          f.league_code,
+          f.competition,
           f.home_id,
           f.away_id,
           f.home_placeholder,
@@ -716,6 +796,7 @@ def _forecast_fixture_rows(
         WHERE 1 = 1
           {score_filter}
           {fixture_filter}
+          {league_sql}
         ORDER BY COALESCE(f.kickoff_utc, f.kickoff_local), f.fixture_id
         """,
         params,
@@ -807,6 +888,8 @@ def _forecast_fixture_from_row(
         stage=row["stage"],
         group_name=row["group_name"],
         ground=row["ground"],
+        league_code=row["league_code"],
+        competition=row["competition"],
         home=str(row["home"] or row["home_placeholder"] or "Por definir"),
         away=str(row["away"] or row["away_placeholder"] or "Por definir"),
         is_resolved=is_resolved,
@@ -862,6 +945,7 @@ def _forecast_state(
 
 
 def _forecast_nav(data: ForecastData) -> str:
+    league = getattr(data, "league_filter", "ALL")
     return f"""
     <header class="forecast-nav">
       <div>
@@ -869,10 +953,10 @@ def _forecast_nav(data: ForecastData) -> str:
         <div class="subline">Mundial / selecciones - pronostico estadistico</div>
       </div>
       <nav>
-        <a href="/today?date={_e(data.target_date)}&view=all">Todo</a>
-        <a href="/today?date={_e(data.target_date)}&view=forecast">Pronósticos</a>
-        <a href="/today?date={_e(data.target_date)}&view=paper">Paper recreativo</a>
-        <a href="/today?date={_e(data.target_date)}&view=research">Investigación</a>
+        <a href="/today?date={_e(data.target_date)}&view=all&league={_e(league)}">Todo</a>
+        <a href="/today?date={_e(data.target_date)}&view=forecast&league={_e(league)}">Pronósticos</a>
+        <a href="/today?date={_e(data.target_date)}&view=paper&league={_e(league)}">Paper recreativo</a>
+        <a href="/today?date={_e(data.target_date)}&view=research&league={_e(league)}">Investigación</a>
         <a href="/audit">Audit</a>
         <span class="badge forecast">FORECAST_ONLY</span>
       </nav>
@@ -1058,7 +1142,7 @@ def _quality_class(status: str) -> str:
     return f"quality-{status.lower().replace('_', '-')}"
 
 
-def _match_detail(fixture: ForecastFixture, view_mode: str = "all") -> str:
+def _match_detail(fixture: ForecastFixture, view_mode: str = "all", league: str = "ALL") -> str:
     snapshots = _forecast_snapshot_section(fixture)
     has_complete_odds = any(cov.status == "COVERAGE_OK" for cov in fixture.odds_coverage)
     if has_complete_odds:
@@ -1096,11 +1180,14 @@ informativa, no una señal de apuesta.</em>
         rows = '<tr><td colspan="6" class="empty">No hay mercados de goles para mostrar.</td></tr>'
     return f"""
     <section class="match-detail">
-      <a class="btn ghost" href="/today?date={_e(fixture.display_date or '')}&view={_e(view_mode)}">Volver</a>
+      <a class="btn ghost" href="/today?date={_e(fixture.display_date or '')}&view={_e(view_mode)}&league={_e(league)}">Volver</a>
       <div class="detail-head">
         <div>
           <div class="kickoff">{_e(fixture.display_time)} - {_e(fixture.display_date or '')}</div>
           <h1>{_e(fixture.home)} <span>vs</span> {_e(fixture.away)}</h1>
+          <div style="color: var(--txt-secondary); font-size: 0.9rem; margin-bottom: 0.5rem; font-weight: bold;">
+            {_e(fixture.competition or fixture.league_code or "Otras Competiciones")}
+          </div>
           <p>{_e(_fixture_context(fixture))}</p>
         </div>
         <span class="state {fixture.state}">{_e(fixture.state_label)}</span>

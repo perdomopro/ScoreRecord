@@ -55,72 +55,108 @@ def audit_leagues(conn: sqlite3.Connection, leagues: list[str]) -> dict:
     
     has_match_history = _table_exists(conn, "match_history")
 
+    try:
+        from scorerecord.ingest.football_data import FOOTBALL_DATA_LEAGUES
+    except ImportError:
+        FOOTBALL_DATA_LEAGUES = {}
+
     for league in leagues:
+        # League code for historical_match
+        db_league_code = FOOTBALL_DATA_LEAGUES.get(league, league)
+
         # historical_match checks
-        hist_count = conn.execute("SELECT count(*) FROM historical_match WHERE league_code = ?", (league,)).fetchone()[0]
+        hist_count = conn.execute("SELECT count(*) FROM historical_match WHERE league_code = ?", (db_league_code,)).fetchone()[0]
+        
         match_hist_count = 0
         if has_match_history:
             match_hist_count = conn.execute("SELECT count(*) FROM match_history WHERE tournament = ?", (league,)).fetchone()[0]
-            # Since historical_match matches tournament in some models, or we just rely on historical_match. 
-            # Actually historical_match has league_code. We use hist_count.
         
         latest_date = None
         if hist_count > 0:
-            latest_date = conn.execute("SELECT max(match_date) FROM historical_match WHERE league_code = ?", (league,)).fetchone()[0]
+            latest_date = conn.execute("SELECT max(match_date) FROM historical_match WHERE league_code = ?", (db_league_code,)).fetchone()[0]
             
-        # teams
+        # unique teams
         unique_team_count = 0
-        if hist_count > 0:
+        if has_match_history and match_hist_count > 0:
+            unique_team_count = conn.execute("""
+                SELECT count(DISTINCT team_id) FROM (
+                    SELECT home_id as team_id FROM match_history WHERE tournament = ?
+                    UNION
+                    SELECT away_id as team_id FROM match_history WHERE tournament = ?
+                )
+            """, (league, league)).fetchone()[0]
+        elif hist_count > 0:
             unique_team_count = conn.execute("""
                 SELECT count(DISTINCT team) FROM (
                     SELECT home_team as team FROM historical_match WHERE league_code = ?
                     UNION
                     SELECT away_team as team FROM historical_match WHERE league_code = ?
                 )
-            """, (league, league)).fetchone()[0]
+            """, (db_league_code, db_league_code)).fetchone()[0]
             
-        team_alias_count = 0 # Not easily isolated by league unless joined
+        team_alias_count = 0
         team_rating_count = 0
         rating_coverage = 0.0
         
-        if unique_team_count > 0:
-            if _table_exists(conn, "team_alias") and _table_exists(conn, "team"):
-                mapped_teams = conn.execute("""
-                    SELECT count(DISTINCT t.team_id)
-                    FROM team_alias a
-                    JOIN team t ON a.team_id = t.team_id
-                    WHERE a.alias IN (
-                        SELECT home_team FROM historical_match WHERE league_code = ?
-                        UNION
-                        SELECT away_team FROM historical_match WHERE league_code = ?
-                    )
-                """, (league, league)).fetchone()[0]
-                team_alias_count = mapped_teams
-            
-            if _table_exists(conn, "team_rating") and _table_exists(conn, "team_alias"):
-                rated_teams = conn.execute("""
-                    SELECT count(DISTINCT tr.team_id)
-                    FROM team_rating tr
-                    JOIN team_alias a ON tr.team_id = a.team_id
-                    WHERE a.alias IN (
-                        SELECT home_team FROM historical_match WHERE league_code = ?
-                        UNION
-                        SELECT away_team FROM historical_match WHERE league_code = ?
-                    )
-                """, (league, league)).fetchone()[0]
-                team_rating_count = rated_teams
-            
-            rating_coverage = round(team_rating_count / unique_team_count, 3) if unique_team_count > 0 else 0.0
-
         # fixtures
-        # Since fixture lacks league_code, we can't accurately count future_fixture_count per league yet.
-        # If schema is blocked, future_fixture_count is 0 reliably.
         future_fixture_count = 0
         unresolved_fixture_count = 0
+        prediction_rows_existing = 0
         if not fixture_schema_blocker:
             col = "league_code" if schema_readiness.fixture_has_league_code else "competition_id"
             future_fixture_count = conn.execute(f"SELECT count(*) FROM fixture WHERE {col} = ?", (league,)).fetchone()[0]
             unresolved_fixture_count = conn.execute(f"SELECT count(*) FROM fixture WHERE {col} = ? AND (home_id IS NULL OR away_id IS NULL)", (league,)).fetchone()[0]
+            
+            if schema_readiness.prediction_has_fixture_id:
+                prediction_rows_existing = conn.execute(f"""
+                    SELECT count(*) FROM prediction p
+                    JOIN fixture f ON p.fixture_id = f.fixture_id
+                    WHERE f.{col} = ?
+                """, (league,)).fetchone()[0]
+
+        # Calculate alias count and rating coverage based on future fixtures OR match history
+        if unique_team_count > 0 or future_fixture_count > 0:
+            if _table_exists(conn, "team_alias") and _table_exists(conn, "team"):
+                col = "league_code" if schema_readiness.fixture_has_league_code else "competition_id"
+                mapped_teams = conn.execute(f"""
+                    SELECT count(DISTINCT t.team_id)
+                    FROM team t
+                    WHERE t.team_id IN (
+                        SELECT home_id FROM match_history WHERE tournament = ?
+                        UNION
+                        SELECT away_id FROM match_history WHERE tournament = ?
+                        UNION
+                        SELECT home_id FROM fixture WHERE {col} = ? AND home_id IS NOT NULL
+                        UNION
+                        SELECT away_id FROM fixture WHERE {col} = ? AND away_id IS NOT NULL
+                    )
+                """, (league, league, league, league)).fetchone()[0]
+                team_alias_count = mapped_teams
+            
+            # Team rating count for teams in future fixtures
+            fixture_team_count = 0
+            if future_fixture_count > 0:
+                col = "league_code" if schema_readiness.fixture_has_league_code else "competition_id"
+                fixture_team_count = conn.execute(f"""
+                    SELECT count(DISTINCT team_id) FROM (
+                        SELECT home_id as team_id FROM fixture WHERE {col} = ? AND home_id IS NOT NULL
+                        UNION
+                        SELECT away_id as team_id FROM fixture WHERE {col} = ? AND away_id IS NOT NULL
+                    )
+                """, (league, league)).fetchone()[0]
+                
+                if _table_exists(conn, "team_rating") and fixture_team_count > 0:
+                    rated_teams = conn.execute(f"""
+                        SELECT count(DISTINCT tr.team_id)
+                        FROM team_rating tr
+                        WHERE tr.team_id IN (
+                            SELECT home_id FROM fixture WHERE {col} = ? AND home_id IS NOT NULL
+                            UNION
+                            SELECT away_id FROM fixture WHERE {col} = ? AND away_id IS NOT NULL
+                        )
+                    """, (league, league)).fetchone()[0]
+                    team_rating_count = rated_teams
+                    rating_coverage = round(team_rating_count / fixture_team_count, 3) if fixture_team_count > 0 else 0.0
 
         prediction_rows_possible = 0
         odds_snapshot_count = 0
@@ -130,7 +166,9 @@ def audit_leagues(conn: sqlite3.Connection, leagues: list[str]) -> dict:
         next_action = ""
         readiness_state = "NOT_SUPPORTED"
         
-        if hist_count == 0:
+        has_any_history = hist_count > 0 or match_hist_count > 0
+        
+        if not has_any_history:
             readiness_state = "NOT_SUPPORTED"
             blockers.append("No historical data.")
             next_action = "Ingest historical data."
@@ -142,12 +180,17 @@ def audit_leagues(conn: sqlite3.Connection, leagues: list[str]) -> dict:
             readiness_state = "NEEDS_FIXTURE_SOURCE"
             blockers.append("No future fixtures found.")
             next_action = "Configure fixture provider."
-        elif team_alias_count < unique_team_count * 0.8: # Arbitrary threshold for mapping
+        elif unique_team_count > 0 and team_alias_count < unique_team_count * 0.8: # Arbitrary threshold for mapping
             readiness_state = "NEEDS_TEAM_MAPPING"
             blockers.append("Teams are not fully mapped.")
             next_action = "Map team aliases."
             alias_blocker = True
-        elif rating_coverage < 0.8:
+        elif future_fixture_count > 0 and unresolved_fixture_count > 0:
+            readiness_state = "NEEDS_TEAM_MAPPING"
+            blockers.append("There are unresolved future fixtures.")
+            next_action = "Map team aliases."
+            alias_blocker = True
+        elif future_fixture_count > 0 and rating_coverage < 0.8:
             readiness_state = "NEEDS_RATING_COVERAGE"
             blockers.append("Teams lack ratings.")
             next_action = "Rebuild Elo/ratings for mapped teams."
@@ -174,7 +217,7 @@ def audit_leagues(conn: sqlite3.Connection, leagues: list[str]) -> dict:
             "odds_snapshot_count": odds_snapshot_count,
             "external_event_mapping_count": external_event_mapping_count,
             "fixture_source_available": future_fixture_count > 0,
-            "odds_mapping_feasible": False, # Requires external_event_map and Odds API implementation
+            "odds_mapping_feasible": False,
             "blockers": blockers,
             "next_action": next_action
         })
@@ -184,17 +227,15 @@ def audit_leagues(conn: sqlite3.Connection, leagues: list[str]) -> dict:
         recommended_pilot_league = [r["league"] for r in reports if r["readiness_state"] == "READY_FOR_PILOT"][0]
         
     if fixture_schema_blocker:
-        recommended_next_phase = "Phase 13.1 — Fixture schema + provider selection"
-    elif all(r["future_fixture_count"] == 0 for r in reports if r["historical_match_count"] > 0):
-        recommended_next_phase = "Phase 13.1 — Fixture provider selection"
+        recommended_next_phase = "Phase 13.1  Fixture schema + provider selection"
+    elif all(r["future_fixture_count"] == 0 for r in reports if r["historical_match_count"] > 0 or r["match_history_count"] > 0):
+        recommended_next_phase = "Phase 13.1  Fixture provider selection"
     elif alias_blocker:
-        recommended_next_phase = "Phase 13.1 — Team alias mapping hardening"
-    elif ready_count == 1:
-        recommended_next_phase = "Phase 13.1 — Single-league pilot"
-    elif ready_count > 1:
-        recommended_next_phase = "Phase 13.1 — Single-league pilot"
+        recommended_next_phase = "Phase 13.1  Team alias mapping hardening"
+    elif ready_count >= 1:
+        recommended_next_phase = "Phase 13.3  Surface pilot league in GUI"
     else:
-        recommended_next_phase = "Phase 13.1 — Fixture provider selection"
+        recommended_next_phase = "Phase 13.1  Fixture provider selection"
 
     return {
         "generated_utc": datetime.now(UTC).isoformat(timespec="seconds"),

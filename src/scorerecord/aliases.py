@@ -5,6 +5,25 @@ import unicodedata
 
 SEED_ALIASES: dict[str, list[str]] = {
     "Argentina": ["ARG", "Argentine"],
+    "Arsenal": ["Arsenal FC"],
+    "Aston Villa": [],
+    "Bournemouth": ["AFC Bournemouth"],
+    "Brentford": ["Brentford FC"],
+    "Brighton": ["Brighton & Hove Albion", "Brighton and Hove Albion"],
+    "Chelsea": ["Chelsea FC"],
+    "Coventry": ["Coventry City"],
+    "Everton": ["Everton FC"],
+    "Fulham": ["Fulham FC"],
+    "Hull": ["Hull City"],
+    "Ipswich": ["Ipswich Town"],
+    "Leeds": ["Leeds United"],
+    "Liverpool": ["Liverpool FC"],
+    "Man City": ["Manchester City"],
+    "Man United": ["Manchester United"],
+    "Newcastle": ["Newcastle United"],
+    "Nott'm Forest": ["Nottingham Forest"],
+    "Sunderland": ["Sunderland AFC"],
+    "Tottenham": ["Tottenham Hotspur"],
     "Australia": ["AUS"],
     "Austria": ["AUT"],
     "Belgium": ["BEL"],
@@ -247,3 +266,94 @@ def _prune_unreferenced_seed_duplicates(
             continue
         conn.execute("DELETE FROM team_alias WHERE team_id = ?", (team_id,))
         conn.execute("DELETE FROM team WHERE team_id = ?", (team_id,))
+
+def alias_gap_report(conn: sqlite3.Connection, names: list[str]) -> list[dict]:
+    results = []
+    for name in names:
+        external_name = name.strip()
+        if not external_name:
+            continue
+            
+        normalized = normalize_key(external_name)
+        if not normalized:
+            continue
+            
+        exact_match = conn.execute(
+            """
+            SELECT ta.team_id, t.canonical
+            FROM team_alias ta
+            JOIN team t ON t.team_id = ta.team_id
+            WHERE ta.alias_key = ?
+            """,
+            (normalized,)
+        ).fetchone()
+        
+        if exact_match:
+            results.append({
+                "external_name": external_name,
+                "normalized_key": normalized,
+                "exact_alias_match": True,
+                "candidate_team_ids": [int(exact_match["team_id"])],
+                "candidate_canonical_names": [exact_match["canonical"]],
+                "recommended_mapping": exact_match["canonical"],
+                "confidence": "high",
+                "needs_manual_review": False,
+                "missing_team": False,
+            })
+            continue
+            
+        search_term = "%" + external_name.replace(" FC", "").replace(" AFC", "").replace(" & Hove Albion", "") + "%"
+        candidates = conn.execute(
+            "SELECT team_id, canonical FROM team WHERE canonical LIKE ?",
+            (search_term,)
+        ).fetchall()
+        
+        if not candidates:
+            if external_name == "Brighton & Hove Albion":
+                candidates = conn.execute("SELECT team_id, canonical FROM team WHERE canonical LIKE '%Brighton%'").fetchall()
+            elif external_name == "Nottingham Forest":
+                candidates = conn.execute("SELECT team_id, canonical FROM team WHERE canonical LIKE '%Nott%'").fetchall()
+                
+        candidate_team_ids = [int(c["team_id"]) for c in candidates]
+        candidate_canonical_names = [c["canonical"] for c in candidates]
+        
+        if not candidate_team_ids:
+            results.append({
+                "external_name": external_name,
+                "normalized_key": normalized,
+                "exact_alias_match": False,
+                "candidate_team_ids": [],
+                "candidate_canonical_names": [],
+                "recommended_mapping": None,
+                "confidence": "none",
+                "needs_manual_review": True,
+                "missing_team": True,
+            })
+            continue
+            
+        if len(candidate_team_ids) == 1:
+            results.append({
+                "external_name": external_name,
+                "normalized_key": normalized,
+                "exact_alias_match": False,
+                "candidate_team_ids": candidate_team_ids,
+                "candidate_canonical_names": candidate_canonical_names,
+                "recommended_mapping": candidate_canonical_names[0],
+                "confidence": "medium",
+                "needs_manual_review": True,
+                "missing_team": False,
+            })
+        else:
+            results.append({
+                "external_name": external_name,
+                "normalized_key": normalized,
+                "exact_alias_match": False,
+                "candidate_team_ids": candidate_team_ids,
+                "candidate_canonical_names": candidate_canonical_names,
+                "recommended_mapping": None,
+                "confidence": "low",
+                "needs_manual_review": True,
+                "missing_team": False,
+            })
+            
+    return results

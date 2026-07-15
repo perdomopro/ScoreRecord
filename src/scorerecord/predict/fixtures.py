@@ -74,6 +74,7 @@ def publish_fixture_predictions(
     ou_lines: tuple[float, ...] = DEFAULT_OU_LINES,
     exact_top_n: int = 5,
     cwd: Path | None = None,
+    league: str | None = None,
 ) -> FixturePublishSummary:
     training_matches = [
         match
@@ -94,15 +95,18 @@ def publish_fixture_predictions(
         _record_model_manifest(conn, run_id)
         for calibrator_artifact in calibrators.values():
             _record_calibrator_artifact(conn, run_id, calibrator_artifact)
-        fixtures = conn.execute(
-            """
+        query = """
             SELECT
               fixture_id, kickoff_local, kickoff_utc, home_id, away_id,
               home_placeholder, away_placeholder, home_score, away_score
             FROM fixture
-            ORDER BY kickoff_local, fixture_id
-            """
-        ).fetchall()
+        """
+        params = []
+        if league:
+            query += " WHERE league_code = ? "
+            params.append(league)
+        query += " ORDER BY kickoff_local, fixture_id"
+        fixtures = conn.execute(query, params).fetchall()
         predicted_fixtures = 0
         skipped_fixtures = 0
         inserted_predictions = 0
