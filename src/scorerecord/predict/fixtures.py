@@ -30,6 +30,7 @@ from scorerecord.runs import ingest_run, record_quality
 from scorerecord.time_utils import parse_kickoff_utc
 
 DEFAULT_OU_LINES = (1.5, 2.5, 3.5)
+CLUB_TOURNAMENTS = {"EPL", "LA_LIGA", "SERIE_A", "BUNDESLIGA", "LIGUE_1", "CHAMPIONSHIP"}
 
 
 @dataclass(frozen=True)
@@ -76,25 +77,61 @@ def publish_fixture_predictions(
     cwd: Path | None = None,
     league: str | None = None,
 ) -> FixturePublishSummary:
-    training_matches = [
-        match
-        for match in load_match_features(conn)
-        if match.match_date < TRAINING_POLICY.trained_until
-    ]
+    artifact_league = league or "WORLD_CUP_2026"
+    features = load_match_features(conn)
+    if artifact_league != "WORLD_CUP_2026":
+        training_scope = "club"
+        training_tournament = artifact_league
+        training_matches = [
+            match
+            for match in features
+            if match.tournament == artifact_league
+            and match.match_date < TRAINING_POLICY.trained_until
+        ]
+    else:
+        training_scope = "international"
+        training_tournament = "international_all"
+        training_matches = [
+            match
+            for match in features
+            if match.tournament not in CLUB_TOURNAMENTS
+            and match.match_date < TRAINING_POLICY.trained_until
+        ]
+
+    training_policy_dict = {
+        "league_code": artifact_league,
+        "training_scope": training_scope,
+        "training_tournament": training_tournament,
+        "training_rows": len(training_matches),
+        "trained_until": TRAINING_POLICY.trained_until,
+        "calibrator_scope": training_tournament,
+    }
+
     model = DixonColes().fit(training_matches)
     calibrators = _fit_goal_market_calibrators(training_matches, ou_lines=ou_lines)
+    expected_markets = [f"OU{line}" for line in ou_lines] + ["BTTS"]
     generated_utc = datetime.now(UTC).isoformat(timespec="seconds")
 
     with ingest_run(conn, "predict-fixtures", source="fixture", cwd=cwd) as run_id:
         model_artifact = build_model_artifact(
             conn,
             prediction_run_id=run_id,
-            calibration_coefficients=_calibration_coefficients(calibrators),
+            calibration_coefficients=_calibration_coefficients(
+                calibrators, expected_markets, training_tournament, TRAINING_POLICY.trained_until
+            ),
+            training_policy=training_policy_dict,
+            training_rows=len(training_matches),
         )
         persist_model_artifact(conn, artifact=model_artifact, prediction_run_id=run_id)
         _record_model_manifest(conn, run_id)
-        for calibrator_artifact in calibrators.values():
-            _record_calibrator_artifact(conn, run_id, calibrator_artifact)
+        for expected_market in expected_markets:
+            if expected_market in calibrators:
+                _record_calibrator_artifact(
+                    conn,
+                    run_id,
+                    calibrators[expected_market],
+                    training_tournament,
+                )
         query = """
             SELECT
               fixture_id, kickoff_local, kickoff_utc, home_id, away_id,
@@ -103,15 +140,26 @@ def publish_fixture_predictions(
             FROM fixture
         """
         params = []
-        if league:
+        if artifact_league == "WORLD_CUP_2026":
+            query += " WHERE (league_code = ? OR league_code IS NULL) "
+        else:
             query += " WHERE league_code = ? "
-            params.append(league)
+        params.append(artifact_league)
         query += " ORDER BY kickoff_local, fixture_id"
         fixtures = conn.execute(query, params).fetchall()
         predicted_fixtures = 0
         skipped_fixtures = 0
         inserted_predictions = 0
         for fixture in fixtures:
+            # Enforce strict scope matching to prohibit cross-calibration
+            fixture_league = fixture["league_code"] or "WORLD_CUP_2026"
+            if fixture_league != artifact_league:
+                raise ValueError(
+                    "NO_COMPATIBLE_ARTIFACT: "
+                    f"artifact scope ({artifact_league}) does not match "
+                    f"fixture scope ({fixture_league})."
+                )
+
             if fixture["home_id"] is None or fixture["away_id"] is None:
                 skipped_fixtures += 1
                 continue
@@ -170,7 +218,7 @@ def publish_fixture_predictions(
                     "inserted_predictions": inserted_predictions,
                     "model_version": MODEL_VERSION,
                     "model_artifact_id": model_artifact.artifact_id,
-                    "training_policy": TRAINING_POLICY.as_dict(),
+                    "training_policy": training_policy_dict,
                     "training_rows": len(training_matches),
                     "publish_policy": "forward_only_unstarted_fixtures",
                 },
@@ -185,18 +233,34 @@ def publish_fixture_predictions(
 
 def _calibration_coefficients(
     calibrators: dict[str, CalibratorArtifact],
+    expected_markets: list[str],
+    calibrator_scope: str,
+    calibrator_until: str,
 ) -> dict[str, dict[str, object]]:
-    return {
-        market: {
-            "a": artifact.calibrator.a,
-            "b": artifact.calibrator.b,
-            "n": artifact.n,
-            "raw_mean": artifact.raw_mean,
-            "calibrated_mean": artifact.calibrated_mean,
-            "observed_rate": artifact.observed_rate,
-        }
-        for market, artifact in sorted(calibrators.items())
-    }
+    coeffs = {}
+    for market in expected_markets:
+        if market in calibrators:
+            artifact = calibrators[market]
+            coeffs[market] = {
+                "status": "CALIBRATED",
+                "a": artifact.calibrator.a,
+                "b": artifact.calibrator.b,
+                "n": artifact.n,
+                "raw_mean": artifact.raw_mean,
+                "calibrated_mean": artifact.calibrated_mean,
+                "observed_rate": artifact.observed_rate,
+                "calibrator_rows": artifact.n,
+                "calibrator_until": calibrator_until,
+                "calibrator_source": "historical_oof_predictions",
+                "calibrator_scope": calibrator_scope,
+            }
+        else:
+            coeffs[market] = {
+                "status": "CALIBRATOR_INSUFFICIENT_DATA",
+                "fallback": "raw_model_probability",
+                "calibrator_scope": calibrator_scope,
+            }
+    return coeffs
 
 
 def _fixture_as_match_feature(conn: sqlite3.Connection, fixture: sqlite3.Row) -> MatchFeature:
@@ -351,6 +415,7 @@ def _record_calibrator_artifact(
     conn: sqlite3.Connection,
     run_id: int,
     artifact: CalibratorArtifact,
+    calibrator_scope: str,
 ) -> None:
     details = {
         "market": artifact.market,
@@ -366,6 +431,7 @@ def _record_calibrator_artifact(
         "calibrated_error": artifact.calibrated_error,
         "trained_from": "historical_oof_predictions",
         "model_version": MODEL_VERSION,
+        "calibrator_scope": calibrator_scope,
     }
     record_quality(
         conn,

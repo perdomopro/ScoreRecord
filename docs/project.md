@@ -912,5 +912,32 @@ Output:
 ### Multi-League Integration
 - **Phase 13.0:** Readiness audit built (`multi-league-readiness-report`) identifying the `fixture` schema block.
 - **Phase 13.1:** Schema safely migrated (`version=7`). Odds API selected as the initial EPL pilot fixture provider. API-Football reserved as future robust backup. Ingest tool `ingest-fixtures-odds-api` added in dry-run mode. Product remains strictly FORECAST_ONLY / PAPER_ONLY.
-- **Next:** EPL pilot data ingestion and automation flow, adding GUI league filters.
+- **Phase 13.2-13.4:** EPL pilot flow added with odds-api.io fixture ingestion, scoped prediction publishing, daily refresh command, and hardening around DB health warnings.
+- **Phase 13.4.2:** Added a read-only production audit script for artifact separation, prediction provenance, calibrator scope, prediction integrity, DB health, readiness, and optional GUI smoke.
+- **Next:** Deploy the Phase 13.4.2 hardening, run the audit on the homeserver, then decide whether EPL can stay in daily forecast pilot mode.
 - All tasks in Phase 13.0 were read-only; no schema migrations or external API calls were made.
+
+### 2026-07-28 - Phase 13 artifact scope and operations runbook
+
+- Hardened `predict-fixtures` so the default scope is `WORLD_CUP_2026` instead of
+  "all fixtures in the DB". This prevents EPL fixtures from making a default
+  World Cup publish fail once multi-league data exists.
+- Kept a defensive `NO_COMPATIBLE_ARTIFACT` check inside fixture publishing so a
+  fixture cannot be written with an artifact whose `league_code` scope differs
+  from the fixture's `league_code`.
+- Extended model artifact construction to accept league-aware `training_policy`
+  and explicit `training_rows`, keeping club and international artifacts
+  reproducible and separated.
+- Replaced the large Phase 13 audit draft with a smaller read-only
+  `scripts/run_phase13_audit.py` that reads artifact policy from `details_json`,
+  checks prediction provenance, checks calibrator scope, verifies SQLite
+  integrity/FKs, runs readiness, and optionally smokes the GUI.
+- Added `tests/test_league_aware_artifacts.py` covering EPL artifact scope,
+  World Cup artifact scope, default World Cup filtering when EPL fixtures are
+  present, and distinct artifact ids per scope.
+- Added `docs/runbook.md` with local validation, homeserver deployment, git
+  workflow, EPL pilot commands, and troubleshooting.
+- Local validation: `compileall src tests scripts` passed; full local pytest
+  passed `241 passed`; targeted ruff over touched Phase 13 files passed;
+  `git diff --check` passed. Full-repo ruff still fails with legacy style
+  findings and remains tech debt.

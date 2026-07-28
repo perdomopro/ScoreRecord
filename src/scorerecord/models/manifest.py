@@ -62,7 +62,7 @@ class ModelManifest:
     prediction_run_id: int | None
     market_validation_status: str
     trained_until: str
-    training_policy: dict[str, str]
+    training_policy: dict[str, object]
     training_rows: int
     model_artifact_id: str
     code_git_sha: str | None
@@ -120,7 +120,11 @@ def build_model_manifest(
             code_git_sha=_maybe_str(latest_artifact["code_git_sha"]),
         )
 
-    artifact = build_model_artifact(conn, prediction_run_id=prediction_run_id)
+    artifact = build_model_artifact(
+        conn,
+        prediction_run_id=prediction_run_id,
+        training_policy=TRAINING_POLICY.as_dict(),
+    )
     payload = artifact.payload
     return ModelManifest(
         model_version=MODEL_VERSION,
@@ -133,7 +137,7 @@ def build_model_manifest(
         prediction_run_id=prediction_run_id or _latest_prediction_run(conn),
         market_validation_status=MARKET_VALIDATION_STATUS,
         trained_until=TRAINED_UNTIL,
-        training_policy=_training_policy_payload(),
+        training_policy=payload["training_policy"],
         training_rows=int(payload["training_rows"]),
         model_artifact_id=artifact.artifact_id,
         code_git_sha=_maybe_str(payload.get("code_git_sha")),
@@ -145,8 +149,16 @@ def build_model_artifact(
     *,
     prediction_run_id: int | None = None,
     calibration_coefficients: dict[str, dict[str, object]] | None = None,
+    training_policy: dict[str, object] | None = None,
+    training_rows: int | None = None,
 ) -> ModelArtifact:
     validation_run_id = _latest_passed_predictive_market_run(conn)
+
+    if training_policy is None:
+        training_policy = _training_policy_payload()
+    if training_rows is None:
+        training_rows = _training_rows(conn)
+
     payload = {
         "model_version": MODEL_VERSION,
         "base_model": BASE_MODEL,
@@ -154,9 +166,9 @@ def build_model_artifact(
         "calibration": _calibration_payload(calibration_coefficients),
         "predictive_validation_run_id": validation_run_id,
         "market_validation_status": MARKET_VALIDATION_STATUS,
-        "trained_until": TRAINED_UNTIL,
-        "training_policy": _training_policy_payload(),
-        "training_rows": _training_rows(conn),
+        "trained_until": training_policy.get("trained_until", TRAINED_UNTIL),
+        "training_policy": training_policy,
+        "training_rows": training_rows,
         "code_git_sha": _run_git_sha(conn, prediction_run_id),
         "run_id_scope": "sqlite_database_local",
     }

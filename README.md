@@ -143,3 +143,5 @@ This is educational/research software. It estimates probabilities with uncertain
 
 See [docs/project.md](docs/project.md) for the full architecture, quality gates, and
 change log. See [docs/roadmap.md](docs/roadmap.md) for the phased execution plan.
+See [docs/runbook.md](docs/runbook.md) for local validation, homeserver deploy,
+git workflow, EPL pilot commands, and troubleshooting.

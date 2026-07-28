@@ -4,7 +4,7 @@ Purpose: keep the project decomposable into small, safe increments. Each phase h
 objective, technical work, exit criteria, dependencies, and run-sized increments. Do not
 advance a phase as trusted until the previous phase exit criteria are actually met.
 
-## Current State - 2026-07-07
+## Current State - 2026-07-28
 
 | Phase | State |
 | --- | --- |
@@ -22,6 +22,7 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 7 - Independent evaluation | Bypassed. Model rejected for independent value. |
 | 8 - Market-anchored benchmark | Active path. Residual modeling. |
 | 9 | Pending. |
+| 13 - Daily multi-league forecast | EPL pilot hardening active; artifact scope separation implemented locally. |
 
 Open loops that remain after the remote gate:
 
@@ -45,6 +46,9 @@ Open loops that remain after the remote gate:
 - Deploy-time `db-health` reports `recent_failed_runs: 0`.
 - The homeserver `.venv` has the required dev tools for remote gates; pytest and
   targeted ruff both ran successfully.
+- Local Phase 13.4.2 hardening on 2026-07-28: `compileall` passed, full pytest
+  passed `241 passed`, targeted ruff over touched files passed, and
+  `git diff --check` passed. Full-repo ruff still fails with legacy findings.
 
 ## Non-Negotiables
 
@@ -503,12 +507,21 @@ Objective: Expand ScoreRecord from a single World Cup tournament to a fully auto
   - Safely migrated `fixture` schema (`league_code`, `competition`, `season`).
   - Evaluated and integrated Odds-API.io as the initial fixture provider for EPL pilot.
   - Implemented `ingest-fixtures-odds-api` dry-run mode for evaluation.
-- **13.2 Multi-League Prediction Flow** (IN PROGRESS)
-  - Established The Odds API as the primary live fixture provider for the EPL pilot.
+- **13.2-13.4 Multi-League Prediction Flow** (IN PROGRESS)
+  - Established odds-api.io as the primary live fixture provider for the EPL pilot.
   - Implemented `provider-probe-api-football-fixtures` as a read-only secondary/backup provider probe for stable league/team/fixture IDs and stats.
   - Hardened authentication and error handling for provider polling logic.
-  - Daily polling of fixtures and predictions for pilot league (EPL). (Pending remote live-run)
-  - GUI league filtering.blockers.
+  - Added `run-epl-pilot-refresh` for daily EPL fixture ingest, Elo rebuild,
+    scoped prediction publishing, and post-run health status.
+  - Hardened `predict-fixtures` so default publishing is scoped to
+    `WORLD_CUP_2026`; EPL publishing must use `--league EPL`.
+  - Added league-aware model artifact policies and calibrator scope metadata.
+  - Added Phase 13.4.2 read-only audit script for artifact separation,
+    prediction provenance, calibrator scope, DB health, readiness, and GUI smoke.
+  - Daily polling of fixtures and predictions for pilot league (EPL) still
+    requires homeserver audit after deploy.
+  - GUI league filtering exists for `ALL`, `EPL`, and `WORLD_CUP_2026`; expand
+    only after league readiness is confirmed.
 
 ### Future 13.X
 - Generate predictions for all supported leagues (requires model ratings).
