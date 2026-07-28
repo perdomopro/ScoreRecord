@@ -477,11 +477,15 @@ def parse_football_data_csv(
         match_date = parse_football_data_date(str(row.get("Date") or ""))
         if match_date is None:
             continue
-        home_team = str(row.get("HomeTeam") or "").strip()
-        away_team = str(row.get("AwayTeam") or "").strip()
-        home_goals = _parse_int(row.get("FTHG"))
-        away_goals = _parse_int(row.get("FTAG"))
-        result = _parse_result(row.get("FTR"), home_goals=home_goals, away_goals=away_goals)
+        home_team = str(_row_value(row, "HomeTeam", "Home") or "").strip()
+        away_team = str(_row_value(row, "AwayTeam", "Away") or "").strip()
+        home_goals = _parse_int(_row_value(row, "FTHG", "HG"))
+        away_goals = _parse_int(_row_value(row, "FTAG", "AG"))
+        result = _parse_result(
+            _row_value(row, "FTR", "Res"),
+            home_goals=home_goals,
+            away_goals=away_goals,
+        )
         if home_goals is None or away_goals is None or result is None:
             missing_results += 1
 
@@ -778,9 +782,19 @@ def normalize_identifier(value: str) -> str:
 
 
 def _row_has_match_identity(row: dict[str, str]) -> bool:
-    return bool(str(row.get("Date") or "").strip()) and bool(
-        str(row.get("HomeTeam") or "").strip()
-    ) and bool(str(row.get("AwayTeam") or "").strip())
+    return (
+        bool(str(row.get("Date") or "").strip())
+        and bool(str(_row_value(row, "HomeTeam", "Home") or "").strip())
+        and bool(str(_row_value(row, "AwayTeam", "Away") or "").strip())
+    )
+
+
+def _row_value(row: dict[str, str], *keys: str) -> object:
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return None
 
 
 def _parse_int(value: object) -> int | None:

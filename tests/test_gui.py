@@ -693,8 +693,13 @@ def test_forecast_today_league_filter() -> None:
     html_epl = render_today_forecast(data_epl, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60)
     assert len(data_epl.fixtures) == 1
     assert data_epl.fixtures[0].fixture_id == "epl-forecast"
-    assert "Premier League &mdash; READY_FOR_PILOT" in html_epl
-    assert "Piloto EPL: cobertura de ratings 90%." in html_epl
+    assert "Premier League &mdash; FORECAST_ONLY" in html_epl
+    assert "Mundial 2026" not in html_epl
+    assert "Liga MX" in html_epl
+    assert "MLS" in html_epl
+    assert "Paper recreativo" not in html_epl
+    assert "view=paper" not in html_epl
+    assert "view=research" not in html_epl
     assert "FIFA World Cup 2026" not in html_epl
     assert "VALIDATED_RECOMMENDATION" not in html_epl
     assert "kelly" not in html_epl.lower()
@@ -706,7 +711,7 @@ def test_forecast_today_league_filter() -> None:
     html_empty = render_today_forecast(data_epl_empty, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60)
     assert len(data_epl_empty.fixtures) == 0
     assert "No hay partidos para esta liga en esta fecha." in html_empty
-    assert "Premier League &mdash; READY_FOR_PILOT" in html_empty
+    assert "Premier League &mdash; FORECAST_ONLY" in html_empty
 
 
 def test_forecast_all_uses_latest_prediction_per_fixture() -> None:
@@ -790,6 +795,37 @@ def test_forecast_all_uses_latest_prediction_per_fixture() -> None:
     assert by_fixture["m-forecast"].markets[0].artifact_id == "artifact-forecast-1"
     assert by_fixture["epl-forecast"].markets[0].artifact_id == "artifact-epl"
     assert wc_run_id != epl_run_id
+
+
+def test_forecast_renders_upcoming_fixture_links() -> None:
+    conn = _conn()
+    _insert_forecast_fixture(conn)
+    conn.execute(
+        """
+        UPDATE fixture
+        SET league_code='LIGA_MX', competition='Liga MX',
+            kickoff_utc='2026-07-28T02:00:00Z',
+            kickoff_local='2026-07-27T20:00:00'
+        WHERE fixture_id='m-forecast'
+        """
+    )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-26",
+        now_utc=datetime(2026, 7, 26, 12, 0, tzinfo=UTC),
+        league_filter="ALL",
+    )
+    html = render_today_forecast(
+        data,
+        settings=Settings(db_path=Path(""), raw_dir=Path("")),
+        refresh_seconds=60,
+    )
+
+    assert "Proximos partidos cargados" in html
+    assert "2026-07-27" in html
+    assert "Liga MX" in html
+    assert "Mundial 2026" not in html
 
 
 def test_forecast_match_preserves_league() -> None:

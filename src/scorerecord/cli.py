@@ -54,6 +54,7 @@ from scorerecord.ingest.history import ingest_history
 from scorerecord.ingest.odds import fetch_live_odds, odds_snapshot_coverage_report
 from scorerecord.ingest.readiness import audit_leagues
 from scorerecord.ingest.worldcup import ingest_worldcup_2026, resolve_fixture_teams
+from scorerecord.league_config import league_config, normalize_league_code
 from scorerecord.models.manifest import build_model_manifest
 from scorerecord.odds_coverage import load_fixture_odds_coverage
 from scorerecord.odds_coverage_summary import (
@@ -255,6 +256,21 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run", action="store_true", help="Do not write DB changes or publish predictions"
     )
     epl_pilot.add_argument("--json", action="store_true", help="Print output as JSON")
+
+    club_pilot = subparsers.add_parser(
+        "run-club-pilot-refresh",
+        help="Controlled daily refresh for a supported club forecast league.",
+    )
+    club_pilot.add_argument("--league", required=True, help="EPL, LIGA_MX, or MLS")
+    club_pilot.add_argument("--sport", help="odds-api.io sport, defaults from league preset")
+    club_pilot.add_argument("--league-slug", help="odds-api.io league slug override")
+    club_pilot.add_argument("--competition", help="Display competition override")
+    club_pilot.add_argument("--season", help="Internal season override")
+    club_pilot.add_argument("--max-requests", type=int, default=1, help="Max requests to make")
+    club_pilot.add_argument(
+        "--dry-run", action="store_true", help="Do not write DB changes or publish predictions"
+    )
+    club_pilot.add_argument("--json", action="store_true", help="Print output as JSON")
 
     odds = subparsers.add_parser("fetch-odds", help="Fetch raw odds from Odds-API.io.")
     odds.add_argument("--sport", default="soccer")
@@ -502,6 +518,19 @@ def main(argv: list[str] | None = None) -> int:
     api_probe_fix.add_argument("--input-json", help="Path to local JSON file for offline dry-run")
     api_probe_fix.add_argument("--include-status", action="store_true")
     api_probe_fix.add_argument("--json", action="store_true")
+
+    sportmonks_probe = subparsers.add_parser(
+        "provider-probe-sportmonks-fixture",
+        help="Read-only SportMonks fixture probe.",
+    )
+    sportmonks_probe.add_argument("--fixture-id", required=True)
+    sportmonks_probe.add_argument(
+        "--include",
+        default="participants;league;venue;state;scores",
+        help="SportMonks include string.",
+    )
+    sportmonks_probe.add_argument("--input-json", help="Path to local JSON fixture payload")
+    sportmonks_probe.add_argument("--json", action="store_true")
 
     goals_v2 = subparsers.add_parser(
         "goals-v2-lambda-benchmark",
@@ -964,19 +993,26 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{k}: {v}")
             return 0
         
-        if args.command == "run-epl-pilot-refresh":
+        if args.command in ("run-epl-pilot-refresh", "run-club-pilot-refresh"):
             from scorerecord.ingest.epl_pilot_refresh import run_epl_pilot_refresh
-            
+
             outputs_dir = Path.cwd() / "outputs"
+            preset = league_config(args.league)
+            league_code = normalize_league_code(args.league, default=preset.code)
+            sport = getattr(args, "sport", None) or preset.odds_api_io_sport
+            league_slug = args.league_slug or preset.odds_api_io_slug
+            competition = args.competition or preset.competition
+            season = args.season or preset.season
 
             result = run_epl_pilot_refresh(
                 conn=conn,
                 api_key=settings.odds_api_io_key,
                 base_url=settings.odds_api_io_base_url,
-                league_code=args.league,
-                league_slug=args.league_slug,
-                competition=args.competition,
-                season=args.season,
+                league_code=league_code,
+                league_slug=league_slug,
+                competition=competition,
+                season=season,
+                sport=sport,
                 max_requests=args.max_requests,
                 dry_run=args.dry_run,
                 outputs_dir=outputs_dir,
@@ -987,7 +1023,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 for k, v in result.items():
                     print(f"{k}: {v}")
-            return 0 if result["status"] == "OK" else 1
+            return 0 if result["status"] in ("OK", "OK_NO_EVENTS") else 1
             
         if args.command == "fetch-odds":
             preplay_window_minutes = (
@@ -1311,6 +1347,25 @@ def main(argv: list[str] | None = None) -> int:
                 for k, v in result.items():
                     print(f"{k}: {v}")
             return 0
+
+        if args.command == "provider-probe-sportmonks-fixture":
+            from scorerecord.ingest.sportmonks_probe import probe_sportmonks_fixture
+
+            input_json_path = Path(args.input_json) if args.input_json else None
+            result = probe_sportmonks_fixture(
+                fixture_id=args.fixture_id,
+                api_token=settings.sportmonks_key,
+                base_url=settings.sportmonks_base_url,
+                includes=args.include,
+                input_json=input_json_path,
+            )
+
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                for k, v in result.items():
+                    print(f"{k}: {v}")
+            return 0 if result["status"] == "OK" else 1
 
         if args.command == "goals-v2-lambda-benchmark":
             from scorerecord.evaluate.goals_v2_lambda_benchmark import run_goals_v2_lambda_benchmark

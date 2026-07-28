@@ -524,8 +524,16 @@ Objective: Expand ScoreRecord from a single World Cup tournament to a fully auto
   - Forecast GUI uses the latest prediction run per fixture, so `league=ALL`
     can display multiple scopes whose predictions were published at different
     times.
-  - GUI league filtering exists for `ALL`, `EPL`, and `WORLD_CUP_2026`; expand
-    only after league readiness is confirmed.
+  - GUI league filtering now focuses on `ALL`, `LIGA_MX`, `MLS`, and `EPL`;
+    the World Cup filter tab is removed from the primary forecast navigation.
+  - Added next-fixture date links so users do not have to click through empty
+    days to find a loaded match.
+  - Removed legacy `paper`/`research` links from the main forecast navbar so the
+    GUI stays forecast-only while still exposing `/audit` as a technical view.
+  - Added read-only SportMonks fixture probe for enrichment evaluation.
+  - Homeserver validation on 2026-07-28: `LIGA_MX`, `MLS`, and `EPL` all reached
+    `READY_FOR_PILOT` with future fixtures, zero unresolved fixtures, ratings
+    coverage, and fresh prediction rows.
 
 ### Future 13.X
 - Generate predictions for all supported leagues (requires model ratings).

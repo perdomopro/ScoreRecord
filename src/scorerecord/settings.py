@@ -15,6 +15,8 @@ class Settings:
     the_odds_api_base_url: str = "https://api.the-odds-api.com/v4"
     api_football_key: str | None = None
     api_football_base_url: str = "https://v3.football.api-sports.io"
+    sportmonks_key: str | None = None
+    sportmonks_base_url: str = "https://api.sportmonks.com/v3/football"
     odds_api_io_bookmakers: str = "Bet365,Unibet"
     odds_api_io_league: str = "international-fifa-world-cup"
     thestatsapi_key: str | None = None
@@ -34,6 +36,10 @@ def load_settings() -> Settings:
         the_odds_api_base_url=os.getenv("THE_ODDS_API_BASE_URL", "https://api.the-odds-api.com/v4"),
         api_football_key=os.getenv("API_FOOTBALL_KEY") or None,
         api_football_base_url=os.getenv("API_FOOTBALL_BASE_URL", "https://v3.football.api-sports.io"),
+        sportmonks_key=os.getenv("SPORTMONKS_API_TOKEN") or None,
+        sportmonks_base_url=os.getenv(
+            "SPORTMONKS_BASE_URL", "https://api.sportmonks.com/v3/football"
+        ),
         odds_api_io_bookmakers=os.getenv("ODDS_API_IO_BOOKMAKERS", "Bet365,Unibet"),
         odds_api_io_league=os.getenv("ODDS_API_IO_LEAGUE", "international-fifa-world-cup"),
         thestatsapi_key=os.getenv("THESTATSAPI_KEY") or None,

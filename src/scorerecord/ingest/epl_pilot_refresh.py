@@ -20,7 +20,8 @@ def _write_artifact(result: dict[str, Any], outputs_dir: Path | None) -> None:
         benchmarks_dir = outputs_dir / "benchmarks"
         benchmarks_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        artifact_path = benchmarks_dir / f"epl_pilot_refresh_{ts}.json"
+        league = str(result.get("league") or "club").lower()
+        artifact_path = benchmarks_dir / f"{league}_pilot_refresh_{ts}.json"
         artifact_path.write_text(json.dumps(result, indent=2))
 
 def run_epl_pilot_refresh(
@@ -31,6 +32,7 @@ def run_epl_pilot_refresh(
     league_slug: str = "england-premier-league",
     competition: str = "English Premier League",
     season: str = "2026-2027",
+    sport: str = "football",
     max_requests: int = 1,
     dry_run: bool = False,
     outputs_dir: Path | None = None,
@@ -54,7 +56,7 @@ def run_epl_pilot_refresh(
         "inserted_predictions": 0,
         "db_health_pre_status": "PENDING",
         "db_health_post_status": "PENDING",
-        "next_action": "Review GUI EPL forecasts"
+        "next_action": f"Review GUI {league_code} forecasts",
     }
 
     try:
@@ -70,7 +72,7 @@ def run_epl_pilot_refresh(
             conn=conn,
             api_key=api_key,
             base_url=base_url,
-            sport="football",
+            sport=sport,
             league_code=league_code,
             league_slug=league_slug,
             competition=competition,
@@ -88,6 +90,12 @@ def run_epl_pilot_refresh(
         result["fixtures_updated"] = ingest_result.get("fixtures_updated", 0)
         result["unresolved_fixtures"] = ingest_result.get("unresolved_fixtures", 0)
         result["ingest_status"] = ingest_result.get("status", "UNKNOWN")
+
+        if result["ingest_status"] == "NO_EVENTS_RETURNED":
+            result["status"] = "OK_NO_EVENTS"
+            result["build_elo_status"] = "SKIPPED_NO_EVENTS"
+            result["next_action"] = "Provider returned no events for this league/slug"
+            return result
 
         if result["ingest_status"] != "OK":
             result["status"] = "INGEST_FAILED"

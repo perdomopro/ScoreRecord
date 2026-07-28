@@ -124,6 +124,28 @@ def test_parse_football_data_csv_extracts_avg_open_and_close_1x2() -> None:
     assert keyed["draw"].closing_odds_type == "avg_close"
 
 
+def test_parse_football_data_csv_accepts_new_current_feed_columns() -> None:
+    text = (
+        "Country,League,Season,Date,Time,Home,Away,HG,AG,Res,"
+        "AvgCH,AvgCD,AvgCA\n"
+        "Mexico,Liga MX,2012/2013,21/07/2012,01:30,"
+        "Chiapas,Tigres UANL,0,4,A,2.74,3.10,2.51\n"
+    )
+
+    parsed = parse_football_data_csv(text, league_code="MEX", season="2026-2027")
+
+    assert parsed.rows_seen == 1
+    assert parsed.rows_loaded == 1
+    assert parsed.missing_results == 0
+    assert len(parsed.events) == 1
+    event = parsed.events[0]
+    assert event.home_team == "Chiapas"
+    assert event.away_team == "Tigres UANL"
+    assert event.home_goals == 0
+    assert event.away_goals == 4
+    assert event.result_1x2 == "away"
+
+
 def test_parse_football_data_csv_extracts_avg_preclose_and_close_ou25() -> None:
     text = (
         "Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,AvgH,AvgD,AvgA,AvgCH,AvgCD,AvgCA,"

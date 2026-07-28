@@ -179,6 +179,47 @@ scorerecord db-health
 scorerecord fixture-summary --limit 12
 ```
 
+## Club Forecast Leagues
+
+Supported GUI club presets:
+
+- `LIGA_MX`: odds-api.io slug `mexico-liga-mx-apertura`
+- `MLS`: odds-api.io slug `usa-mls`
+- `EPL`: odds-api.io slug `england-premier-league`
+
+First-time setup for Liga MX or MLS requires historical rows, bridge, ratings,
+fixtures, and predictions:
+
+```powershell
+scorerecord ingest-football-data --league LIGA_MX --season 2026-2027 --refresh
+scorerecord bridge-club-history --league LIGA_MX --source football-data --from-season 2026-2027 --to-season 2026-2027 --allow-create-teams
+scorerecord run-club-pilot-refresh --league LIGA_MX --json
+
+scorerecord ingest-football-data --league MLS --season 2026-2027 --refresh
+scorerecord bridge-club-history --league MLS --source football-data --from-season 2026-2027 --to-season 2026-2027 --allow-create-teams
+scorerecord run-club-pilot-refresh --league MLS --json
+```
+
+The dashboard is date-scoped, but it shows `Proximos partidos cargados` with
+date links:
+
+```powershell
+curl "http://100.104.72.97:8765/today?league=ALL&view=forecast"
+curl "http://100.104.72.97:8765/today?league=LIGA_MX&view=forecast"
+curl "http://100.104.72.97:8765/today?league=MLS&view=forecast"
+```
+
+The main forecast navbar should show forecast navigation and `/audit`; it should
+not surface `view=paper` or `view=research` as primary product tabs.
+
+SportMonks is available as a read-only probe/enrichment source:
+
+```powershell
+scorerecord provider-probe-sportmonks-fixture --fixture-id 19439627 --json
+```
+
+Store its token only in `.env` as `SPORTMONKS_API_TOKEN`; do not commit it.
+
 Phase 13 audit, read-only by default:
 
 ```powershell

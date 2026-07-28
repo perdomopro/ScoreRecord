@@ -968,3 +968,33 @@ Output:
   `training_rows=1900`, and EPL predictions use that artifact. The latest
   World Cup artifact remains a separate legacy tournament artifact, producing
   only the expected audit warning about older policy metadata.
+
+### 2026-07-28 - Liga MX/MLS forecast expansion and GUI navigation
+
+- Added `league_config.py` with club forecast presets for `EPL`, `LIGA_MX`, and
+  `MLS`, including odds-api.io slugs `england-premier-league`,
+  `mexico-liga-mx-apertura`, and `usa-mls`.
+- Added `run-club-pilot-refresh --league <EPL|LIGA_MX|MLS>` so the daily club
+  forecast path no longer depends on an EPL-specific command name. The old
+  `run-epl-pilot-refresh` remains as compatibility.
+- Extended club-aware prediction scope to `LIGA_MX` and `MLS`; non-World-Cup
+  supported club leagues now use home-field advantage and train only on their
+  own `match_history.tournament`.
+- Reworked the forecast GUI league navigation to `Todo`, `Liga MX`, `MLS`, and
+  `Premier League`, removing the World Cup filter tab while leaving legacy
+  World Cup rows in the database.
+- Added a `Proximos partidos cargados` panel so users can jump directly to the
+  next dates with loaded fixtures instead of clicking day by day.
+- Removed legacy `paper` and `research` links from the main forecast navbar; the
+  primary GUI now focuses on forecasts, loaded fixtures, league filters, and a
+  separate technical audit link.
+- Added a read-only `provider-probe-sportmonks-fixture` command. It parses
+  SportMonks v3 fixture payloads using `participants[].meta.location` for
+  home/away, but does not write to SQLite. SportMonks is reserved as an
+  enrichment/probe source until mapping and coverage are validated.
+- Homeserver rollout:
+  - `LIGA_MX`: 108 future fixtures, 0 unresolved, 2052 predictions inserted.
+  - `MLS`: 212 future fixtures, 0 unresolved, 4028 predictions inserted.
+  - `EPL`: 80 future fixtures, 0 unresolved, 1520 predictions inserted.
+  - `multi-league-readiness-report --leagues LIGA_MX,MLS,EPL --json` returned
+    `READY_FOR_PILOT` for all three leagues.

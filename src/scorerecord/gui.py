@@ -18,6 +18,7 @@ from scorerecord.db import connect, init_db
 from scorerecord.forecast_policy import FORECAST_MARKETS, select_primary_forecasts
 from scorerecord.forecast_policy import signal_strength as forecast_signal_strength
 from scorerecord.forecast_quality import ForecastQualityItem, forecast_quality_items
+from scorerecord.league_config import GUI_LEAGUE_ORDER, gui_league_filter, league_label
 from scorerecord.odds_coverage import OddsMarketCoverage, load_fixture_odds_coverage
 from scorerecord.odds_horizons import (
     DEFAULT_HORIZONS,
@@ -133,6 +134,17 @@ class ForecastFixture:
 
 
 @dataclass(frozen=True)
+class UpcomingFixtureLink:
+    fixture_id: str
+    display_date: str
+    display_time: str
+    league_code: str | None
+    competition: str | None
+    home: str
+    away: str
+
+
+@dataclass(frozen=True)
 class ForecastData:
     target_date: str
     previous_date: str
@@ -153,6 +165,7 @@ class ForecastData:
     view_mode: str = "all"
     league_filter: str = "ALL"
     research_models: list[dict[str, Any]] = field(default_factory=list)
+    upcoming_fixtures: list[UpcomingFixtureLink] = field(default_factory=list)
 
 
 def serve_dashboard(
@@ -193,11 +206,9 @@ def serve_dashboard(
         def _render_today(self, params: dict[str, list[str]]) -> None:
             date_filter = _parse_date(params.get("date", [""])[0])
             view_mode = str(params.get("view", ["all"])[0]).strip().lower()
-            league_filter = str(params.get("league", ["all"])[0]).strip().upper()
+            league_filter = gui_league_filter(params.get("league", ["all"])[0])
             if view_mode not in ("all", "forecast", "paper", "research"):
                 view_mode = "all"
-            if league_filter not in ("ALL", "EPL", "WORLD_CUP_2026"):
-                league_filter = "ALL"
             try:
                 with connect(db_path) as conn:
                     data = load_forecast_data(
@@ -216,11 +227,9 @@ def serve_dashboard(
 
         def _render_match(self, fixture_id: str, params: dict[str, list[str]]) -> None:
             view_mode = str(params.get("view", ["all"])[0]).strip().lower()
-            league_filter = str(params.get("league", ["all"])[0]).strip().upper()
+            league_filter = gui_league_filter(params.get("league", ["all"])[0])
             if view_mode not in ("all", "forecast", "paper", "research"):
                 view_mode = "all"
-            if league_filter not in ("ALL", "EPL", "WORLD_CUP_2026"):
-                league_filter = "ALL"
             try:
                 with connect(db_path) as conn:
                     data = load_forecast_data(
@@ -294,7 +303,15 @@ def load_forecast_data(
     selected_date = target_date or now_local.date().isoformat()
     previous_date = (date.fromisoformat(selected_date) - timedelta(days=1)).isoformat()
     next_date = (date.fromisoformat(selected_date) + timedelta(days=1)).isoformat()
+    league_filter = gui_league_filter(league_filter)
     rows = _forecast_fixture_rows(conn, fixture_id=fixture_id, league_filter=league_filter)
+    upcoming_fixtures = _upcoming_fixture_links(
+        rows,
+        display_tz=display_tz,
+        now_utc=now,
+        selected_date=selected_date,
+        limit=16,
+    )
     fixture_ids = [str(row["fixture_id"]) for row in rows]
     latest_run_id = _latest_prediction_run_id(conn, fixture_ids=fixture_ids)
     prediction_rows = _forecast_prediction_rows(conn, fixture_ids=fixture_ids)
@@ -413,6 +430,7 @@ def load_forecast_data(
         view_mode=view_mode,
         league_filter=league_filter,
         research_models=research_models,
+        upcoming_fixtures=upcoming_fixtures,
     )
 
 
@@ -420,17 +438,8 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
     cards = ""
     view_mode = data.view_mode
     league = data.league_filter
-
-    # League navigation
-    def lcls(tgt: str) -> str:
-        return "btn primary" if league == tgt else "btn ghost"
-    league_nav = f"""
-    <section class="forecast-toolbar league-nav">
-      <a class="{lcls('ALL')}" href="/today?date={_e(data.target_date)}&view={_e(view_mode)}&league=ALL">Todo</a>
-      <a class="{lcls('WORLD_CUP_2026')}" href="/today?date={_e(data.target_date)}&view={_e(view_mode)}&league=WORLD_CUP_2026">Mundial 2026</a>
-      <a class="{lcls('EPL')}" href="/today?date={_e(data.target_date)}&view={_e(view_mode)}&league=EPL">Premier League</a>
-    </section>
-    """
+    league_nav = _league_nav(data)
+    upcoming = _upcoming_fixture_section(data)
 
     if view_mode == "research":
         cards = "<h3>Modelos de investigación disponibles</h3><ul>"
@@ -454,12 +463,7 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
             
             # Competition Grouping
             if league == "ALL":
-                comp_label = fixture.competition or fixture.league_code or "Otras Competiciones"
-                # Override internal constants for display
-                if comp_label == "EPL":
-                    comp_label = "English Premier League"
-                elif comp_label == "WORLD_CUP_2026":
-                    comp_label = "FIFA World Cup 2026"
+                comp_label = fixture.competition or league_label(fixture.league_code)
                 if comp_label != current_comp:
                     current_comp = comp_label
                     cards += f'<h2 style="margin-top:2rem;margin-bottom:1rem;color:var(--txt-primary);border-bottom:1px solid var(--border);padding-bottom:0.5rem;">{_e(comp_label)}</h2>'
@@ -472,21 +476,7 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
             else:
                 cards = _empty_forecast_state(data.empty_state or "No hay partidos para esta liga en esta fecha.")
 
-    # EPL specific labels
-    epl_banner = ""
-    if league == "EPL":
-        epl_banner = """
-        <div style="margin-bottom: 1rem; padding: 1rem; background: var(--bg-card); border-radius: 8px; border-left: 4px solid var(--accent);">
-          <h2 style="margin: 0 0 0.5rem 0;">Premier League &mdash; READY_FOR_PILOT</h2>
-          <div style="color: var(--txt-secondary); font-size: 0.9rem;">Piloto EPL: cobertura de ratings 90%.</div>
-        </div>
-        """
-    elif league == "WORLD_CUP_2026":
-        epl_banner = """
-        <div style="margin-bottom: 1rem; padding: 1rem; background: var(--bg-card); border-radius: 8px; border-left: 4px solid var(--accent);">
-          <h2 style="margin: 0;">Mundial 2026</h2>
-        </div>
-        """
+    league_banner = _league_banner(league)
 
     return f"""<!doctype html>
 <html lang="es" data-theme="scorerecord">
@@ -505,7 +495,8 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
     {_forecast_quality_panel(data)}
     {_forecast_stats(data)}
     {league_nav}
-    {epl_banner}
+    {league_banner}
+    {upcoming}
     <section class="forecast-toolbar">
       <a class="btn ghost" href="/today?date={_e(data.previous_date)}&view={_e(data.view_mode)}&league={_e(league)}">Anterior</a>
       <form method="get" action="/today" class="date-form">
@@ -522,6 +513,74 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
   </main>
 </body>
 </html>"""
+
+
+def _league_nav(data: ForecastData) -> str:
+    league = data.league_filter
+    view_mode = data.view_mode
+
+    def link(target: str, label: str) -> str:
+        cls = "btn primary" if league == target else "btn ghost"
+        href = (
+            f"/today?date={_e(data.target_date)}&view={_e(view_mode)}"
+            f"&league={_e(target)}"
+        )
+        return f'<a class="{cls}" href="{href}">{_e(label)}</a>'
+
+    links = [link("ALL", "Todo")]
+    links.extend(link(code, league_label(code)) for code in GUI_LEAGUE_ORDER)
+    return f'<section class="forecast-toolbar league-nav">{"".join(links)}</section>'
+
+
+def _league_banner(league: str) -> str:
+    if league == "ALL":
+        return ""
+    return f"""
+    <div class="league-banner">
+      <h2>{_e(league_label(league))} &mdash; FORECAST_ONLY</h2>
+      <div>Pronosticos por liga con modelo club-aware. No es recomendacion de apuesta.</div>
+    </div>
+    """
+
+
+def _upcoming_fixture_section(data: ForecastData) -> str:
+    if not data.upcoming_fixtures:
+        return ""
+    rows = "".join(_upcoming_fixture_item(item, data) for item in data.upcoming_fixtures)
+    return f"""
+    <section class="upcoming-panel">
+      <div class="section-head">
+        <h2>Proximos partidos cargados</h2>
+        <span>{len(data.upcoming_fixtures)} visibles</span>
+      </div>
+      <div class="upcoming-list">{rows}</div>
+    </section>
+    """
+
+
+def _upcoming_fixture_item(item: UpcomingFixtureLink, data: ForecastData) -> str:
+    league = item.league_code or "ALL"
+    href = (
+        f"/today?date={_e(item.display_date)}&view={_e(data.view_mode)}"
+        f"&league={_e(data.league_filter)}"
+    )
+    match_href = (
+        f"/match/{_e(item.fixture_id)}?view={_e(data.view_mode)}"
+        f"&league={_e(data.league_filter)}"
+    )
+    competition = item.competition or league_label(item.league_code)
+    return f"""
+    <article class="upcoming-item">
+      <a class="upcoming-date" href="{href}">
+        <strong>{_e(item.display_date)}</strong>
+        <span>{_e(item.display_time)}</span>
+      </a>
+      <div>
+        <small>{_e(competition)} · {_e(league)}</small>
+        <a href="{match_href}">{_e(item.home)} vs {_e(item.away)}</a>
+      </div>
+    </article>
+    """
 
 
 def render_match_forecast(data: ForecastData, fixture_id: str, *, settings: Settings | None = None) -> str:
@@ -845,6 +904,41 @@ def _forecast_fixture_rows(
     ).fetchall()
 
 
+def _upcoming_fixture_links(
+    rows: list[sqlite3.Row],
+    *,
+    display_tz: ZoneInfo,
+    now_utc: datetime,
+    selected_date: str,
+    limit: int,
+) -> list[UpcomingFixtureLink]:
+    upcoming: list[UpcomingFixtureLink] = []
+    for row in rows:
+        kickoff_utc = parse_kickoff_utc(
+            kickoff_utc=row["kickoff_utc"],
+            kickoff_local=row["kickoff_local"],
+        )
+        if kickoff_utc is None or kickoff_utc < now_utc:
+            continue
+        local_dt = kickoff_utc.astimezone(display_tz)
+        display_date = local_dt.date().isoformat()
+        if display_date == selected_date:
+            continue
+        upcoming.append(
+            UpcomingFixtureLink(
+                fixture_id=str(row["fixture_id"]),
+                display_date=display_date,
+                display_time=local_dt.strftime("%H:%M"),
+                league_code=row["league_code"],
+                competition=row["competition"],
+                home=str(row["home"] or row["home_placeholder"] or "Por definir"),
+                away=str(row["away"] or row["away_placeholder"] or "Por definir"),
+            )
+        )
+    upcoming.sort(key=lambda item: (item.display_date, item.display_time, item.fixture_id))
+    return upcoming[:limit]
+
+
 def _group_forecast_predictions(
     rows: list[sqlite3.Row],
 ) -> dict[str, list[ForecastMarket]]:
@@ -992,14 +1086,12 @@ def _forecast_nav(data: ForecastData) -> str:
     <header class="forecast-nav">
       <div>
         <div class="brand">ScoreRecord</div>
-        <div class="subline">Mundial / selecciones - pronostico estadistico</div>
+        <div class="subline">Forecast multi-liga - pronostico estadistico</div>
       </div>
       <nav>
         <a href="/today?date={_e(data.target_date)}&view=all&league={_e(league)}">Todo</a>
-        <a href="/today?date={_e(data.target_date)}&view=forecast&league={_e(league)}">Pronósticos</a>
-        <a href="/today?date={_e(data.target_date)}&view=paper&league={_e(league)}">Paper recreativo</a>
-        <a href="/today?date={_e(data.target_date)}&view=research&league={_e(league)}">Investigación</a>
-        <a href="/audit">Audit</a>
+        <a href="/today?date={_e(data.target_date)}&view=forecast&league={_e(league)}">Pronosticos</a>
+        <a href="/audit">Auditoria tecnica</a>
         <span class="badge forecast">FORECAST_ONLY</span>
       </nav>
     </header>
@@ -1471,7 +1563,9 @@ def _forecast_family_label(market: ForecastMarket) -> str:
 
 def _fixture_context(fixture: ForecastFixture) -> str:
     parts = [part for part in [fixture.stage, fixture.group_name, fixture.ground] if part]
-    return " - ".join(str(part) for part in parts) or "Fixture mundialista"
+    return " - ".join(str(part) for part in parts) or (
+        fixture.competition or league_label(fixture.league_code)
+    )
 
 
 def _short_id(value: str | None) -> str | None:
@@ -2241,6 +2335,48 @@ body.forecast-page {
   flex-wrap: wrap;
   margin: 12px 0;
 }
+.league-banner, .upcoming-panel {
+  margin: 12px 0;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--blue);
+  border-radius: 8px;
+}
+.league-banner h2 { margin: 0 0 4px; }
+.league-banner div { color: var(--muted); font-size: 13px; }
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.section-head h2 { margin: 0; }
+.section-head span { color: var(--muted); font-size: 13px; font-weight: 750; }
+.upcoming-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 8px;
+}
+.upcoming-item {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.upcoming-item a { color: var(--ink); text-decoration: none; font-weight: 800; }
+.upcoming-item small { display: block; color: var(--muted); font-size: 12px; }
+.upcoming-date {
+  display: grid;
+  gap: 2px;
+  color: var(--blue) !important;
+}
+.upcoming-date span { color: var(--muted); font-weight: 700; }
 .date-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .date-form label { color: var(--muted); font-size: 13px; }
 .date-form input {
@@ -2498,6 +2634,7 @@ p { color: var(--muted); margin: 4px 0 0; }
   .match-grid { grid-template-columns: 1fr; }
   .primary-list { grid-template-columns: 1fr; }
   .odds-coverage-grid { grid-template-columns: 1fr; }
+  .upcoming-list { grid-template-columns: 1fr; }
 }
 """
 

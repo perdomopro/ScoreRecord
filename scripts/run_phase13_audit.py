@@ -656,7 +656,8 @@ def run_gui_audit(ctx: AuditContext) -> None:
     urls = [
         f"http://{ctx.args.host}:{ctx.args.port}/today",
         f"http://{ctx.args.host}:{ctx.args.port}/today?league=EPL",
-        f"http://{ctx.args.host}:{ctx.args.port}/today?league=WORLD_CUP_2026",
+        f"http://{ctx.args.host}:{ctx.args.port}/today?league=LIGA_MX",
+        f"http://{ctx.args.host}:{ctx.args.port}/today?league=MLS",
     ]
     evidence = []
     for url in urls:

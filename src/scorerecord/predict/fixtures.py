@@ -10,6 +10,7 @@ from pathlib import Path
 
 from scorerecord.evaluate.goal_markets import _walk_forward_predictions, build_goal_markets
 from scorerecord.features.build import MatchFeature, load_match_features
+from scorerecord.league_config import CLUB_FORECAST_LEAGUES
 from scorerecord.models.calibration import PlattCalibrator
 from scorerecord.models.dixon_coles import DixonColes
 from scorerecord.models.manifest import (
@@ -30,7 +31,7 @@ from scorerecord.runs import ingest_run, record_quality
 from scorerecord.time_utils import parse_kickoff_utc
 
 DEFAULT_OU_LINES = (1.5, 2.5, 3.5)
-CLUB_TOURNAMENTS = {"EPL", "LA_LIGA", "SERIE_A", "BUNDESLIGA", "LIGUE_1", "CHAMPIONSHIP"}
+CLUB_TOURNAMENTS = set(CLUB_FORECAST_LEAGUES)
 
 
 @dataclass(frozen=True)
@@ -274,11 +275,11 @@ def _fixture_as_match_feature(conn: sqlite3.Connection, fixture: sqlite3.Row) ->
     if league_code == "WORLD_CUP_2026":
         neutral = 1
         tournament = "FIFA World Cup"
-    elif league_code == "EPL":
+    elif league_code in CLUB_TOURNAMENTS:
         neutral = 0
-        tournament = "EPL"
+        tournament = league_code
     else:
-        neutral = 1
+        neutral = 0
         tournament = fixture["competition"] or "Unknown"
 
     return MatchFeature(
@@ -474,9 +475,9 @@ def _record_fixture_elo_quality(
             away_elo = 1500.0
         elo_diffs.append(home_elo - away_elo)
 
-    has_epl = any(f["league_code"] == "EPL" for f in resolved)
+    has_club_league = any(f["league_code"] in CLUB_TOURNAMENTS for f in resolved)
     neutral_assumption = (
-        "league fixture home advantage enabled" if has_epl
+        "club league fixture home advantage enabled" if has_club_league
         else "World Cup fixtures are treated as neutral-site matches"
     )
 
