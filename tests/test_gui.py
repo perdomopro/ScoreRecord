@@ -708,6 +708,90 @@ def test_forecast_today_league_filter() -> None:
     assert "No hay partidos para esta liga en esta fecha." in html_empty
     assert "Premier League &mdash; READY_FOR_PILOT" in html_empty
 
+
+def test_forecast_all_uses_latest_prediction_per_fixture() -> None:
+    conn = _conn()
+    wc_run_id = _insert_forecast_fixture(conn)
+    conn.execute(
+        """
+        UPDATE fixture
+        SET league_code='WORLD_CUP_2026', competition='FIFA World Cup 2026'
+        WHERE fixture_id='m-forecast'
+        """
+    )
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (57, 'Arsenal', 'arsenal')"
+    )
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (58, 'Chelsea', 'chelsea')"
+    )
+    conn.execute(
+        """
+        INSERT INTO fixture (
+          fixture_id, source, source_event_id, league_code, competition,
+          kickoff_utc, kickoff_local, status, ground, home_id, away_id
+        )
+        VALUES (
+          'epl-forecast', 'odds_api_io', 'odds-epl-1', 'EPL',
+          'English Premier League', '2026-07-04T19:00:00Z',
+          '2026-07-04T15:00:00', 'SCHEDULED', 'Emirates', 57, 58
+        )
+        """
+    )
+    epl_run_id = _run(conn, "predict-fixtures")
+    conn.execute(
+        """
+        INSERT INTO model_artifact (
+          artifact_id, model_version, market_validation_status, trained_until,
+          training_rows, params_json, details_json
+        )
+        VALUES (
+          'artifact-epl', ?, 'NOT_TESTED', '2026-06-11', 1900, '{}',
+          '{"training_policy":{"league_code":"EPL","training_scope":"club"}}'
+        )
+        """,
+        (MODEL_VERSION,),
+    )
+    for market, selection, prob in [
+        ("OU1.5", "over", 0.80),
+        ("OU1.5", "under", 0.20),
+        ("OU2.5", "over", 0.59),
+        ("OU2.5", "under", 0.41),
+        ("OU3.5", "over", 0.35),
+        ("OU3.5", "under", 0.65),
+        ("BTTS", "yes", 0.57),
+        ("BTTS", "no", 0.43),
+    ]:
+        conn.execute(
+            """
+            INSERT INTO prediction (
+              run_id, fixture_id, artifact_id, model, market, selection, prob,
+              fair_odds, generated_utc, model_version
+            )
+            VALUES (
+              ?, 'epl-forecast', 'artifact-epl', 'dixon_coles',
+              ?, ?, ?, ?, '2026-07-04T12:30:00+00:00', ?
+            )
+            """,
+            (epl_run_id, market, selection, prob, 1 / prob, MODEL_VERSION),
+        )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+        league_filter="ALL",
+    )
+
+    by_fixture = {fixture.fixture_id: fixture for fixture in data.fixtures}
+    assert data.latest_run_id == epl_run_id
+    assert by_fixture["m-forecast"].markets
+    assert by_fixture["epl-forecast"].markets
+    assert by_fixture["m-forecast"].markets[0].artifact_id == "artifact-forecast-1"
+    assert by_fixture["epl-forecast"].markets[0].artifact_id == "artifact-epl"
+    assert wc_run_id != epl_run_id
+
+
 def test_forecast_match_preserves_league() -> None:
     conn = _conn()
     _insert_forecast_fixture(conn)

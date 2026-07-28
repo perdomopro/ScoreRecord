@@ -294,11 +294,12 @@ def load_forecast_data(
     selected_date = target_date or now_local.date().isoformat()
     previous_date = (date.fromisoformat(selected_date) - timedelta(days=1)).isoformat()
     next_date = (date.fromisoformat(selected_date) + timedelta(days=1)).isoformat()
-    latest_run_id = _latest_prediction_run_id(conn)
-    prediction_rows = _forecast_prediction_rows(conn, latest_run_id)
+    rows = _forecast_fixture_rows(conn, fixture_id=fixture_id, league_filter=league_filter)
+    fixture_ids = [str(row["fixture_id"]) for row in rows]
+    latest_run_id = _latest_prediction_run_id(conn, fixture_ids=fixture_ids)
+    prediction_rows = _forecast_prediction_rows(conn, fixture_ids=fixture_ids)
     predictions_by_fixture = _group_forecast_predictions(prediction_rows)
     quality_items = forecast_quality_items(conn, latest_run_id)
-    rows = _forecast_fixture_rows(conn, fixture_id=fixture_id, league_filter=league_filter)
     odds_coverage_by_fixture: dict[str, list[OddsMarketCoverage]] = {}
     odds_horizons_by_fixture: dict[str, list[OddsHorizonCoverage]] = {}
     if fixture_id is not None:
@@ -369,7 +370,6 @@ def load_forecast_data(
     research_models: list[dict[str, Any]] = []
     if view_mode == "research" and settings is not None:
         outputs_dir = settings.raw_dir.parent / "outputs"
-        benchmarks_dir = outputs_dir / "benchmarks"
         for sub in ["benchmarks", "backtests", "backtests-smoke", "coverage", "diagnostics"]:
             d_dir = outputs_dir / sub
             if d_dir.exists():
@@ -688,21 +688,45 @@ def _display_tz(display_tz_name: str | None = None) -> ZoneInfo:
         return ZoneInfo(DEFAULT_DISPLAY_TZ)
 
 
-def _latest_prediction_run_id(conn: sqlite3.Connection) -> int | None:
+def _latest_prediction_run_id(
+    conn: sqlite3.Connection,
+    *,
+    fixture_ids: list[str] | None = None,
+) -> int | None:
+    filter_sql = ""
+    params: tuple[Any, ...] = ()
+    if fixture_ids:
+        placeholders = ",".join("?" for _ in fixture_ids)
+        filter_sql = f"AND p.fixture_id IN ({placeholders})"
+        params = tuple(fixture_ids)
     row = conn.execute(
-        """
+        f"""
         SELECT ir.run_id
         FROM ingest_run ir
         JOIN prediction p ON p.run_id = ir.run_id
         WHERE ir.job_name = 'predict-fixtures'
           AND ir.status = 'succeeded'
+          {filter_sql}
         GROUP BY ir.run_id
         ORDER BY ir.run_id DESC
         LIMIT 1
-        """
+        """,
+        params,
     ).fetchone()
     if row:
         return int(row["run_id"])
+    if fixture_ids:
+        placeholders = ",".join("?" for _ in fixture_ids)
+        fallback = conn.execute(
+            f"""
+            SELECT MAX(run_id) AS run_id
+            FROM prediction
+            WHERE run_id IS NOT NULL
+              AND fixture_id IN ({placeholders})
+            """,
+            tuple(fixture_ids),
+        ).fetchone()
+        return int(fallback["run_id"]) if fallback and fallback["run_id"] is not None else None
     fallback = conn.execute(
         "SELECT MAX(run_id) AS run_id FROM prediction WHERE run_id IS NOT NULL"
     ).fetchone()
@@ -711,13 +735,29 @@ def _latest_prediction_run_id(conn: sqlite3.Connection) -> int | None:
 
 def _forecast_prediction_rows(
     conn: sqlite3.Connection,
-    run_id: int | None,
+    fixture_ids: list[str] | None = None,
 ) -> list[sqlite3.Row]:
-    if run_id is None:
+    if fixture_ids is not None and not fixture_ids:
         return []
-    placeholders = ",".join("?" for _ in FORECAST_MARKETS)
+    market_placeholders = ",".join("?" for _ in FORECAST_MARKETS)
+    fixture_filter = ""
+    params: list[Any] = [*FORECAST_MARKETS]
+    if fixture_ids is not None:
+        fixture_placeholders = ",".join("?" for _ in fixture_ids)
+        fixture_filter = f"AND p.fixture_id IN ({fixture_placeholders})"
+        params.extend(fixture_ids)
     return conn.execute(
         f"""
+        WITH latest_fixture_run AS (
+          SELECT p.fixture_id, MAX(p.run_id) AS run_id
+          FROM prediction p
+          JOIN ingest_run ir ON ir.run_id = p.run_id
+          WHERE ir.job_name = 'predict-fixtures'
+            AND ir.status = 'succeeded'
+            AND p.market IN ({market_placeholders})
+            {fixture_filter}
+          GROUP BY p.fixture_id
+        )
         SELECT
           p.fixture_id,
           p.artifact_id,
@@ -728,12 +768,14 @@ def _forecast_prediction_rows(
           p.model_version,
           COALESCE(ma.market_validation_status, 'NOT_TESTED') AS market_validation_status
         FROM prediction p
+        JOIN latest_fixture_run latest
+          ON latest.fixture_id = p.fixture_id
+         AND latest.run_id = p.run_id
         LEFT JOIN model_artifact ma ON ma.artifact_id = p.artifact_id
-        WHERE p.run_id = ?
-          AND p.market IN ({placeholders})
+        WHERE p.market IN ({market_placeholders})
         ORDER BY p.fixture_id, p.market, p.selection
         """,
-        (run_id, *FORECAST_MARKETS),
+        (*params, *FORECAST_MARKETS),
     ).fetchall()
 
 

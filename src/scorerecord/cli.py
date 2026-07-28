@@ -1424,6 +1424,7 @@ def main(argv: list[str] | None = None) -> int:
                 "schema_migration",
             ]:
                 print(f"{table}: {table_count(conn, table)}")
+            return 0
         elif args.command == "multi-league-readiness-report":
             leagues = list(_parse_str_tuple(args.leagues))
             report = audit_leagues(conn, leagues)

@@ -943,3 +943,28 @@ Output:
   passed `241 passed`; focused Phase 13 tests passed; targeted ruff over
   touched Phase 13 files passed; `git diff --check` passed. Full-repo ruff
   still fails with legacy style findings and remains tech debt.
+
+### 2026-07-28 - Phase 13 deploy smoke and multi-league GUI run selection
+
+- Fixed `scorerecord db-summary` so it returns exit code `0` after printing table
+  counts. This prevents deploy smoke from reporting a false failure after
+  successful migration, DB health, model manifest, odds dry-run, and summary
+  output.
+- Updated the forecast GUI data loader to select the latest successful
+  `predict-fixtures` run per fixture, instead of using one global latest
+  prediction run for the whole page. This lets `league=ALL` show EPL fixtures
+  from the newest EPL run while still showing World Cup fixtures from their own
+  latest run.
+- Added a regression test covering the multi-league case: a newer EPL
+  prediction run must not hide an older World Cup forecast, and each fixture
+  keeps its own artifact provenance.
+- Homeserver validation: deploy completed with exit code `0`; `db-health`
+  passed; focused Phase 13/GUI tests passed `30 passed`; full remote pytest
+  passed `242 passed`; functional ruff (`--select F`) passed on touched files;
+  `run_phase13_audit.py` reported `PASSED` with `CRITICAL=None` and
+  `ERROR=None`.
+- Direct artifact/provenance checks confirmed the current EPL artifact
+  `c2c9475e0c4...` is scoped to `league_code=EPL`, `training_scope=club`,
+  `training_rows=1900`, and EPL predictions use that artifact. The latest
+  World Cup artifact remains a separate legacy tournament artifact, producing
+  only the expected audit warning about older policy metadata.

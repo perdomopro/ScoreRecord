@@ -518,8 +518,12 @@ Objective: Expand ScoreRecord from a single World Cup tournament to a fully auto
   - Added league-aware model artifact policies and calibrator scope metadata.
   - Added Phase 13.4.2 read-only audit script for artifact separation,
     prediction provenance, calibrator scope, DB health, readiness, and GUI smoke.
-  - Daily polling of fixtures and predictions for pilot league (EPL) still
-    requires homeserver audit after deploy.
+  - Phase 13.4.2 production audit passed on the homeserver after EPL artifact
+    republish; remaining findings are warnings/infos, not critical errors.
+  - Fixed deploy smoke false failure from `db-summary` exit handling.
+  - Forecast GUI uses the latest prediction run per fixture, so `league=ALL`
+    can display multiple scopes whose predictions were published at different
+    times.
   - GUI league filtering exists for `ALL`, `EPL`, and `WORLD_CUP_2026`; expand
     only after league readiness is confirmed.
 

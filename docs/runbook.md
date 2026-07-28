@@ -290,6 +290,17 @@ scorerecord db-health
 If `future_resolved=0`, the GUI is not broken; there are no future resolved
 fixtures for that scope in the DB.
 
+For the multi-league forecast view, remember that the page is date-scoped. If
+today has no fixtures, open the next fixture date explicitly:
+
+```powershell
+curl "http://100.104.72.97:8765/today?date=2026-08-21&league=ALL&view=forecast"
+curl "http://100.104.72.97:8765/today?date=2026-08-21&league=EPL&view=forecast"
+```
+
+The GUI intentionally reads the latest prediction run per fixture. A new EPL
+publish should not hide older World Cup forecasts on `league=ALL`.
+
 Prediction run inserts zero rows:
 
 - Check fixture `kickoff_utc`.
