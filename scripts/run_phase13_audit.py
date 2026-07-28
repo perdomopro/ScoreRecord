@@ -138,6 +138,10 @@ def _artifact_policy(row: sqlite3.Row) -> dict[str, Any]:
     return normalized
 
 
+def _is_league_aware_policy(policy: dict[str, Any]) -> bool:
+    return "training_scope" in policy or "training_tournament" in policy
+
+
 def _league_history_code(league: str) -> str:
     try:
         from scorerecord.ingest.football_data import FOOTBALL_DATA_LEAGUES
@@ -233,6 +237,8 @@ def run_training_scope_audit(ctx: AuditContext) -> None:
             ).fetchone()["c"]
         artifact = artifacts.get(league)
         training_rows = int(artifact["training_rows"]) if artifact else None
+        policy = artifact["training_policy"] if artifact else {}
+        league_aware_artifact = _is_league_aware_policy(policy)
         match_count = int(rows["match_count"] or 0)
         evidence[league] = {
             "min_date": rows["min_date"],
@@ -240,9 +246,22 @@ def run_training_scope_audit(ctx: AuditContext) -> None:
             "match_count": match_count,
             "rough_team_count": int(rows["rough_team_count"] or 0),
             "artifact_training_rows": training_rows,
+            "league_aware_artifact": league_aware_artifact,
             "mixed_source_match_ids": int(mixed_count),
         }
-        if artifact and training_rows is not None and training_rows > match_count:
+        if artifact and not league_aware_artifact:
+            ctx.record(
+                "WARNING",
+                "Training Scope Audit",
+                "Legacy artifact lacks league-aware policy",
+                league,
+            )
+        if (
+            artifact
+            and league_aware_artifact
+            and training_rows is not None
+            and training_rows > match_count
+        ):
             ctx.record(
                 "ERROR",
                 "Training Scope Audit",
@@ -727,7 +746,16 @@ def run_regression_and_performance(ctx: AuditContext) -> None:
         "timings": ctx.timings,
     }
     if result.returncode != 0:
-        ctx.record("WARNING", "Regression Audit", "git status failed", result.stderr.strip())
+        stderr = result.stderr.strip()
+        if "not a git repository" in stderr:
+            ctx.record(
+                "INFO",
+                "Regression Audit",
+                "git status skipped",
+                "deploy archive does not include .git",
+            )
+        else:
+            ctx.record("WARNING", "Regression Audit", "git status failed", stderr)
     elif dirty_lines:
         ctx.record(
             "ERROR",
