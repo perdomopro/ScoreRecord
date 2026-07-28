@@ -189,6 +189,27 @@ python scripts/run_phase13_audit.py --host 127.0.0.1 --port 8765
 Use `--execute-refresh` only when you intentionally want the audit to run the
 live EPL refresh.
 
+The audit writes these evidence artifacts under `outputs/benchmarks/`:
+
+- `artifact_audit.json`
+- `prediction_provenance.json`
+- `calibrator_audit.json`
+- `training_scope_audit.json`
+- `team_audit.json`
+- `rating_coverage.json`
+- `bridge_audit.json`
+- `prediction_integrity.json`
+- `db_health_final.json`
+- `multi_league_readiness.json`
+- `gui_validation.json`
+- `daily_refresh_validation.json`
+- `performance_and_regression.json`
+- `phase_13_4_2_final_report.md`
+
+The audit is allowed to return warnings while the EPL artifact has not been
+published yet. It should not return `CRITICAL` or `ERROR` before Phase 13 is
+considered closed.
+
 ## Homeserver Deploy
 
 Deploy current working tree to the homeserver:

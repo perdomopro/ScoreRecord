@@ -928,16 +928,18 @@ Output:
 - Extended model artifact construction to accept league-aware `training_policy`
   and explicit `training_rows`, keeping club and international artifacts
   reproducible and separated.
-- Replaced the large Phase 13 audit draft with a smaller read-only
-  `scripts/run_phase13_audit.py` that reads artifact policy from `details_json`,
-  checks prediction provenance, checks calibrator scope, verifies SQLite
-  integrity/FKs, runs readiness, and optionally smokes the GUI.
+- Replaced the large Phase 13 audit draft with a read-only
+  `scripts/run_phase13_audit.py` that reads artifact policy from `details_json`
+  and generates evidence for artifact separation, prediction provenance,
+  calibrator scope, training scope, team/rating coverage, bridge integrity,
+  prediction integrity, SQLite health, readiness, optional GUI smoke, daily
+  refresh metadata, and regression/performance.
 - Added `tests/test_league_aware_artifacts.py` covering EPL artifact scope,
   World Cup artifact scope, default World Cup filtering when EPL fixtures are
   present, and distinct artifact ids per scope.
 - Added `docs/runbook.md` with local validation, homeserver deployment, git
   workflow, EPL pilot commands, and troubleshooting.
 - Local validation: `compileall src tests scripts` passed; full local pytest
-  passed `241 passed`; targeted ruff over touched Phase 13 files passed;
-  `git diff --check` passed. Full-repo ruff still fails with legacy style
-  findings and remains tech debt.
+  passed `241 passed`; focused Phase 13 tests passed; targeted ruff over
+  touched Phase 13 files passed; `git diff --check` passed. Full-repo ruff
+  still fails with legacy style findings and remains tech debt.
