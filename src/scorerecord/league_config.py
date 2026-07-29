@@ -18,6 +18,8 @@ CLUB_FORECAST_LEAGUES = (
     "EPL",
     "LIGA_MX",
     "MLS",
+    "ARGENTINA",
+    "BRASILEIRAO",
     "LA_LIGA",
     "SERIE_A",
     "BUNDESLIGA",
@@ -25,7 +27,20 @@ CLUB_FORECAST_LEAGUES = (
     "CHAMPIONSHIP",
 )
 
-GUI_LEAGUE_ORDER = ("LIGA_MX", "MLS", "EPL")
+GUI_LEAGUE_ORDER = (
+    "LIGA_MX",
+    "MLS",
+    "EPL",
+    "ARGENTINA",
+    "BRASILEIRAO",
+)
+
+PROVIDER_WATCHLIST_LEAGUES = (
+    "CHAMPIONS_LEAGUE",
+    "EUROPA_LEAGUE",
+    "LIBERTADORES",
+    "SUDAMERICANA",
+)
 
 LEAGUE_CONFIGS: dict[str, LeagueConfig] = {
     "EPL": LeagueConfig(
@@ -55,6 +70,63 @@ LEAGUE_CONFIGS: dict[str, LeagueConfig] = {
         odds_api_io_slug="usa-mls",
         football_data_alias="MLS",
     ),
+    "ARGENTINA": LeagueConfig(
+        code="ARGENTINA",
+        label="Argentina",
+        competition="Argentina Primera LPF Clausura",
+        season="2026-2027",
+        odds_api_io_sport="football",
+        odds_api_io_slug="argentina-primera-lpf-clausura",
+        football_data_alias="ARG",
+    ),
+    "BRASILEIRAO": LeagueConfig(
+        code="BRASILEIRAO",
+        label="Brasileirao",
+        competition="Brazil Brasileiro Serie A",
+        season="2026-2027",
+        odds_api_io_sport="football",
+        odds_api_io_slug="brazil-brasileiro-serie-a",
+        football_data_alias="BRA",
+    ),
+    # Provider-visible competitions that are useful to track, but not yet safe
+    # to surface as forecast pilots until they have an explicit model artifact
+    # and bridged historical scope in ScoreRecord.
+    "CHAMPIONS_LEAGUE": LeagueConfig(
+        code="CHAMPIONS_LEAGUE",
+        label="Champions League",
+        competition="UEFA Champions League Qualification",
+        season="2026-2027",
+        odds_api_io_sport="football",
+        odds_api_io_slug="international-clubs-uefa-champions-league-qualification",
+        football_data_alias=None,
+    ),
+    "EUROPA_LEAGUE": LeagueConfig(
+        code="EUROPA_LEAGUE",
+        label="Europa League",
+        competition="UEFA Europa League Qualification",
+        season="2026-2027",
+        odds_api_io_sport="football",
+        odds_api_io_slug="international-clubs-uefa-europa-league-qualification",
+        football_data_alias=None,
+    ),
+    "LIBERTADORES": LeagueConfig(
+        code="LIBERTADORES",
+        label="Libertadores",
+        competition="CONMEBOL Libertadores Knockout Stage",
+        season="2026-2027",
+        odds_api_io_sport="football",
+        odds_api_io_slug="international-clubs-conmebol-libertadores-knockout-stage",
+        football_data_alias=None,
+    ),
+    "SUDAMERICANA": LeagueConfig(
+        code="SUDAMERICANA",
+        label="Sudamericana",
+        competition="CONMEBOL Sudamericana Knockout Stage",
+        season="2026-2027",
+        odds_api_io_sport="football",
+        odds_api_io_slug="international-clubs-conmebol-sudamericana-knockout-stage",
+        football_data_alias=None,
+    ),
 }
 
 _ALIASES = {
@@ -72,6 +144,31 @@ _ALIASES = {
     "USA": "MLS",
     "USA_MLS": "MLS",
     "MAJOR_LEAGUE_SOCCER": "MLS",
+    "ARG": "ARGENTINA",
+    "ARGENTINA": "ARGENTINA",
+    "ARGENTINA_LIGA_PROFESIONAL": "ARGENTINA",
+    "ARGENTINA_PRIMERA_LPF": "ARGENTINA",
+    "ARGENTINA_PRIMERA_LPF_CLAUSURA": "ARGENTINA",
+    "BRA": "BRASILEIRAO",
+    "BRASIL": "BRASILEIRAO",
+    "BRAZIL": "BRASILEIRAO",
+    "BRASILEIRAO": "BRASILEIRAO",
+    "BRASIL_SERIE_A": "BRASILEIRAO",
+    "BRAZIL_SERIE_A": "BRASILEIRAO",
+    "BRAZIL_BRASILEIRO_SERIE_A": "BRASILEIRAO",
+    "UCL": "CHAMPIONS_LEAGUE",
+    "CHAMPIONS": "CHAMPIONS_LEAGUE",
+    "CHAMPIONS_LEAGUE": "CHAMPIONS_LEAGUE",
+    "UEFA_CHAMPIONS_LEAGUE": "CHAMPIONS_LEAGUE",
+    "UEL": "EUROPA_LEAGUE",
+    "EUROPA": "EUROPA_LEAGUE",
+    "EUROPA_LEAGUE": "EUROPA_LEAGUE",
+    "UEFA_EUROPA_LEAGUE": "EUROPA_LEAGUE",
+    "CONMEBOL": "LIBERTADORES",
+    "LIBERTADORES": "LIBERTADORES",
+    "COPA_LIBERTADORES": "LIBERTADORES",
+    "SUDAMERICANA": "SUDAMERICANA",
+    "COPA_SUDAMERICANA": "SUDAMERICANA",
 }
 
 

@@ -1042,3 +1042,26 @@ Output:
   `/match/<fixture_id>` kept as a fallback route.
 - Renamed the CLI help text and systemd unit description from the old
   paper/audit wording to the current forecast-and-health dashboard language.
+
+### 2026-07-29 - Landing, data-source docs, and multi-league pilot expansion
+
+- Split `/` into a true landing page without the top navigation bar: centered
+  `ScoreRecord` branding, project description, forecast warning, GitHub repo
+  link, and direct buttons for all supported GUI league filters plus Health.
+- Kept `/today` as the match-list workspace and made date selection friendlier
+  with previous/next controls, date input, a "next loaded match date" shortcut,
+  and chips for upcoming fixture dates.
+- Strengthened the visual use of secondary green `#1C331D` in backgrounds,
+  titles, buttons, shadows, and selected date chips while keeping primary green
+  `#34CF72`.
+- Added `ARGENTINA` and `BRASILEIRAO` as domestic pilot candidates using
+  catalog-backed odds-api.io slugs and Football-Data aliases.
+- Added Champions League, Europa League, Libertadores, and Sudamericana as
+  provider watchlist configs only; they are not primary GUI forecast filters
+  until league-scoped history and artifacts exist.
+- Added `scripts/run_daily_club_forecast.sh` plus
+  `scorerecord-club-refresh.service/timer` for a conservative daily fixture and
+  forecast refresh cadence.
+- Added `docs/data_sources.md` and `docs/match_evaluation_pipeline.md` to
+  document API capabilities, source roles, league admission guardrails, and the
+  code paths used to evaluate each match.

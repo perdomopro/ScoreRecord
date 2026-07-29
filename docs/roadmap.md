@@ -524,10 +524,13 @@ Objective: Expand ScoreRecord from a single World Cup tournament to a fully auto
   - Forecast GUI uses the latest prediction run per fixture, so `league=ALL`
     can display multiple scopes whose predictions were published at different
     times.
-  - GUI league filtering now focuses on `ALL`, `LIGA_MX`, `MLS`, and `EPL`;
-    the World Cup filter tab is removed from the primary forecast navigation.
-  - Added next-fixture date links so users do not have to click through empty
-    days to find a loaded match.
+  - GUI league filtering now focuses on `ALL`, `LIGA_MX`, `MLS`, `EPL`,
+    `ARGENTINA`, and `BRASILEIRAO`; the World Cup filter tab is removed from
+    the primary forecast navigation.
+  - Added a landing-only `/` page without the sticky navbar, with centered
+    ScoreRecord branding, repo link, warning, and league/Health entry buttons.
+  - Added next-fixture date links and upcoming-date chips so users do not have
+    to click through empty days to find a loaded match.
   - Removed legacy `paper`/`research` links from the main forecast navbar so the
     GUI stays forecast-only while still exposing `/audit` as a technical view.
   - Added read-only SportMonks fixture probe for enrichment evaluation.
@@ -541,6 +544,15 @@ Objective: Expand ScoreRecord from a single World Cup tournament to a fully auto
     `/health`, simplified primary navigation, added the ScoreRecord landing hero,
     adopted the green brand palette (`#34CF72` / `#1C331D`), and changed match
     details to modal overlays instead of full-page navigation.
+  - Added `ARGENTINA` and `BRASILEIRAO` as domestic pilot candidates backed by
+    odds-api.io catalog slugs and Football-Data aliases.
+  - Registered Champions League, Europa League, Libertadores, and Sudamericana
+    as provider watchlist competitions only; they must not enter primary GUI
+    forecasts until they have scoped historical data and model artifacts.
+  - Added `scorerecord-club-refresh.service/timer` and
+    `scripts/run_daily_club_forecast.sh` for a conservative daily fixture and
+    forecast refresh loop.
+  - Added `docs/data_sources.md` and `docs/match_evaluation_pipeline.md`.
 
 ### Phase 13.5 - Forward evidence and monitoring (NEXT)
 - Accumulate forecast snapshots and settled outcomes before claiming real
@@ -555,9 +567,11 @@ Objective: Expand ScoreRecord from a single World Cup tournament to a fully auto
   claims without real captured odds and forward settlement.
 
 ### Future 13.X
-- Generate predictions for all supported leagues (requires model ratings).
+- Promote `ARGENTINA` and `BRASILEIRAO` only after homeserver readiness confirms
+  future fixtures, aliases, ratings, and prediction provenance.
+- Add continental competition forecasts only after a separate cup/continental
+  training policy exists.
 - Add GUI competition filters to navigate the multi-league data cleanly.
-- Add daily timer for automated ingest and updates.
 
 Conditions for inclusion:
 Only include a league if future fixtures are ingested, teams can be mapped, model ratings exist, predictions can be generated, and the GUI can display them cleanly.

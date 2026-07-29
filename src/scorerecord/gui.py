@@ -225,7 +225,7 @@ def serve_dashboard(
             params = parse_qs(parsed.query)
             mode = str(params.get("mode", [""])[0]).strip().lower()
             if parsed.path in {"/", "/index.html"} and mode != "audit":
-                self._render_today(params)
+                self._render_home(params)
                 return
             if parsed.path == "/today":
                 self._render_today(params)
@@ -284,6 +284,25 @@ def serve_dashboard(
                     fixture_id,
                     settings=settings,
                     partial=partial,
+                )
+            except Exception as exc:  # pragma: no cover - defensive web path
+                body = render_error(exc)
+            self._write(body)
+
+        def _render_home(self, params: dict[str, list[str]]) -> None:
+            date_filter = _parse_date(params.get("date", [""])[0])
+            league_filter = gui_league_filter(params.get("league", ["all"])[0])
+            try:
+                with connect(db_path) as conn:
+                    data = load_forecast_data(
+                        conn,
+                        target_date=date_filter,
+                        view_mode="forecast",
+                        league_filter=league_filter,
+                        settings=settings,
+                    )
+                body = render_home_page(
+                    data, settings=settings, refresh_seconds=refresh_seconds
                 )
             except Exception as exc:  # pragma: no cover - defensive web path
                 body = render_error(exc)
@@ -510,6 +529,7 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
     league = data.league_filter
     league_nav = _league_nav(data)
     upcoming = _upcoming_fixture_section(data)
+    date_toolbar = _date_toolbar(data)
 
     if view_mode == "research":
         cards = "<h3>Modelos de investigación disponibles</h3><ul>"
@@ -560,28 +580,42 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
 <body class="forecast-page">
   {_forecast_nav(data)}
   <main class="forecast-shell">
-    {_home_hero(data)}
     {_recreational_warning_banner(settings)}
     {_forecast_warning_banner(data)}
     {league_nav}
     {league_banner}
     {upcoming}
-    <section class="forecast-toolbar">
-      <a class="btn ghost" href="/today?date={_e(data.previous_date)}&view={_e(data.view_mode)}&league={_e(league)}">Anterior</a>
-      <form method="get" action="/today" class="date-form">
-        <input type="hidden" name="view" value="{_e(data.view_mode)}">
-        <input type="hidden" name="league" value="{_e(league)}">
-        <label for="date">Fecha</label>
-        <input id="date" name="date" type="date" value="{_e(data.target_date)}">
-        <button class="btn" type="submit">Ver</button>
-      </form>
-      <a class="btn ghost" href="/today?date={_e(data.next_date)}&view={_e(data.view_mode)}&league={_e(league)}">Siguiente</a>
-      <a class="btn ghost" href="/health?date={_e(data.target_date)}&league={_e(league)}">Health</a>
-    </section>
+    {date_toolbar}
     <section class="match-grid">{cards}</section>
   </main>
   {_match_modal_shell()}
   {_forecast_modal_script()}
+</body>
+</html>"""
+
+
+def render_home_page(
+    data: ForecastData,
+    *,
+    settings: Settings | None = None,
+    refresh_seconds: int = 60,
+) -> str:
+    return f"""<!doctype html>
+<html lang="es" data-theme="scorerecord">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="{int(refresh_seconds)}">
+  <title>ScoreRecord</title>
+  <style>{_forecast_css()}</style>
+</head>
+<body class="forecast-page landing-page">
+  <main class="landing-shell">
+    {_home_hero(data, landing=True)}
+    {_recreational_warning_banner(settings)}
+    {_forecast_warning_banner(data)}
+    {_upcoming_fixture_section(data)}
+  </main>
 </body>
 </html>"""
 
@@ -625,25 +659,75 @@ def render_health_page(
 </html>"""
 
 
-def _home_hero(data: ForecastData) -> str:
+def _home_hero(data: ForecastData, *, landing: bool = False) -> str:
+    league_buttons = "".join(
+        f'<a class="btn ghost" href="/today?view=forecast&league={_e(code)}">{_e(league_label(code))}</a>'
+        for code in GUI_LEAGUE_ORDER
+    )
+    css_class = "home-hero landing-hero" if landing else "home-hero"
     return f"""
-    <section class="home-hero">
+    <section class="{css_class}">
       <div class="hero-copy">
-        <span>Pronosticos deportivos</span>
+        <span>pronosticos deportivos</span>
         <h1>ScoreRecord</h1>
         <p>
           Sistema forecast-only para analizar partidos con modelos estadisticos,
           trazabilidad de artifacts y explicaciones auditables. No es una
           recomendacion de apuesta.
         </p>
+        <a class="repo-link" href="https://github.com/Perdomazo/ScoreRecord" target="_blank" rel="noreferrer">
+          github.com/Perdomazo/ScoreRecord
+        </a>
       </div>
       <div class="hero-actions">
         <a class="btn primary" href="/today?view=forecast&league=ALL">Ver partidos</a>
-        <a class="btn ghost" href="/today?view=forecast&league=LIGA_MX">Liga MX</a>
-        <a class="btn ghost" href="/today?view=forecast&league=MLS">MLS</a>
-        <a class="btn ghost" href="/today?view=forecast&league=EPL">Premier League</a>
+        {league_buttons}
         <a class="btn ghost" href="/health?date={_e(data.target_date)}&league={_e(data.league_filter)}">Health</a>
       </div>
+    </section>
+    """
+
+
+def _date_toolbar(data: ForecastData) -> str:
+    league = data.league_filter
+    chips: list[str] = []
+    counts: dict[str, int] = {}
+    for item in data.upcoming_fixtures:
+        counts[item.display_date] = counts.get(item.display_date, 0) + 1
+    for day, count in list(counts.items())[:7]:
+        cls = "date-chip active" if day == data.target_date else "date-chip"
+        chips.append(
+            f'<a class="{cls}" href="/today?date={_e(day)}&view={_e(data.view_mode)}'
+            f'&league={_e(league)}"><strong>{_e(_short_date_label(day))}</strong>'
+            f'<span>{count} partidos</span></a>'
+        )
+    next_loaded = ""
+    if data.upcoming_fixtures:
+        first_date = data.upcoming_fixtures[0].display_date
+        next_loaded = (
+            f'<a class="btn secondary" href="/today?date={_e(first_date)}'
+            f'&view={_e(data.view_mode)}&league={_e(league)}">Proxima fecha con partido</a>'
+        )
+    chips_html = (
+        f'<div class="date-chip-row" aria-label="Fechas con partidos">{"".join(chips)}</div>'
+        if chips
+        else '<p class="muted">No hay fechas futuras cargadas para esta seleccion.</p>'
+    )
+    return f"""
+    <section class="date-toolbar">
+      <div class="date-toolbar-main">
+        <a class="btn ghost" href="/today?date={_e(data.previous_date)}&view={_e(data.view_mode)}&league={_e(league)}">Anterior</a>
+        <form method="get" action="/today" class="date-form">
+          <input type="hidden" name="view" value="{_e(data.view_mode)}">
+          <input type="hidden" name="league" value="{_e(league)}">
+          <label for="date">Elegir fecha</label>
+          <input id="date" name="date" type="date" value="{_e(data.target_date)}">
+          <button class="btn" type="submit">Ver fecha</button>
+        </form>
+        <a class="btn ghost" href="/today?date={_e(data.next_date)}&view={_e(data.view_mode)}&league={_e(league)}">Siguiente</a>
+        {next_loaded}
+      </div>
+      {chips_html}
     </section>
     """
 
@@ -3137,6 +3221,14 @@ def _parse_date(value: str) -> str | None:
     return None
 
 
+def _short_date_label(value: str) -> str:
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return value
+    return parsed.strftime("%d %b")
+
+
 def _parse_market(value: str) -> str | None:
     text = str(value or "").strip().upper()
     if text in {"1X2", "OU", "BTTS"}:
@@ -3213,10 +3305,21 @@ def _forecast_css() -> str:
 body.forecast-page {
   margin: 0;
   background:
-    radial-gradient(circle at 15% 0%, rgba(52, 207, 114, 0.18), transparent 32%),
-    linear-gradient(180deg, #f8fbf8 0%, var(--bg) 42%, #eef6ef 100%);
+    radial-gradient(circle at 9% 4%, rgba(52, 207, 114, 0.30), transparent 30%),
+    radial-gradient(circle at 92% 10%, rgba(28, 51, 29, 0.20), transparent 34%),
+    linear-gradient(135deg, #effcf3 0%, #f7fbf7 38%, #e2f3e5 100%);
   color: var(--ink);
   font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  min-height: 100vh;
+}
+body.landing-page {
+  display: grid;
+  place-items: center;
+  padding: 28px 14px;
+  background:
+    radial-gradient(circle at 16% 20%, rgba(52, 207, 114, 0.36), transparent 28%),
+    radial-gradient(circle at 84% 70%, rgba(28, 51, 29, 0.26), transparent 34%),
+    linear-gradient(145deg, #dff8e7 0%, #f7fbf7 48%, #d6eddb 100%);
 }
 .forecast-nav {
   display: flex;
@@ -3256,6 +3359,10 @@ body.forecast-page {
 .brand { font-size: 24px; font-weight: 900; letter-spacing: 0; color: var(--secondary); }
 .subline { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .forecast-shell { width: min(1180px, 100%); margin: 0 auto; padding: 18px; }
+.landing-shell {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+}
 .home-hero, .health-hero {
   display: grid;
   grid-template-columns: minmax(280px, 1fr) auto;
@@ -3266,9 +3373,24 @@ body.forecast-page {
   border: 1px solid rgba(28, 51, 29, 0.12);
   border-radius: 18px;
   background:
-    linear-gradient(135deg, rgba(52, 207, 114, 0.16), rgba(255,255,255,0.94) 42%),
+    radial-gradient(circle at 7% 0%, rgba(52, 207, 114, 0.24), transparent 36%),
+    linear-gradient(135deg, rgba(52, 207, 114, 0.18), rgba(255,255,255,0.96) 42%),
     var(--surface);
   box-shadow: 0 18px 45px rgba(28, 51, 29, 0.08);
+}
+.landing-hero {
+  min-height: min(520px, calc(100vh - 150px));
+  align-items: center;
+  text-align: center;
+  grid-template-columns: 1fr;
+  place-items: center;
+  padding: clamp(28px, 7vw, 72px);
+  border-color: rgba(28, 51, 29, 0.20);
+  background:
+    radial-gradient(circle at 16% 14%, rgba(52, 207, 114, 0.30), transparent 34%),
+    radial-gradient(circle at 88% 78%, rgba(28, 51, 29, 0.22), transparent 38%),
+    linear-gradient(145deg, rgba(255,255,255,0.95), rgba(232,255,241,0.92));
+  box-shadow: 0 28px 80px rgba(28, 51, 29, 0.16);
 }
 .health-hero { align-items: center; }
 .hero-copy span, .health-hero span {
@@ -3284,17 +3406,46 @@ body.forecast-page {
   line-height: 1;
   color: var(--secondary);
 }
+.landing-hero .hero-copy h1 {
+  font-size: clamp(54px, 11vw, 112px);
+}
 .health-hero h1 { font-size: clamp(28px, 4vw, 42px); }
 .hero-copy p, .health-hero p {
   max-width: 720px;
   color: #405645;
   margin: 0;
 }
+.landing-hero .hero-copy p {
+  margin: 0 auto;
+  font-size: clamp(16px, 2vw, 20px);
+}
+.repo-link {
+  display: inline-flex;
+  margin-top: 14px;
+  color: var(--secondary);
+  font-weight: 800;
+  text-decoration: none;
+  border-bottom: 2px solid rgba(52, 207, 114, 0.65);
+}
+.repo-link:hover { color: var(--primary-dark); }
 .hero-actions {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+.landing-hero .hero-actions {
+  justify-content: center;
+  max-width: 900px;
+}
+.btn.secondary {
+  background: var(--secondary);
+  border-color: var(--secondary);
+  color: #f3fff6;
+}
+.btn.secondary:hover {
+  background: #294c2b;
+  color: #ffffff;
 }
 .forecast-alert {
   display: flex;
@@ -3379,6 +3530,47 @@ body.forecast-page {
   flex-wrap: wrap;
   margin: 12px 0;
 }
+.date-toolbar {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid rgba(28, 51, 29, 0.14);
+  border-radius: 14px;
+  background: rgba(255,255,255,0.82);
+  box-shadow: 0 10px 30px rgba(28, 51, 29, 0.06);
+}
+.date-toolbar-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.date-chip-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.date-chip {
+  display: grid;
+  gap: 2px;
+  min-width: 106px;
+  padding: 9px 11px;
+  border: 1px solid rgba(28, 51, 29, 0.14);
+  border-radius: 12px;
+  color: var(--secondary);
+  background: linear-gradient(180deg, #ffffff, #effbf3);
+  text-decoration: none;
+}
+.date-chip strong { font-size: 14px; }
+.date-chip span { color: var(--muted); font-size: 12px; font-weight: 700; }
+.date-chip.active {
+  border-color: var(--primary);
+  background: var(--secondary);
+  color: #f2fff5;
+}
+.date-chip.active span { color: #c7f7d8; }
 .league-banner, .upcoming-panel {
   margin: 12px 0;
   padding: 12px;
@@ -3387,7 +3579,7 @@ body.forecast-page {
   border-left: 5px solid var(--blue);
   border-radius: 8px;
 }
-.league-banner h2 { margin: 0 0 4px; }
+.league-banner h2 { margin: 0 0 4px; color: var(--secondary); }
 .league-banner div { color: var(--muted); font-size: 13px; }
 .section-head {
   display: flex;
@@ -3854,7 +4046,12 @@ p { color: var(--muted); margin: 4px 0 0; }
 @media (max-width: 900px) {
   .forecast-nav, .match-card-head, .detail-head { flex-direction: column; }
   .home-hero, .health-hero { grid-template-columns: 1fr; align-items: start; }
+  .landing-hero { min-height: auto; text-align: left; place-items: start; }
   .hero-actions { justify-content: flex-start; }
+  .landing-hero .hero-actions { justify-content: flex-start; }
+  .date-toolbar-main { align-items: stretch; }
+  .date-toolbar-main .btn, .date-form { width: 100%; }
+  .date-form input, .date-form button { flex: 1; min-width: 135px; }
   .quality-panel { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
   .forecast-stats { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
   .health-summary-grid { grid-template-columns: 1fr; }

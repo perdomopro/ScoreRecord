@@ -175,7 +175,85 @@ def test_bridge_filters_by_league_and_season(conn):
         allow_create_teams=True
     )
     assert res.eligible_matches == 4
-    
+
+
+def test_bridge_accepts_cosmetic_alias_capitalization_collision(conn):
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) "
+        "VALUES (100, 'Colon Santa Fe', 'colonsantafe')"
+    )
+    conn.execute(
+        "INSERT INTO team_alias (alias, alias_key, team_id, source) "
+        "VALUES ('Colon Santa Fe', 'colonsantafe', 100, 'manual')"
+    )
+    conn.execute(
+        """
+        INSERT INTO historical_match (
+          source, source_event_id, league_code, season, match_date,
+          home_team, away_team, home_goals, away_goals
+        )
+        VALUES (
+          'football-data', 'fd:7', 'E0', '2021-2022', '2021-08-15',
+          'Colon Santa FE', 'West Ham', 1, 0
+        )
+        """
+    )
+
+    res = bridge_club_history(
+        conn,
+        league="EPL",
+        source="football-data",
+        from_season="2021-2022",
+        to_season="2021-2022",
+        dry_run=False,
+        allow_create_teams=True,
+    )
+
+    assert res.status == "OK"
+    assert not res.alias_collisions
+    row = conn.execute(
+        "SELECT home_id FROM match_history WHERE source_match_id = 'fd:7'"
+    ).fetchone()
+    assert row["home_id"] == 100
+
+
+def test_bridge_alias_collision_preflight_writes_nothing(conn):
+    conn.execute("DELETE FROM historical_match")
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (999, 'England', 'england')"
+    )
+    conn.execute(
+        "INSERT INTO team_alias (alias, alias_key, team_id, source) "
+        "VALUES ('West Ham', 'westham', 999, 'manual')"
+    )
+    conn.execute(
+        """
+        INSERT INTO historical_match (
+          source, source_event_id, league_code, season, match_date,
+          home_team, away_team, home_goals, away_goals
+        )
+        VALUES (
+          'football-data', 'fd:8', 'E0', '2021-2022', '2021-08-15',
+          'Arsenal', 'West Ham', 2, 1
+        )
+        """
+    )
+
+    res = bridge_club_history(
+        conn,
+        league="EPL",
+        source="football-data",
+        from_season="2021-2022",
+        to_season="2021-2022",
+        dry_run=False,
+        allow_create_teams=True,
+    )
+
+    assert res.status == "ALIAS_COLLISION"
+    assert res.teams_created == 0
+    assert conn.execute("SELECT COUNT(*) FROM team").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM match_history").fetchone()[0] == 0
+
 def test_bridge_detects_alias_collisions(conn):
     # pre-create a team with a conflicting alias key
     conn.execute("INSERT INTO team (team_id, canonical, canonical_key) VALUES (999, 'England', 'england')")

@@ -8,6 +8,7 @@ from scorerecord.gui import (
     load_forecast_data,
     render_dashboard,
     render_health_page,
+    render_home_page,
     render_match_forecast,
     render_today_forecast,
 )
@@ -458,7 +459,6 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert data.fixtures[0].primary.selection == "over"
     assert "FORECAST_ONLY" in html
     assert "pronosticos deportivos" in html
-    assert "Ver partidos" in html
     assert "Health" in html
     assert "Auditoria tecnica" not in html
     assert "Pronosticos principales del modelo" in html
@@ -476,6 +476,66 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert "Solo pronostico y cobertura informativa" in html
     assert "match-modal" in html
     assert "data-detail-url" in html
+
+
+def test_home_page_is_landing_without_top_nav() -> None:
+    conn = _conn()
+    run_id = _insert_forecast_fixture(conn)
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    html = render_home_page(
+        data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
+
+    assert data.latest_run_id == run_id
+    assert 'class="forecast-nav"' not in html
+    assert 'class="home-hero landing-hero"' in html
+    assert "ScoreRecord" in html
+    assert "pronosticos deportivos" in html
+    assert "github.com/Perdomazo/ScoreRecord" in html
+    assert "Ver partidos" in html
+    assert "Liga MX" in html
+    assert "MLS" in html
+    assert "Premier League" in html
+    assert "Argentina" in html
+    assert "Brasileirao" in html
+    assert "Health" in html
+    assert "FORECAST_ONLY" in html
+    assert "Auditoria tecnica" not in html
+
+
+def test_forecast_date_toolbar_links_loaded_future_dates() -> None:
+    conn = _conn()
+    _insert_forecast_fixture(conn)
+    conn.execute(
+        """
+        INSERT INTO fixture (
+          fixture_id, kickoff_local, kickoff_utc, stage, home_id, away_id, ground
+        )
+        VALUES (
+          'm-next', '2026-07-05 18:00 UTC-6', '2026-07-06T00:00:00+00:00',
+          'Semi-finals', 1, 2, 'Azteca'
+        )
+        """
+    )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    html = render_today_forecast(
+        data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
+
+    assert data.upcoming_fixtures[0].display_date == "2026-07-05"
+    assert "date-chip" in html
+    assert "Proxima fecha con partido" in html
+    assert "05 Jul" in html
 
 
 def test_forecast_renders_quality_score_explanations_and_evidence() -> None:

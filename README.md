@@ -1,18 +1,33 @@
 # ScoreRecord
 
-ScoreRecord is an offline-first research project for the FIFA World Cup 2026. The first milestone is intentionally small: build a trustworthy local data spine before adding odds, recommendations, Kelly sizing, GUI, or heavier models.
+ScoreRecord is a forecast-only sports prediction system focused on audited
+football/soccer forecasts. It combines league-scoped historical data, Elo,
+Dixon-Coles goal models, calibration, fixture provenance, health checks, and a
+lightweight GUI for match forecasts.
+
+Repository: https://github.com/Perdomazo/ScoreRecord
+
+The public GUI is deliberately not a betting app: it does not show EV, Kelly,
+stake sizing, or "best bet" language in the forecast view.
 
 ## Current Scope
 
-Fase 0-1 is implemented as a lightweight Python package:
+ScoreRecord is implemented as a lightweight Python package designed for a small
+homeserver:
 
-- SQLite schema for teams, aliases, historical matches, tournament fixtures, predictions, recommendations, and metrics.
+- SQLite schema for teams, aliases, historical matches, fixtures, predictions,
+  forecast snapshots, odds snapshots, recommendations, metrics, and audit runs.
 - Cached ingestion for `openfootball/worldcup.json`.
 - Cached ingestion for `martj42/international_results`.
+- Football-Data CSV ingestion for covered club leagues.
+- odds-api.io fixture and odds snapshot ingestion.
+- Read-only SportMonks/API-Football probes for provider validation.
 - Seed team aliases for common naming mismatches.
-- Elo calculation over international results from 2018 onward.
+- Elo calculation over international and club match history.
 - Pre/post-match Elo history for leakage-free walk-forward features.
 - Basic run tracking and data quality logging.
+- League-scoped model artifacts for club forecast pilots.
+- Forecast-only GUI at `/` and `/today`, with operational checks in `/health`.
 - CLI entry points that can run locally or on the homeserver.
 
 ## Quick Start
@@ -63,14 +78,14 @@ scorerecord gui --host 127.0.0.1 --port 8765
 scorerecord db-summary
 ```
 
-The read-only GUI opens on a forecast-only World Cup view. It reads from
-`fixture`, `prediction`, `team`, and `model_artifact`, not from paper
-recommendations:
+The read-only GUI opens on a forecast-only landing page. It reads from `fixture`,
+`prediction`, `team`, and `model_artifact`, not from paper recommendations:
 
 ```text
-http://127.0.0.1:8765/today?date=2026-07-04
+http://127.0.0.1:8765/
+http://127.0.0.1:8765/today
+http://127.0.0.1:8765/health
 http://127.0.0.1:8765/match/<fixture_id>
-http://127.0.0.1:8765/audit
 ```
 
 The forecast view is deliberately `FORECAST_ONLY`: it shows calibrated goal-market
@@ -102,6 +117,10 @@ historical ROI harness, not a direct World Cup profitability proof.
 Mexico/Liga MX, MLS, Brazil Serie A, and Argentina Liga Profesional are wired as
 Football-Data `/new/*.csv` current feeds. Use one explicit `--season` label and audit
 coverage before treating them as anything more than forecasting/product candidates.
+Argentina and Brasileirao are configured as domestic pilot candidates. Champions
+League, Europa League, Libertadores, and Sudamericana are provider watchlist
+competitions until ScoreRecord has league-scoped historical artifacts for them.
+See `docs/data_sources.md` and `docs/match_evaluation_pipeline.md`.
 Use `--season` on historical backtests only when you intentionally want to evaluate one
 season; omit it to evaluate all loaded seasons inside `--from/--to`.
 Use `--min-score` and `--max-picks-per-day` to make the policy selective enough to

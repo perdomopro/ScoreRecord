@@ -1,0 +1,10 @@
+[Unit]
+Description=Run ScoreRecord club forecast refresh daily
+
+[Timer]
+OnCalendar=*-*-* 05:35:00
+Persistent=true
+RandomizedDelaySec=20m
+
+[Install]
+WantedBy=timers.target

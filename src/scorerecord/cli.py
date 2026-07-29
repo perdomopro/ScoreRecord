@@ -239,6 +239,9 @@ def main(argv: list[str] | None = None) -> int:
     fixtures_odds_io.add_argument(
         "--verify-league-slug", action="store_true", help="Fetch /leagues first to verify slug"
     )
+    fixtures_odds_io.add_argument(
+        "--dry-run", action="store_true", help="Do not write fixture changes"
+    )
 
     epl_pilot = subparsers.add_parser(
         "run-epl-pilot-refresh", help="Controlled daily refresh for EPL pilot."
@@ -261,7 +264,9 @@ def main(argv: list[str] | None = None) -> int:
         "run-club-pilot-refresh",
         help="Controlled daily refresh for a supported club forecast league.",
     )
-    club_pilot.add_argument("--league", required=True, help="EPL, LIGA_MX, or MLS")
+    club_pilot.add_argument(
+        "--league", required=True, help="Supported club forecast league code"
+    )
     club_pilot.add_argument("--sport", help="odds-api.io sport, defaults from league preset")
     club_pilot.add_argument("--league-slug", help="odds-api.io league slug override")
     club_pilot.add_argument("--competition", help="Display competition override")

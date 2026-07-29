@@ -97,6 +97,7 @@ Start timers when `.env` is ready:
 
 ```bash
 systemctl --user start scorerecord-gui.service
+systemctl --user start scorerecord-club-refresh.timer
 systemctl --user start scorerecord-odds.timer
 # Keep these stopped until the derived-closing and paper policy checks are reviewed:
 # systemctl --user start scorerecord-preplay-odds.timer
@@ -107,7 +108,8 @@ systemctl --user start scorerecord-weekly.timer
 
 Recommended schedule:
 
-- Read-only dashboard: `scorerecord-gui.service` on port `8765`
+- Forecast and health dashboard: `scorerecord-gui.service` on port `8765`
+- Daily club fixture/prediction refresh: `scorerecord-club-refresh.timer`
 - Hourly odds: `scorerecord-odds.timer`
 - Pre-play raw odds snapshots: use only after confirming the service no longer writes capture-time `is_closing=1`; closing is derived from complete `odds_snapshots` before kickoff.
 - Daily predictions + paper recommendations: keep stopped until `db-health`, `model-manifest`, `compute-edge --dry-run`, and `recommend --dry-run` are reviewed after deployment.
@@ -118,6 +120,7 @@ Resource limits are deliberately conservative:
 
 - `MemoryMax=700M` for odds/postmatch jobs.
 - `MemoryMax=350M` for the read-only GUI.
+- `MemoryMax=450M` for the daily club forecast refresh.
 - `MemoryMax=900M` for modeling/monitoring jobs.
 - `OMP_NUM_THREADS=2`, `OPENBLAS_NUM_THREADS=2`.
 - `Nice=10`, `IOSchedulingClass=idle`.
@@ -126,6 +129,7 @@ Inspect logs:
 
 ```bash
 journalctl --user -u scorerecord-daily.service -n 100 --no-pager
+journalctl --user -u scorerecord-club-refresh.service -n 100 --no-pager
 journalctl --user -u scorerecord-odds.service -n 100 --no-pager
 journalctl --user -u scorerecord-gui.service -n 100 --no-pager
 ```

@@ -30,6 +30,7 @@ cp deploy/systemd/*.service deploy/systemd/*.timer "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 systemctl --user enable scorerecord-gui.service
 systemctl --user enable scorerecord-odds.timer
+systemctl --user enable scorerecord-club-refresh.timer
 systemctl --user enable scorerecord-postmatch.timer
 systemctl --user enable scorerecord-weekly.timer
 loginctl enable-linger "$USER" >/dev/null 2>&1 || true
@@ -45,6 +46,7 @@ Next server-side steps:
    systemctl --user start scorerecord-gui.service
 5. Start conservative timers when ready:
    systemctl --user start scorerecord-odds.timer scorerecord-postmatch.timer scorerecord-weekly.timer
+   systemctl --user start scorerecord-club-refresh.timer
 6. Start preplay raw snapshots or daily recommendations only after reviewing db-health and dry-runs:
    systemctl --user start scorerecord-preplay-odds.timer
    systemctl --user start scorerecord-daily.timer

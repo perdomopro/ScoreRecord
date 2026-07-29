@@ -1,0 +1,16 @@
+[Unit]
+Description=ScoreRecord daily club forecast refresh
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/adrian/scorerecord
+EnvironmentFile=/home/adrian/scorerecord/.env
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+Environment="SCORERECORD_DAILY_CLUB_LEAGUES=LIGA_MX MLS EPL ARGENTINA BRASILEIRAO"
+Environment=SCORERECORD_DAILY_CLUB_MAX_REQUESTS=1
+MemoryMax=450M
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/bin/bash /home/adrian/scorerecord/scripts/run_daily_club_forecast.sh

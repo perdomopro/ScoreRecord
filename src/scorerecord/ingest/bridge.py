@@ -128,6 +128,50 @@ def bridge_club_history(
     for row in rows:
         unique_team_names.add(row["home_team"])
         unique_team_names.add(row["away_team"])
+
+    for team_name in unique_team_names:
+        canonical = normalize_name(team_name)
+        if not canonical:
+            continue
+
+        alias_key = normalize_key(canonical)
+        existing_alias_row = conn.execute(
+            """
+            SELECT ta.team_id, t.canonical
+            FROM team_alias ta
+            JOIN team t ON ta.team_id = t.team_id
+            WHERE ta.alias_key = ?
+            """,
+            (alias_key,),
+        ).fetchone()
+        if not existing_alias_row:
+            continue
+
+        existing_canonical = existing_alias_row["canonical"]
+        if existing_canonical != canonical and normalize_key(existing_canonical) != alias_key:
+            alias_collisions.add(f"{team_name} points to {existing_canonical}")
+
+    if alias_collisions:
+        return BridgeClubHistoryResult(
+            status="ALIAS_COLLISION",
+            source=source,
+            league=league,
+            from_season=from_season,
+            to_season=to_season,
+            dry_run=dry_run,
+            allow_create_teams=allow_create_teams,
+            historical_rows_seen=historical_rows_seen,
+            eligible_matches=historical_rows_seen - invalid_rows,
+            matches_inserted=0,
+            matches_updated=0,
+            matches_skipped_existing=0,
+            teams_created=0,
+            aliases_created=0,
+            missing_teams=[],
+            invalid_rows=invalid_rows,
+            alias_collisions=list(alias_collisions),
+            status_reason="Alias collisions detected",
+        )
         
     team_mapping: dict[str, int] = {}
     for team_name in unique_team_names:
@@ -152,6 +196,9 @@ def bridge_club_history(
         if existing_alias_row:
             existing_canonical = existing_alias_row["canonical"]
             if existing_canonical != canonical:
+                if normalize_key(existing_canonical) == alias_key:
+                    team_mapping[team_name] = int(existing_alias_row["team_id"])
+                    continue
                 # Check if this is an explicitly seeded alias. If team_name is in the DB but points to a DIFFERENT canonical, it's a collision
                 alias_collisions.add(f"{team_name} points to {existing_canonical}")
                 continue
