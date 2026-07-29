@@ -116,6 +116,65 @@ def _insert_forecast_quality(
     )
 
 
+def _insert_forecast_insight_inputs(conn: sqlite3.Connection, *, run_id: int) -> None:
+    conn.execute(
+        """
+        UPDATE fixture
+        SET league_code='EPL', competition='English Premier League'
+        WHERE fixture_id='m-forecast'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE model_artifact
+        SET
+          training_rows=1900,
+          details_json=?,
+          calibration_json=?
+        WHERE artifact_id='artifact-forecast-1'
+        """,
+        (
+            '{"training_policy":{"training_scope":"club","training_tournament":"EPL","calibrator_scope":"EPL"}}',
+            '{"coefficients":{"OU2.5":{"status":"CALIBRATED","calibrator_scope":"EPL"},"BTTS":{"status":"CALIBRATED","calibrator_scope":"EPL"}}}',
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO team_rating (team_id, rating_system, rating, as_of)
+        VALUES (1, 'elo', 1590, '2026-06-01')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO team_rating (team_id, rating_system, rating, as_of)
+        VALUES (2, 'elo', 1510, '2026-06-01')
+        """
+    )
+    for idx in range(120):
+        conn.execute(
+            """
+            INSERT INTO match_history (
+              source_match_id, date, home_id, away_id, home_score, away_score,
+              tournament, neutral
+            )
+            VALUES (?, ?, 1, 2, ?, ?, 'EPL', 0)
+            """,
+            (
+                f"epl-history-{idx}",
+                f"2025-01-{(idx % 28) + 1:02d}",
+                2 if idx % 3 else 1,
+                1 if idx % 2 else 2,
+            ),
+        )
+    _insert_forecast_quality(
+        conn,
+        run_id=run_id,
+        calibration_value=1,
+        ou_violations=0,
+        missing_elo_slots=0,
+    )
+
+
 def _insert_odds_snapshot(
     conn: sqlite3.Connection,
     *,
@@ -398,8 +457,8 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert data.fixtures[0].primary.selection == "over"
     assert "FORECAST_ONLY" in html
     assert "Pronosticos principales del modelo" in html
-    assert "Pronóstico recomendado del modelo" in html
-    assert "Pronóstico recomendado del modelo (BTTS)" in html
+    assert "Pronostico principal del modelo" in html
+    assert "Pronostico principal del modelo (BTTS)" in html
     assert 'data-signal="NO_SIGNAL"' in html
     assert html.count('data-signal="NO_SIGNAL"') >= 2
     assert "Sin senal clara" in html
@@ -410,6 +469,73 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert "BTTS: Si 50.10%" in html
     assert "Actionable Recommendations" not in html
     assert "Solo pronostico y cobertura informativa" in html
+
+
+def test_forecast_renders_quality_score_explanations_and_evidence() -> None:
+    conn = _conn()
+    run_id = _insert_forecast_fixture(conn)
+    _insert_forecast_insight_inputs(conn, run_id=run_id)
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+        league_filter="EPL",
+    )
+    html = render_today_forecast(
+        data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
+    detail_html = render_match_forecast(
+        data, "m-forecast", settings=Settings(db_path=Path(""), raw_dir=Path(""))
+    )
+
+    assert "Calidad de datos del pronostico" in html
+    assert "Rango orientativo" in html
+    assert "Promedio historico combinado" in html
+    assert "Health operativo" in html
+    assert "Provider fixtures" in html
+    assert "Factores principales" in detail_html
+    assert "Evidencia del modelo" in detail_html
+    assert "Training rows" in detail_html
+    assert "1900" in detail_html
+    assert "Calibrador" in detail_html
+    assert "EPL (CALIBRATED)" in detail_html
+    assert "Prediction run" in detail_html
+
+
+def test_forecast_explains_missing_prediction_rows() -> None:
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (1, 'Puebla', 'puebla')"
+    )
+    conn.execute(
+        "INSERT INTO team (team_id, canonical, canonical_key) VALUES (2, 'Chivas', 'chivas')"
+    )
+    conn.execute(
+        """
+        INSERT INTO fixture (
+          fixture_id, league_code, competition, kickoff_utc, home_id, away_id
+        )
+        VALUES (
+          'missing-prediction', 'LIGA_MX', 'Liga MX',
+          '2026-08-01T01:00:00+00:00', 1, 2
+        )
+        """
+    )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-31",
+        now_utc=datetime(2026, 7, 31, 12, 0, tzinfo=UTC),
+        view_mode="all",
+        league_filter="LIGA_MX",
+    )
+    html = render_today_forecast(
+        data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
+
+    assert "No se genero pronostico" in html
+    assert "sin filas de prediction para este fixture" in html
 
 
 def test_forecast_signal_strength_marks_ou25_moderate() -> None:
@@ -438,7 +564,7 @@ def test_forecast_signal_strength_marks_ou25_moderate() -> None:
     assert data.fixtures[0].primary.selection == "over"
     assert "OU2.5: Over 59.00%" in html
     assert 'data-signal="MODERATE"' in html
-    assert "Tendencia moderada" in html
+    assert "Senal moderada" in html
 
 
 def test_forecast_quality_panel_renders_ok_and_warn() -> None:

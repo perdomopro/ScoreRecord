@@ -26,7 +26,7 @@ from scorerecord.odds_horizons import (
     load_fixture_odds_horizon_coverage,
 )
 from scorerecord.settings import Settings
-from scorerecord.time_utils import parse_kickoff_utc
+from scorerecord.time_utils import parse_datetime_utc, parse_kickoff_utc
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -87,6 +87,15 @@ class ForecastMarket:
     model_version: str
     artifact_id: str | None
     market_validation_status: str
+    prediction_run_id: int | None = None
+    generated_utc: str | None = None
+    artifact_created_utc: str | None = None
+    trained_until: str | None = None
+    training_rows: int | None = None
+    training_scope: str | None = None
+    training_tournament: str | None = None
+    calibrator_scope: str | None = None
+    calibrator_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +109,31 @@ class ForecastSnapshotView:
     result_label: int | None
     correct: int | None
     settled_utc: str | None
+
+
+@dataclass(frozen=True)
+class TeamHistorySummary:
+    matches: int
+    avg_total_goals: float | None
+    btts_rate: float | None
+
+
+@dataclass(frozen=True)
+class ForecastInsight:
+    quality_score: int
+    quality_label: str
+    quality_css_class: str
+    uncertainty_points: float
+    explanation_items: list[str]
+    no_prediction_reasons: list[str]
+    evidence_items: list[tuple[str, str]]
+
+
+@dataclass(frozen=True)
+class SystemHealthItem:
+    label: str
+    status: str
+    detail: str
 
 
 @dataclass(frozen=True)
@@ -130,6 +164,7 @@ class ForecastFixture:
     snapshots: list[ForecastSnapshotView]
     odds_coverage: list[OddsMarketCoverage]
     odds_horizons: list[OddsHorizonCoverage]
+    insight: ForecastInsight
     paper_picks: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -161,6 +196,7 @@ class ForecastData:
     artifact_id: str | None
     market_validation_status: str
     quality_items: list[ForecastQualityItem]
+    system_health_items: list[SystemHealthItem]
     empty_state: str | None
     view_mode: str = "all"
     league_filter: str = "ALL"
@@ -317,6 +353,9 @@ def load_forecast_data(
     prediction_rows = _forecast_prediction_rows(conn, fixture_ids=fixture_ids)
     predictions_by_fixture = _group_forecast_predictions(prediction_rows)
     quality_items = forecast_quality_items(conn, latest_run_id)
+    system_health_items = _system_health_items(conn, latest_run_id, quality_items, now)
+    team_ratings = _latest_elo_by_team(conn, _team_ids_from_fixture_rows(rows))
+    team_history = _team_history_by_scope(conn, rows)
     odds_coverage_by_fixture: dict[str, list[OddsMarketCoverage]] = {}
     odds_horizons_by_fixture: dict[str, list[OddsHorizonCoverage]] = {}
     if fixture_id is not None:
@@ -357,6 +396,8 @@ def load_forecast_data(
             odds_coverage_by_fixture.get(str(row["fixture_id"]), []),
             odds_horizons_by_fixture.get(str(row["fixture_id"]), []),
             paper_picks_by_fixture.get(str(row["fixture_id"]), []),
+            team_ratings=team_ratings,
+            team_history=team_history,
             display_tz=display_tz,
             selected_date=selected_date if fixture_id is None else None,
             now_utc=now,
@@ -426,6 +467,7 @@ def load_forecast_data(
         artifact_id=artifact_id,
         market_validation_status=validation_status,
         quality_items=quality_items,
+        system_health_items=system_health_items,
         empty_state=empty_state,
         view_mode=view_mode,
         league_filter=league_filter,
@@ -493,6 +535,7 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
     {_recreational_warning_banner(settings)}
     {_forecast_warning_banner(data)}
     {_forecast_quality_panel(data)}
+    {_system_health_panel(data)}
     {_forecast_stats(data)}
     {league_nav}
     {league_banner}
@@ -603,6 +646,7 @@ def render_match_forecast(data: ForecastData, fixture_id: str, *, settings: Sett
     {_recreational_warning_banner(settings)}
     {_forecast_warning_banner(data)}
     {_forecast_quality_panel(data)}
+    {_system_health_panel(data)}
     {content}
   </main>
 </body>
@@ -825,7 +869,14 @@ def _forecast_prediction_rows(
           p.prob,
           p.fair_odds,
           p.model_version,
-          COALESCE(ma.market_validation_status, 'NOT_TESTED') AS market_validation_status
+          p.run_id AS prediction_run_id,
+          p.generated_utc,
+          COALESCE(ma.market_validation_status, 'NOT_TESTED') AS market_validation_status,
+          ma.created_utc AS artifact_created_utc,
+          ma.trained_until,
+          ma.training_rows,
+          ma.details_json,
+          ma.calibration_json
         FROM prediction p
         JOIN latest_fixture_run latest
           ON latest.fixture_id = p.fixture_id
@@ -904,6 +955,264 @@ def _forecast_fixture_rows(
     ).fetchall()
 
 
+def _team_ids_from_fixture_rows(rows: list[sqlite3.Row]) -> list[int]:
+    team_ids: set[int] = set()
+    for row in rows:
+        for column in ("home_id", "away_id"):
+            if row[column] is not None:
+                team_ids.add(int(row[column]))
+    return sorted(team_ids)
+
+
+def _latest_elo_by_team(
+    conn: sqlite3.Connection,
+    team_ids: list[int],
+) -> dict[int, tuple[float, str]]:
+    if not team_ids:
+        return {}
+    placeholders = ",".join("?" for _ in team_ids)
+    rows = conn.execute(
+        f"""
+        WITH latest AS (
+          SELECT team_id, MAX(as_of) AS as_of
+          FROM team_rating
+          WHERE rating_system = 'elo'
+            AND team_id IN ({placeholders})
+          GROUP BY team_id
+        )
+        SELECT tr.team_id, tr.rating, tr.as_of
+        FROM team_rating tr
+        JOIN latest
+          ON latest.team_id = tr.team_id
+         AND latest.as_of = tr.as_of
+        WHERE tr.rating_system = 'elo'
+        """,
+        tuple(team_ids),
+    ).fetchall()
+    return {
+        int(row["team_id"]): (float(row["rating"]), str(row["as_of"]))
+        for row in rows
+    }
+
+
+def _team_history_by_scope(
+    conn: sqlite3.Connection,
+    fixture_rows: list[sqlite3.Row],
+) -> dict[tuple[str, int], TeamHistorySummary]:
+    scopes = sorted({str(row["league_code"]) for row in fixture_rows if row["league_code"]})
+    if not scopes:
+        return {}
+    placeholders = ",".join("?" for _ in scopes)
+    rows = conn.execute(
+        f"""
+        WITH team_matches AS (
+          SELECT
+            tournament,
+            home_id AS team_id,
+            home_score + away_score AS total_goals,
+            CASE WHEN home_score > 0 AND away_score > 0 THEN 1.0 ELSE 0.0 END AS btts
+          FROM match_history
+          WHERE tournament IN ({placeholders})
+          UNION ALL
+          SELECT
+            tournament,
+            away_id AS team_id,
+            home_score + away_score AS total_goals,
+            CASE WHEN home_score > 0 AND away_score > 0 THEN 1.0 ELSE 0.0 END AS btts
+          FROM match_history
+          WHERE tournament IN ({placeholders})
+        )
+        SELECT
+          tournament,
+          team_id,
+          COUNT(*) AS matches,
+          AVG(total_goals) AS avg_total_goals,
+          AVG(btts) AS btts_rate
+        FROM team_matches
+        GROUP BY tournament, team_id
+        """,
+        (*scopes, *scopes),
+    ).fetchall()
+    return {
+        (str(row["tournament"]), int(row["team_id"])): TeamHistorySummary(
+            matches=int(row["matches"] or 0),
+            avg_total_goals=(
+                float(row["avg_total_goals"])
+                if row["avg_total_goals"] is not None
+                else None
+            ),
+            btts_rate=(
+                float(row["btts_rate"])
+                if row["btts_rate"] is not None
+                else None
+            ),
+        )
+        for row in rows
+    }
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _str_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _system_health_items(
+    conn: sqlite3.Connection,
+    latest_run_id: int | None,
+    quality_items: list[ForecastQualityItem],
+    now_utc: datetime,
+) -> list[SystemHealthItem]:
+    quality_by_label = {item.label: item for item in quality_items}
+    refresh_run = _latest_run_by_jobs(
+        conn,
+        ["run-club-pilot-refresh", "run-epl-pilot-refresh", "predict-fixtures"],
+    )
+    provider_run = _latest_run_by_jobs(
+        conn,
+        ["run-club-pilot-refresh", "run-epl-pilot-refresh", "ingest-fixtures-odds-api"],
+    )
+    readiness = _forecast_readiness_health(conn, now_utc)
+    calibration = quality_by_label.get("Calibration")
+    elo = quality_by_label.get("Elo coverage")
+    return [
+        SystemHealthItem("DB", "OK", "SQLite readable"),
+        SystemHealthItem("GUI", "OK", "request served"),
+        _run_health_item("Refresh", refresh_run, now_utc, max_age_hours=30),
+        SystemHealthItem(
+            "Elo",
+            elo.status if elo else "WARN",
+            elo.detail if elo else "missing quality row",
+        ),
+        SystemHealthItem(
+            "Calibrators",
+            calibration.status if calibration else "WARN",
+            calibration.detail if calibration else "missing quality row",
+        ),
+        readiness,
+        _run_health_item("Provider fixtures", provider_run, now_utc, max_age_hours=30),
+        SystemHealthItem(
+            "Prediction run",
+            "OK" if latest_run_id is not None else "WARN",
+            f"run {latest_run_id}" if latest_run_id is not None else "no run",
+        ),
+    ]
+
+
+def _latest_run_by_jobs(
+    conn: sqlite3.Connection,
+    job_names: list[str],
+) -> sqlite3.Row | None:
+    if not job_names:
+        return None
+    placeholders = ",".join("?" for _ in job_names)
+    return conn.execute(
+        f"""
+        SELECT run_id, job_name, status, started_utc, finished_utc
+        FROM ingest_run
+        WHERE job_name IN ({placeholders})
+        ORDER BY run_id DESC
+        LIMIT 1
+        """,
+        tuple(job_names),
+    ).fetchone()
+
+
+def _run_health_item(
+    label: str,
+    row: sqlite3.Row | None,
+    now_utc: datetime,
+    *,
+    max_age_hours: float,
+) -> SystemHealthItem:
+    if row is None:
+        return SystemHealthItem(label, "WARN", "no run found")
+    status = str(row["status"] or "")
+    finished = parse_datetime_utc(row["finished_utc"] or row["started_utc"])
+    age = _age_label(finished, now_utc)
+    if status == "succeeded" and _within_age(finished, now_utc, max_age_hours):
+        health = "OK"
+    else:
+        health = "WARN"
+    return SystemHealthItem(
+        label,
+        health,
+        f"{row['job_name']} run {row['run_id']} {status}; {age}",
+    )
+
+
+def _forecast_readiness_health(
+    conn: sqlite3.Connection,
+    now_utc: datetime,
+) -> SystemHealthItem:
+    placeholders = ",".join("?" for _ in GUI_LEAGUE_ORDER)
+    row = conn.execute(
+        f"""
+        SELECT
+          COUNT(*) AS future_fixtures,
+          SUM(CASE WHEN home_id IS NULL OR away_id IS NULL THEN 1 ELSE 0 END) AS unresolved,
+          SUM(CASE WHEN p.fixture_id IS NOT NULL THEN 1 ELSE 0 END) AS with_predictions
+        FROM fixture f
+        LEFT JOIN (SELECT DISTINCT fixture_id FROM prediction) p
+          ON p.fixture_id = f.fixture_id
+        WHERE f.league_code IN ({placeholders})
+          AND f.home_score IS NULL
+          AND f.away_score IS NULL
+          AND datetime(f.kickoff_utc) >= datetime(?)
+        """,
+        (*GUI_LEAGUE_ORDER, now_utc.isoformat()),
+    ).fetchone()
+    future = int(row["future_fixtures"] or 0) if row else 0
+    unresolved = int(row["unresolved"] or 0) if row else 0
+    predicted = int(row["with_predictions"] or 0) if row else 0
+    ok = future > 0 and unresolved == 0 and predicted == future
+    return SystemHealthItem(
+        "Readiness",
+        "OK" if ok else "WARN",
+        f"{predicted}/{future} fixtures predicted; {unresolved} unresolved",
+    )
+
+
+def _within_age(
+    timestamp: datetime | None,
+    now_utc: datetime,
+    max_age_hours: float,
+) -> bool:
+    if timestamp is None:
+        return False
+    delta = now_utc - timestamp
+    return 0 <= delta.total_seconds() <= max_age_hours * 3600
+
+
+def _age_label(timestamp: datetime | None, now_utc: datetime) -> str:
+    if timestamp is None:
+        return "sin timestamp"
+    delta_seconds = max(0, int((now_utc - timestamp).total_seconds()))
+    minutes = delta_seconds // 60
+    if minutes < 1:
+        return "hace menos de 1 min"
+    if minutes < 60:
+        return f"hace {minutes} min"
+    hours = minutes // 60
+    if hours < 48:
+        return f"hace {hours} h"
+    days = hours // 24
+    return f"hace {days} dias"
+
+
 def _upcoming_fixture_links(
     rows: list[sqlite3.Row],
     *,
@@ -945,6 +1254,12 @@ def _group_forecast_predictions(
     grouped: dict[str, list[ForecastMarket]] = {}
     for row in rows:
         fixture_id = str(row["fixture_id"])
+        details = _json_dict(row["details_json"])
+        training_policy = _json_dict(details.get("training_policy"))
+        calibration = _json_dict(row["calibration_json"])
+        coefficient = _json_dict(
+            _json_dict(calibration.get("coefficients")).get(str(row["market"]))
+        )
         grouped.setdefault(fixture_id, []).append(
             ForecastMarket(
                 market=str(row["market"]),
@@ -954,6 +1269,31 @@ def _group_forecast_predictions(
                 model_version=str(row["model_version"]),
                 artifact_id=row["artifact_id"],
                 market_validation_status=str(row["market_validation_status"] or "NOT_TESTED"),
+                prediction_run_id=(
+                    int(row["prediction_run_id"])
+                    if row["prediction_run_id"] is not None
+                    else None
+                ),
+                generated_utc=str(row["generated_utc"]) if row["generated_utc"] else None,
+                artifact_created_utc=(
+                    str(row["artifact_created_utc"])
+                    if row["artifact_created_utc"]
+                    else None
+                ),
+                trained_until=str(row["trained_until"]) if row["trained_until"] else None,
+                training_rows=(
+                    int(row["training_rows"]) if row["training_rows"] is not None else None
+                ),
+                training_scope=_str_or_none(training_policy.get("training_scope")),
+                training_tournament=_str_or_none(
+                    training_policy.get("training_tournament")
+                    or training_policy.get("league_code")
+                ),
+                calibrator_scope=_str_or_none(
+                    coefficient.get("calibrator_scope")
+                    or training_policy.get("calibrator_scope")
+                ),
+                calibrator_status=_str_or_none(coefficient.get("status")),
             )
         )
     return grouped
@@ -990,6 +1330,8 @@ def _forecast_fixture_from_row(
     odds_horizons: list[OddsHorizonCoverage],
     paper_picks: list[dict[str, Any]],
     *,
+    team_ratings: dict[int, tuple[float, str]],
+    team_history: dict[tuple[str, int], TeamHistorySummary],
     display_tz: ZoneInfo,
     selected_date: str | None,
     now_utc: datetime,
@@ -1014,6 +1356,17 @@ def _forecast_fixture_from_row(
         has_predictions=bool(predictions),
         monotonicity_ok=monotonicity_ok,
         has_primary_forecast=bool(primary_markets),
+    )
+    insight = _forecast_insight(
+        row,
+        predictions=predictions,
+        visible_markets=visible_markets,
+        primary_markets=primary_markets,
+        is_resolved=is_resolved,
+        is_started=is_started,
+        monotonicity_ok=monotonicity_ok,
+        team_ratings=team_ratings,
+        team_history=team_history,
     )
     return ForecastFixture(
         fixture_id=str(row["fixture_id"]),
@@ -1044,8 +1397,304 @@ def _forecast_fixture_from_row(
         snapshots=snapshots,
         odds_coverage=odds_coverage,
         odds_horizons=odds_horizons,
+        insight=insight,
         paper_picks=paper_picks,
     )
+
+
+def _forecast_insight(
+    row: sqlite3.Row,
+    *,
+    predictions: list[ForecastMarket],
+    visible_markets: list[ForecastMarket],
+    primary_markets: list[ForecastMarket],
+    is_resolved: bool,
+    is_started: bool,
+    monotonicity_ok: bool,
+    team_ratings: dict[int, tuple[float, str]],
+    team_history: dict[tuple[str, int], TeamHistorySummary],
+) -> ForecastInsight:
+    home_id = int(row["home_id"]) if row["home_id"] is not None else None
+    away_id = int(row["away_id"]) if row["away_id"] is not None else None
+    scope = str(row["league_code"] or "")
+    home_rating = team_ratings.get(home_id) if home_id is not None else None
+    away_rating = team_ratings.get(away_id) if away_id is not None else None
+    home_history = (
+        team_history.get((scope, home_id)) if home_id is not None and scope else None
+    )
+    away_history = (
+        team_history.get((scope, away_id)) if away_id is not None and scope else None
+    )
+    base_market = (
+        primary_markets[0]
+        if primary_markets
+        else (visible_markets[0] if visible_markets else None)
+    )
+    no_prediction_reasons = _no_prediction_reasons(
+        predictions=predictions,
+        is_resolved=is_resolved,
+        is_started=is_started,
+        monotonicity_ok=monotonicity_ok,
+        primary_markets=primary_markets,
+        home_id=home_id,
+        away_id=away_id,
+    )
+    quality_score, quality_label, quality_css = _prediction_quality_score(
+        primary_markets=primary_markets,
+        monotonicity_ok=monotonicity_ok,
+        home_rating=home_rating,
+        away_rating=away_rating,
+        home_history=home_history,
+        away_history=away_history,
+    )
+    uncertainty_points = _heuristic_uncertainty_points(
+        primary_markets=primary_markets,
+        home_rating=home_rating,
+        away_rating=away_rating,
+        home_history=home_history,
+        away_history=away_history,
+        monotonicity_ok=monotonicity_ok,
+    )
+    return ForecastInsight(
+        quality_score=quality_score,
+        quality_label=quality_label,
+        quality_css_class=quality_css,
+        uncertainty_points=uncertainty_points,
+        explanation_items=_explanation_items(
+            row,
+            primary_markets=primary_markets,
+            base_market=base_market,
+            home_rating=home_rating,
+            away_rating=away_rating,
+            home_history=home_history,
+            away_history=away_history,
+        ),
+        no_prediction_reasons=no_prediction_reasons,
+        evidence_items=_evidence_items(
+            base_market=base_market,
+            home_rating=home_rating,
+            away_rating=away_rating,
+            home_history=home_history,
+            away_history=away_history,
+        ),
+    )
+
+
+def _no_prediction_reasons(
+    *,
+    predictions: list[ForecastMarket],
+    is_resolved: bool,
+    is_started: bool,
+    monotonicity_ok: bool,
+    primary_markets: list[ForecastMarket],
+    home_id: int | None,
+    away_id: int | None,
+) -> list[str]:
+    reasons: list[str] = []
+    if not is_resolved:
+        if home_id is None:
+            reasons.append("equipo local sin resolver")
+        if away_id is None:
+            reasons.append("equipo visitante sin resolver")
+    if is_started:
+        reasons.append("kickoff ya paso")
+    if not predictions:
+        reasons.append("sin filas de prediction para este fixture")
+    if predictions and not monotonicity_ok:
+        reasons.append("OU1.5/OU2.5/OU3.5 no pasan monotonicidad")
+    if predictions and monotonicity_ok and not primary_markets and not is_started:
+        reasons.append("sin OU2.5 o BTTS principal disponible")
+    return reasons
+
+
+def _prediction_quality_score(
+    *,
+    primary_markets: list[ForecastMarket],
+    monotonicity_ok: bool,
+    home_rating: tuple[float, str] | None,
+    away_rating: tuple[float, str] | None,
+    home_history: TeamHistorySummary | None,
+    away_history: TeamHistorySummary | None,
+) -> tuple[int, str, str]:
+    if not primary_markets:
+        return 0, "Sin score", "quality-score-empty"
+
+    signal_delta = max(abs(market.prob - 0.5) for market in primary_markets)
+    signal_points = min(25.0, signal_delta / 0.20 * 25.0)
+    min_matches = min(
+        home_history.matches if home_history else 0,
+        away_history.matches if away_history else 0,
+    )
+    coverage_points = _coverage_points(min_matches)
+    elo_points = 20.0 if home_rating and away_rating else 10.0 if home_rating or away_rating else 0.0
+    calibrator_points = _calibrator_points(primary_markets)
+    monotonicity_points = 10.0 if monotonicity_ok else 0.0
+    score = int(
+        round(
+            signal_points
+            + coverage_points
+            + elo_points
+            + calibrator_points
+            + monotonicity_points
+        )
+    )
+    score = max(0, min(100, score))
+    if score >= 80:
+        return score, "Alta calidad de datos", "quality-score-high"
+    if score >= 65:
+        return score, "Buena calidad de datos", "quality-score-good"
+    if score >= 45:
+        return score, "Calidad limitada", "quality-score-limited"
+    return score, "Calidad baja", "quality-score-low"
+
+
+def _coverage_points(min_matches: int) -> float:
+    if min_matches >= 200:
+        return 25.0
+    if min_matches >= 100:
+        return 20.0
+    if min_matches >= 50:
+        return 14.0
+    if min_matches > 0:
+        return 8.0
+    return 0.0
+
+
+def _calibrator_points(markets: list[ForecastMarket]) -> float:
+    statuses = {str(market.calibrator_status or "").upper() for market in markets}
+    if statuses and statuses <= {"CALIBRATED"}:
+        return 20.0
+    if "CALIBRATED" in statuses:
+        return 14.0
+    if "CALIBRATOR_INSUFFICIENT_DATA" in statuses:
+        return 8.0
+    return 0.0
+
+
+def _heuristic_uncertainty_points(
+    *,
+    primary_markets: list[ForecastMarket],
+    home_rating: tuple[float, str] | None,
+    away_rating: tuple[float, str] | None,
+    home_history: TeamHistorySummary | None,
+    away_history: TeamHistorySummary | None,
+    monotonicity_ok: bool,
+) -> float:
+    points = 0.035
+    if primary_markets:
+        signal_delta = max(abs(market.prob - 0.5) for market in primary_markets)
+        if signal_delta < 0.03:
+            points += 0.020
+        elif signal_delta < 0.08:
+            points += 0.010
+    else:
+        points += 0.040
+
+    min_matches = min(
+        home_history.matches if home_history else 0,
+        away_history.matches if away_history else 0,
+    )
+    if min_matches <= 0:
+        points += 0.050
+    elif min_matches < 50:
+        points += 0.040
+    elif min_matches < 100:
+        points += 0.030
+    elif min_matches < 200:
+        points += 0.015
+
+    if not (home_rating and away_rating):
+        points += 0.030
+    if any((market.calibrator_status or "").upper() != "CALIBRATED" for market in primary_markets):
+        points += 0.025
+    if not monotonicity_ok:
+        points += 0.040
+    return min(0.14, max(0.03, points))
+
+
+def _explanation_items(
+    row: sqlite3.Row,
+    *,
+    primary_markets: list[ForecastMarket],
+    base_market: ForecastMarket | None,
+    home_rating: tuple[float, str] | None,
+    away_rating: tuple[float, str] | None,
+    home_history: TeamHistorySummary | None,
+    away_history: TeamHistorySummary | None,
+) -> list[str]:
+    items: list[str] = []
+    if base_market is not None:
+        items.append(f"Pronostico principal: {_forecast_diagnostic_label(base_market)}")
+    if home_rating and away_rating:
+        elo_diff = home_rating[0] - away_rating[0]
+        home = str(row["home"] or row["home_placeholder"] or "Local")
+        away = str(row["away"] or row["away_placeholder"] or "Visitante")
+        if abs(elo_diff) < 25:
+            items.append(f"Elo parejo: {elo_diff:+.0f} para {home}")
+        elif elo_diff > 0:
+            items.append(f"{home} llega con Elo {elo_diff:+.0f} sobre {away}")
+        else:
+            items.append(f"{away} llega con Elo {abs(elo_diff):+.0f} sobre {home}")
+    if home_history and away_history:
+        avg_goals = _mean_ignore_none(home_history.avg_total_goals, away_history.avg_total_goals)
+        btts_rate = _mean_ignore_none(home_history.btts_rate, away_history.btts_rate)
+        min_matches = min(home_history.matches, away_history.matches)
+        if avg_goals is not None:
+            items.append(f"Promedio historico combinado: {avg_goals:.2f} goles por partido")
+        if btts_rate is not None:
+            items.append(f"BTTS historico combinado: {_pct(btts_rate)}")
+        items.append(f"Cobertura historica minima por equipo: {min_matches} partidos")
+    if primary_markets:
+        scopes = sorted({market.calibrator_scope for market in primary_markets if market.calibrator_scope})
+        statuses = sorted({market.calibrator_status for market in primary_markets if market.calibrator_status})
+        if scopes or statuses:
+            items.append(
+                "Calibrador: "
+                + ("/".join(scopes) if scopes else "sin scope")
+                + " "
+                + ("/".join(statuses) if statuses else "sin estado")
+            )
+    return items[:5]
+
+
+def _evidence_items(
+    *,
+    base_market: ForecastMarket | None,
+    home_rating: tuple[float, str] | None,
+    away_rating: tuple[float, str] | None,
+    home_history: TeamHistorySummary | None,
+    away_history: TeamHistorySummary | None,
+) -> list[tuple[str, str]]:
+    if base_market is None:
+        return [("Estado", "Sin prediction principal")]
+    training_scope = base_market.training_tournament or base_market.training_scope or "n/a"
+    calibrator = (
+        f"{base_market.calibrator_scope or 'n/a'}"
+        f" ({base_market.calibrator_status or 'sin estado'})"
+    )
+    evidence = [
+        ("Modelo", base_market.model_version or "n/a"),
+        ("Artifact", _short_id(base_market.artifact_id) or "n/a"),
+        ("Prediction run", str(base_market.prediction_run_id or "n/a")),
+        ("Generado", base_market.generated_utc or "n/a"),
+        ("Training", training_scope),
+        ("Training rows", str(base_market.training_rows or "n/a")),
+        ("Trained until", base_market.trained_until or "n/a"),
+        ("Calibrador", calibrator),
+        ("Market validation", base_market.market_validation_status or "NOT_TESTED"),
+    ]
+    if home_rating and away_rating:
+        evidence.append(("Elo", f"local {home_rating[0]:.0f} / visitante {away_rating[0]:.0f}"))
+    if home_history and away_history:
+        evidence.append(("Historial equipos", f"{home_history.matches} / {away_history.matches} partidos"))
+    return evidence
+
+
+def _mean_ignore_none(*values: float | None) -> float | None:
+    clean = [value for value in values if value is not None]
+    if not clean:
+        return None
+    return sum(clean) / len(clean)
 
 
 def _ou_monotonicity_ok(markets: list[ForecastMarket]) -> bool:
@@ -1140,6 +1789,27 @@ def _forecast_quality_panel(data: ForecastData) -> str:
     """
 
 
+def _system_health_panel(data: ForecastData) -> str:
+    if not data.system_health_items:
+        return ""
+    rows = "".join(
+        f"""
+        <div class="quality-item {_quality_class(item.status)}">
+          <span>{_e(item.label)}</span>
+          <strong>{_e(item.status)}</strong>
+          <small>{_e(item.detail)}</small>
+        </div>
+        """
+        for item in data.system_health_items
+    )
+    return f"""
+    <section class="quality-panel system-health-panel" aria-label="System health">
+      <div class="panel-title">Health operativo</div>
+      {rows}
+    </section>
+    """
+
+
 def _forecast_stats(data: ForecastData) -> str:
     items = [
         ("Fecha", data.target_date),
@@ -1206,6 +1876,7 @@ def _render_paper_picks(paper_picks: list[dict[str, Any]]) -> str:
 
 def _forecast_card(fixture: ForecastFixture, view_mode: str = "all") -> str:
     primary = _primary_forecasts_block(fixture)
+    insight = _forecast_card_insight(fixture)
     markets = _forecast_market_chips(fixture.markets[:8])
     paper_html = _render_paper_picks(fixture.paper_picks) if view_mode in ("all", "paper") else ""
     return f"""
@@ -1219,6 +1890,7 @@ def _forecast_card(fixture: ForecastFixture, view_mode: str = "all") -> str:
         <span class="state {fixture.state}">{_e(fixture.state_label)}</span>
       </div>
       {primary}
+      {insight}
       {paper_html}
       <div class="market-chips">{markets}</div>
       <div class="card-actions">
@@ -1230,9 +1902,10 @@ def _forecast_card(fixture: ForecastFixture, view_mode: str = "all") -> str:
 
 def _primary_forecasts_block(fixture: ForecastFixture) -> str:
     if not fixture.primary_markets:
-        return f'<div class="primary-forecast empty">{_e(fixture.state_label)}</div>'
+        reasons = _no_prediction_reason_html(fixture)
+        return f'<div class="primary-forecast empty">{_e(fixture.state_label)}{reasons}</div>'
     items = "".join(
-        _primary_forecast_item(market)
+        _primary_forecast_item(market, fixture.insight.uncertainty_points)
         for market in fixture.primary_markets
     )
     return f"""
@@ -1243,18 +1916,59 @@ def _primary_forecasts_block(fixture: ForecastFixture) -> str:
     """
 
 
-def _primary_forecast_item(market: ForecastMarket) -> str:
+def _primary_forecast_item(market: ForecastMarket, uncertainty_points: float) -> str:
     signal = forecast_signal_strength(market.prob)
     return f"""
         <div class="primary-pick {signal.css_class}" data-signal="{_e(signal.code)}">
-          <span>Pronóstico recomendado del modelo ({_e(_forecast_family_label(market))})</span>
+          <span>Pronostico principal del modelo ({_e(_forecast_family_label(market))})</span>
           <strong>{_e(signal.label)}</strong>
           <em>{_e(_forecast_diagnostic_label(market))}</em>
+          <small>{_e(_uncertainty_label(market.prob, uncertainty_points))}</small>
           <small>
-            NO VALIDADO CONTRA MERCADO. Úsalo solo de forma recreativa.
+            NO VALIDADO CONTRA MERCADO. Usalo solo como pronostico recreativo.
           </small>
         </div>
         """
+
+
+def _forecast_card_insight(fixture: ForecastFixture) -> str:
+    insight = fixture.insight
+    if not fixture.primary_markets:
+        return ""
+    factors = "".join(
+        f"<li>{_e(item)}</li>"
+        for item in insight.explanation_items[:3]
+    )
+    return f"""
+    <section class="prediction-insight {_e(insight.quality_css_class)}">
+      <div class="insight-score">
+        <div>
+          <span>Calidad de datos del pronostico</span>
+          <strong>{insight.quality_score}%</strong>
+          <small>{_e(insight.quality_label)}</small>
+        </div>
+        <div class="quality-meter" aria-hidden="true">
+          <span style="width:{insight.quality_score}%"></span>
+        </div>
+      </div>
+      <ul class="insight-factors">{factors}</ul>
+    </section>
+    """
+
+
+def _no_prediction_reason_html(fixture: ForecastFixture) -> str:
+    if not fixture.insight.no_prediction_reasons:
+        return ""
+    items = "".join(
+        f"<li>{_e(reason)}</li>"
+        for reason in fixture.insight.no_prediction_reasons
+    )
+    return f"""
+      <div class="no-prediction-reasons">
+        <strong>No se genero pronostico</strong>
+        <ul>{items}</ul>
+      </div>
+    """
 
 
 def _forecast_diagnostic_label(market: ForecastMarket) -> str:
@@ -1265,6 +1979,12 @@ def _forecast_diagnostic_label(market: ForecastMarket) -> str:
         side = "Si" if market.selection == "yes" else "No"
         return f"BTTS: {side} {_pct(market.prob)}"
     return f"{market.market}: {market.selection} {_pct(market.prob)}"
+
+
+def _uncertainty_label(prob: float, uncertainty_points: float) -> str:
+    low = max(0.0, prob - uncertainty_points)
+    high = min(1.0, prob + uncertainty_points)
+    return f"Rango orientativo: {_pct(low)}-{_pct(high)}"
 
 
 def _signal_label(prob: float) -> str:
@@ -1278,6 +1998,8 @@ def _quality_class(status: str) -> str:
 
 def _match_detail(fixture: ForecastFixture, view_mode: str = "all", league: str = "ALL") -> str:
     snapshots = _forecast_snapshot_section(fixture)
+    explanations = _forecast_explanation_section(fixture)
+    evidence = _model_evidence_section(fixture)
     has_complete_odds = any(cov.status == "COVERAGE_OK" for cov in fixture.odds_coverage)
     if has_complete_odds:
         odds_section = f"""
@@ -1327,6 +2049,8 @@ informativa, no una señal de apuesta.</em>
         <span class="state {fixture.state}">{_e(fixture.state_label)}</span>
       </div>
       {snapshots}
+      {explanations}
+      {evidence}
       <table class="forecast-table">
         <thead>
           <tr>
@@ -1375,6 +2099,52 @@ def _forecast_snapshot_section(fixture: ForecastFixture) -> str:
         </thead>
         <tbody>{rows}</tbody>
       </table>
+    </section>
+    """
+
+
+def _forecast_explanation_section(fixture: ForecastFixture) -> str:
+    if not fixture.insight.explanation_items:
+        return ""
+    items = "".join(
+        f"<li>{_e(item)}</li>"
+        for item in fixture.insight.explanation_items
+    )
+    return f"""
+    <section class="explain-panel" aria-label="Factores principales">
+      <h2>Factores principales</h2>
+      <p>Reglas simples calculadas desde Elo, historial y calibrador; no usa IA ni cuotas.</p>
+      <ul>{items}</ul>
+    </section>
+    """
+
+
+def _model_evidence_section(fixture: ForecastFixture) -> str:
+    rows = "".join(
+        f"""
+        <tr>
+          <th>{_e(label)}</th>
+          <td>{_e(value)}</td>
+        </tr>
+        """
+        for label, value in fixture.insight.evidence_items
+    )
+    return f"""
+    <section class="evidence-panel" aria-label="Evidencia del modelo">
+      <h2>Evidencia del modelo</h2>
+      <div class="quality-summary {_e(fixture.insight.quality_css_class)}">
+        <div>
+          <span>Calidad de datos del pronostico</span>
+          <strong>{fixture.insight.quality_score}%</strong>
+          <small>{_e(fixture.insight.quality_label)}</small>
+        </div>
+        <div>
+          <span>Incertidumbre</span>
+          <strong>±{fixture.insight.uncertainty_points * 100:.1f} pp</strong>
+          <small>rango orientativo; no intervalo estadistico formal</small>
+        </div>
+      </div>
+      <table class="evidence-table">{rows}</table>
     </section>
     """
 
@@ -2298,6 +3068,14 @@ body.forecast-page {
 .quality-ok { border-left: 5px solid var(--green); }
 .quality-warn { border-left: 5px solid var(--amber); }
 .quality-not-tested { border-left: 5px solid var(--muted); }
+.quality-info { border-left: 5px solid var(--blue); }
+.system-health-panel .panel-title {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
 .legacy-alert {
   display: flex;
   flex-wrap: wrap;
@@ -2414,6 +3192,55 @@ body.forecast-page {
   background: #fbfcff;
 }
 .snapshot-panel h2 { font-size: 18px; margin: 0 0 4px; }
+.explain-panel, .evidence-panel {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.explain-panel { border-left: 5px solid var(--green); }
+.evidence-panel { border-left: 5px solid var(--blue); }
+.explain-panel h2, .evidence-panel h2 { font-size: 18px; margin: 0 0 4px; }
+.explain-panel ul { margin: 10px 0 0; padding-left: 20px; }
+.quality-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.quality-summary div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcfd;
+}
+.quality-summary span, .quality-summary small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.quality-summary strong {
+  display: block;
+  font-size: 22px;
+  margin: 4px 0;
+}
+.evidence-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+.evidence-table th, .evidence-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 9px;
+  text-align: left;
+}
+.evidence-table th {
+  width: 190px;
+  color: var(--muted);
+  font-size: 12px;
+  background: #fbfcfd;
+}
 .match-card { min-height: 260px; display: flex; flex-direction: column; gap: 12px; }
 .match-card.forecast { border-left: 6px solid var(--green); }
 .match-card.quiet { border-left: 6px solid var(--blue); }
@@ -2489,6 +3316,58 @@ p { color: var(--muted); margin: 4px 0 0; }
   font-size: 12px;
   margin-top: 7px;
 }
+.prediction-insight {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+.insight-score {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(120px, 170px);
+  gap: 10px;
+  align-items: center;
+}
+.insight-score span, .insight-score small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.insight-score strong {
+  display: block;
+  font-size: 22px;
+}
+.quality-meter {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.quality-meter span {
+  display: block;
+  height: 100%;
+  background: var(--green);
+}
+.quality-score-good .quality-meter span { background: var(--blue); }
+.quality-score-limited .quality-meter span { background: var(--amber); }
+.quality-score-low .quality-meter span,
+.quality-score-empty .quality-meter span { background: var(--muted); }
+.insight-factors {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.no-prediction-reasons {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.no-prediction-reasons strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+.no-prediction-reasons ul { margin: 4px 0 0; padding-left: 18px; }
 .market-chips { display: flex; gap: 7px; flex-wrap: wrap; }
 .chip {
   display: inline-flex;

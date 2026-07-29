@@ -998,3 +998,30 @@ Output:
   - `EPL`: 80 future fixtures, 0 unresolved, 1520 predictions inserted.
   - `multi-league-readiness-report --leagues LIGA_MX,MLS,EPL --json` returned
     `READY_FOR_PILOT` for all three leagues.
+
+### 2026-07-28 - Forecast quality, explanation, and operational health layer
+
+- Added a per-fixture forecast insight layer to the forecast-only GUI:
+  - `Calidad de datos del pronostico` score derived from signal distance,
+    historical team coverage, Elo availability, calibrator status, and OU
+    monotonicity.
+  - Heuristic uncertainty band shown as `Rango orientativo`; this is explicitly
+    not a formal statistical confidence interval.
+  - Rule-based explanation factors from Elo difference, combined historical
+    goals, BTTS history, minimum team coverage, and calibrator scope/status.
+- Added a model evidence section to `/match/<fixture_id>` showing model version,
+  artifact, prediction run, generated timestamp, training scope, training rows,
+  trained-until date, calibrator, market-validation status, Elo, and team-history
+  coverage.
+- Added no-prediction reasons for fixtures that are visible but cannot produce a
+  primary forecast, such as unresolved teams, missing prediction rows, kickoff
+  already passed, or failed OU monotonicity.
+- Added a compact `Health operativo` panel covering DB, GUI, refresh recency,
+  Elo, calibrators, readiness, provider-fixture refresh, and current prediction
+  run.
+- Refined forecast signal labels from generic "tendencia" wording to explicit
+  `Sin senal clara`, `Senal debil`, `Senal moderada`, `Senal fuerte`, and
+  `Senal muy fuerte`, while keeping internal signal codes stable for snapshots.
+- Deferred real performance dashboard, weekly drift detector, and permanent
+  benchmark UI until forecast snapshots/results provide enough settled forward
+  evidence.

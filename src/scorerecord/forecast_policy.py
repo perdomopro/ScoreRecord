@@ -52,10 +52,12 @@ def signal_strength(prob: float) -> SignalStrength:
     if delta < 0.03:
         return SignalStrength(SIGNAL_NO_SIGNAL, "Sin senal clara", "signal-no-signal")
     if delta < 0.08:
-        return SignalStrength(SIGNAL_LEAN, "Tendencia leve", "signal-lean")
+        return SignalStrength(SIGNAL_LEAN, "Senal debil", "signal-lean")
     if delta < 0.15:
-        return SignalStrength(SIGNAL_MODERATE, "Tendencia moderada", "signal-moderate")
-    return SignalStrength(SIGNAL_STRONG, "Senal fuerte", "signal-strong")
+        return SignalStrength(SIGNAL_MODERATE, "Senal moderada", "signal-moderate")
+    if delta < 0.20:
+        return SignalStrength(SIGNAL_STRONG, "Senal fuerte", "signal-strong")
+    return SignalStrength(SIGNAL_STRONG, "Senal muy fuerte", "signal-strong")
 
 
 def _market_rank(market: str) -> int:

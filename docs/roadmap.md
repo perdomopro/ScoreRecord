@@ -534,6 +534,21 @@ Objective: Expand ScoreRecord from a single World Cup tournament to a fully auto
   - Homeserver validation on 2026-07-28: `LIGA_MX`, `MLS`, and `EPL` all reached
     `READY_FOR_PILOT` with future fixtures, zero unresolved fixtures, ratings
     coverage, and fresh prediction rows.
+  - Forecast GUI now includes per-fixture data-quality score, heuristic
+    uncertainty band, rule-based explanation factors, model evidence, explicit
+    no-prediction reasons, and a compact operational health panel.
+
+### Phase 13.5 - Forward evidence and monitoring (NEXT)
+- Accumulate forecast snapshots and settled outcomes before claiming real
+  performance.
+- Build a performance page from `forecast_snapshot`/`prediction_result` with
+  accuracy, Brier, logloss, calibration, skipped fixtures, and reasons by league
+  and market.
+- Add drift monitoring only after there is a stable baseline distribution per
+  league/market. The detector should compare weekly prediction distributions,
+  Elo distribution, calibrator status, and no-prediction rates.
+- Keep benchmark/performance labels separate from betting value. No ROI/CLV
+  claims without real captured odds and forward settlement.
 
 ### Future 13.X
 - Generate predictions for all supported leagues (requires model ratings).
