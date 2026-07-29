@@ -38,8 +38,8 @@ Current catalog-backed league slugs:
 | `LIGA_MX` | Liga MX | `mexico-liga-mx-apertura` | Active pilot |
 | `MLS` | MLS | `usa-mls` | Active pilot |
 | `EPL` | Premier League | `england-premier-league` | Active pilot |
-| `ARGENTINA` | Argentina | `argentina-primera-lpf-clausura` | Domestic pilot candidate |
-| `BRASILEIRAO` | Brasileirao | `brazil-brasileiro-serie-a` | Domestic pilot candidate |
+| `ARGENTINA` | Argentina | `argentina-primera-lpf-clausura` | Active pilot |
+| `BRASILEIRAO` | Brasileirao | `brazil-brasileiro-serie-a` | Active pilot |
 | `CHAMPIONS_LEAGUE` | Champions League | `international-clubs-uefa-champions-league-qualification` | Provider watchlist only |
 | `EUROPA_LEAGUE` | Europa League | `international-clubs-uefa-europa-league-qualification` | Provider watchlist only |
 | `LIBERTADORES` | Libertadores | `international-clubs-conmebol-libertadores-knockout-stage` | Provider watchlist only |
@@ -50,6 +50,12 @@ Guardrail:
 Do not surface a league as a forecast pilot until it has historical rows, bridged
 `match_history`, resolved future fixtures, Elo coverage, and league-scoped
 `model_artifact` provenance.
+
+As of the 2026-07-29 homeserver validation, `ARGENTINA` and `BRASILEIRAO`
+passed this checklist for forecast-only GUI use. Champions League, Europa
+League, Libertadores, and Sudamericana remain provider watchlist only because
+they do not yet have explicit league-scoped history/artifact policy in
+ScoreRecord.
 
 ## SportMonks
 

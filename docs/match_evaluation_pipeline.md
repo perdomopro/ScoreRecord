@@ -89,3 +89,21 @@ Recommended minimal cadence on the homeserver:
 Daily refresh is enough for fixture discovery because odds-api.io returns many
 pending events beyond the next three days. Hourly polling should be reserved for
 odds freshness, not full model rebuilds.
+
+## Active forecast leagues
+
+As of the 2026-07-29 homeserver validation, the forecast-only GUI is backed by
+league-scoped refreshes for:
+
+| League code | GUI label | Status |
+| --- | --- | --- |
+| `LIGA_MX` | Liga MX | Active forecast pilot |
+| `MLS` | MLS | Active forecast pilot |
+| `EPL` | Premier League | Active forecast pilot |
+| `ARGENTINA` | Argentina | Active forecast pilot |
+| `BRASILEIRAO` | Brasileirao | Active forecast pilot |
+
+Continental competitions such as Champions League, Europa League, Libertadores,
+and Sudamericana are provider-watchlist competitions only until ScoreRecord has
+explicit historical scope, artifact policy, alias coverage, and readiness gates
+for each one.

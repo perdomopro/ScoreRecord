@@ -4,7 +4,7 @@ Purpose: keep the project decomposable into small, safe increments. Each phase h
 objective, technical work, exit criteria, dependencies, and run-sized increments. Do not
 advance a phase as trusted until the previous phase exit criteria are actually met.
 
-## Current State - 2026-07-28
+## Current State - 2026-07-29
 
 | Phase | State |
 | --- | --- |
@@ -22,7 +22,7 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 7 - Independent evaluation | Bypassed. Model rejected for independent value. |
 | 8 - Market-anchored benchmark | Active path. Residual modeling. |
 | 9 | Pending. |
-| 13 - Daily multi-league forecast | EPL pilot hardening active; artifact scope separation implemented locally. |
+| 13 - Daily multi-league forecast | Active for Liga MX, MLS, EPL, Argentina, and Brasileirao; daily timer enabled. |
 
 Open loops that remain after the remote gate:
 
@@ -49,6 +49,14 @@ Open loops that remain after the remote gate:
 - Local Phase 13.4.2 hardening on 2026-07-28: `compileall` passed, full pytest
   passed `241 passed`, targeted ruff over touched files passed, and
   `git diff --check` passed. Full-repo ruff still fails with legacy findings.
+- Phase 13.4.2 production audit on 2026-07-29 returned `PASSED`,
+  `CRITICAL=None`, and `ERROR=None`; only warning is the expected legacy
+  World Cup artifact policy metadata.
+- Daily multileague club refresh on 2026-07-29 returned `OK` for `LIGA_MX`,
+  `MLS`, `EPL`, `ARGENTINA`, and `BRASILEIRAO`, with `unresolved_fixtures=0`
+  for all five leagues.
+- `scorerecord-club-refresh.timer` is enabled for daily fixture/model refresh;
+  the old `scorerecord-epl-pilot.timer` is disabled to avoid duplicate work.
 
 ## Non-Negotiables
 

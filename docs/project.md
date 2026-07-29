@@ -2,9 +2,17 @@
 
 ## Purpose
 
-ScoreRecord is an offline-first quantitative football research system focused on the FIFA World Cup 2026. Its goal is to estimate match probabilities, evaluate model calibration, compare probabilities against market odds, and eventually recommend only value bets that pass explicit confidence and bankroll gates.
+ScoreRecord is an offline-first quantitative football research system for
+forecast-only sports predictions across selected football leagues. Its current
+production GUI shows calibrated goal-market forecasts, artifact provenance,
+health checks, and operational coverage for Liga MX, MLS, Premier League,
+Argentina, and Brasileirao. The World Cup 2026 tables remain in the database as
+legacy/research scope, but the product surface is now multi-league club
+forecasting.
 
-This is research software, not a profit guarantee. Every output must be auditable: source data, model version, run id, timestamp, market odds, recommendation logic, and later evaluation.
+This is research software, not a betting recommendation or profit guarantee.
+Every output must be auditable: source data, model version, run id, timestamp,
+forecast policy, quality status, and later settlement/evaluation.
 
 ## Current Architecture
 
@@ -26,9 +34,18 @@ The homeserver target is low memory, so the design avoids heavy services. Jobs s
 
 Implemented:
 
-- `openfootball/worldcup.json`: World Cup 2026 fixture seed.
+- `openfootball/worldcup.json`: World Cup 2026 fixture seed, now legacy/research
+  scope in the GUI.
 - `martj42/international_results`: historical international results and goalscorers from 2018 onward.
-- `odds-api.io`: raw odds ingestion adapter and paper-analysis pipeline. Real API fetch is gated by `ODDS_API_IO_KEY`; dry-run is safe and does not spend requests.
+- `odds-api.io`: future fixture discovery for club leagues, raw odds ingestion
+  adapter, and informational coverage snapshots. Real API fetch is gated by
+  `ODDS_API_IO_KEY`; dry-run is safe and does not spend requests.
+- `football-data.co.uk`: club historical match rows and historical odds coverage
+  for benchmark/reporting. Current `/new/*.csv` feeds are historical/current
+  results, not future fixture calendars.
+- `SportMonks`, `BigBallsData`, and `TheStatsAPI`: documented provider
+  candidates for fixture enrichment, xG/stats, and cross-provider verification.
+  They must not affect forecast output until mapping and coverage are validated.
 
 Planned:
 
@@ -1054,7 +1071,7 @@ Output:
 - Strengthened the visual use of secondary green `#1C331D` in backgrounds,
   titles, buttons, shadows, and selected date chips while keeping primary green
   `#34CF72`.
-- Added `ARGENTINA` and `BRASILEIRAO` as domestic pilot candidates using
+- Added `ARGENTINA` and `BRASILEIRAO` as domestic pilot configs using
   catalog-backed odds-api.io slugs and Football-Data aliases.
 - Added Champions League, Europa League, Libertadores, and Sudamericana as
   provider watchlist configs only; they are not primary GUI forecast filters
@@ -1065,3 +1082,26 @@ Output:
 - Added `docs/data_sources.md` and `docs/match_evaluation_pipeline.md` to
   document API capabilities, source roles, league admission guardrails, and the
   code paths used to evaluate each match.
+
+### 2026-07-29 - Homeserver multi-league production validation
+
+- Added exact provider aliases for Argentina and Brasileirao fixture names so
+  odds-api.io future events resolve to Football-Data historical club teams
+  without duplicate-team creation.
+- Ran `scripts/run_daily_club_forecast.sh` on the homeserver for
+  `LIGA_MX MLS EPL ARGENTINA BRASILEIRAO`; all five league refreshes returned
+  `status=OK`, `unresolved_fixtures=0`, and post-refresh `db-health=OK`.
+- Current resolved fixture coverage on the homeserver:
+  - `LIGA_MX`: 108 future fixtures, 108 predicted.
+  - `MLS`: 212 future fixtures, 212 predicted.
+  - `EPL`: 80 future fixtures, 80 predicted.
+  - `ARGENTINA`: 193 future fixtures, 189 predicted.
+  - `BRASILEIRAO`: 120 future fixtures, 120 predicted.
+- Installed and enabled `scorerecord-club-refresh.timer` for daily multileague
+  refresh, and disabled the old `scorerecord-epl-pilot.timer` to avoid duplicate
+  EPL-only work.
+- Remote validation after deploy: full pytest passed `257 passed`, targeted
+  functional ruff passed, GUI smoke passed for `/`, `/today`,
+  `/today?league=ARGENTINA`, `/today?league=BRASILEIRAO`, and `/health`,
+  `db-health` passed, and `run_phase13_audit.py` returned `PASSED` with
+  `CRITICAL=None` and `ERROR=None`.
