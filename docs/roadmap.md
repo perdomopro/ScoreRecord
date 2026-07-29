@@ -537,6 +537,10 @@ Objective: Expand ScoreRecord from a single World Cup tournament to a fully auto
   - Forecast GUI now includes per-fixture data-quality score, heuristic
     uncertainty band, rule-based explanation factors, model evidence, explicit
     no-prediction reasons, and a compact operational health panel.
+  - Forecast GUI polish on 2026-07-29 moved operational/model health into
+    `/health`, simplified primary navigation, added the ScoreRecord landing hero,
+    adopted the green brand palette (`#34CF72` / `#1C331D`), and changed match
+    details to modal overlays instead of full-page navigation.
 
 ### Phase 13.5 - Forward evidence and monitoring (NEXT)
 - Accumulate forecast snapshots and settled outcomes before claiming real

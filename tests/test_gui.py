@@ -7,6 +7,7 @@ from scorerecord.gui import (
     load_dashboard_data,
     load_forecast_data,
     render_dashboard,
+    render_health_page,
     render_match_forecast,
     render_today_forecast,
 )
@@ -456,6 +457,10 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert data.fixtures[0].primary.market == "OU2.5"
     assert data.fixtures[0].primary.selection == "over"
     assert "FORECAST_ONLY" in html
+    assert "pronosticos deportivos" in html
+    assert "Ver partidos" in html
+    assert "Health" in html
+    assert "Auditoria tecnica" not in html
     assert "Pronosticos principales del modelo" in html
     assert "Pronostico principal del modelo" in html
     assert "Pronostico principal del modelo (BTTS)" in html
@@ -469,6 +474,8 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert "BTTS: Si 50.10%" in html
     assert "Actionable Recommendations" not in html
     assert "Solo pronostico y cobertura informativa" in html
+    assert "match-modal" in html
+    assert "data-detail-url" in html
 
 
 def test_forecast_renders_quality_score_explanations_and_evidence() -> None:
@@ -492,8 +499,8 @@ def test_forecast_renders_quality_score_explanations_and_evidence() -> None:
     assert "Calidad de datos del pronostico" in html
     assert "Rango orientativo" in html
     assert "Promedio historico combinado" in html
-    assert "Health operativo" in html
-    assert "Provider fixtures" in html
+    assert "Health operativo" not in html
+    assert "Provider fixtures" not in html
     assert "Factores principales" in detail_html
     assert "Evidencia del modelo" in detail_html
     assert "Training rows" in detail_html
@@ -583,11 +590,16 @@ def test_forecast_quality_panel_renders_ok_and_warn() -> None:
         target_date="2026-07-04",
         now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
     )
-    ok_html = render_today_forecast(
+    today_html = render_today_forecast(
+        ok_data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
+    ok_html = render_health_page(
         ok_data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
     )
 
+    assert "Model quality panel" not in today_html
     assert "Model quality panel" in ok_html
+    assert "Health operativo" in ok_html
     assert "Calibration" in ok_html
     assert "OU monotonicity" in ok_html
     assert "Elo coverage" in ok_html
@@ -608,7 +620,7 @@ def test_forecast_quality_panel_renders_ok_and_warn() -> None:
         target_date="2026-07-04",
         now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
     )
-    warn_html = render_today_forecast(
+    warn_html = render_health_page(
         warn_data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
     )
 
@@ -642,7 +654,7 @@ def test_forecast_quality_panel_ignores_unrelated_later_quality_rows() -> None:
         target_date="2026-07-04",
         now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
     )
-    html = render_today_forecast(
+    html = render_health_page(
         data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
     )
 
@@ -704,6 +716,28 @@ def test_forecast_match_renders_goal_market_detail() -> None:
     assert "No es una cuota real" in html
     assert "OU2.5" in html
     assert "Ambos anotan: si" in html
+
+
+def test_forecast_match_partial_is_modal_content_only() -> None:
+    conn = _conn()
+    _insert_forecast_fixture(conn)
+
+    data = load_forecast_data(
+        conn,
+        fixture_id="m-forecast",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    html = render_match_forecast(
+        data,
+        "m-forecast",
+        settings=Settings(db_path=Path(""), raw_dir=Path("")),
+        partial=True,
+    )
+
+    assert "<!doctype html>" not in html
+    assert "match-detail" in html
+    assert "Mexico" in html
+    assert "Volver" not in html
 
 
 def test_forecast_match_renders_odds_coverage_without_1x2() -> None:

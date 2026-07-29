@@ -491,7 +491,7 @@ def main(argv: list[str] | None = None) -> int:
     calibration.add_argument("--out-dir", default="outputs/backtests")
     calibration.add_argument("--start-year", type=int, default=2021)
     calibration.add_argument("--min-train", type=int, default=200)
-    gui = subparsers.add_parser("gui", help="Serve the read-only paper/audit dashboard.")
+    gui = subparsers.add_parser("gui", help="Serve the forecast and health dashboard.")
     gui.add_argument("--host", default="127.0.0.1")
     gui.add_argument("--port", type=int, default=8765)
     gui.add_argument("--refresh-seconds", type=int, default=60)

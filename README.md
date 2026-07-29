@@ -84,7 +84,8 @@ horizon observations into operational data-quality grades (`READY_FOR_ANALYSIS`,
 grade means the captured rows are sufficient for later analysis only; it does
 not change the forecast-only status of the product. The confidence label is model
 magnitude only and is not validated against World Cup results or market prices.
-The older audit dashboard remains available at `/audit` for operational review.
+The forecast dashboard is served from `/today`; operational model and server checks live in `/health`.
+The older audit route is kept hidden for legacy review only.
 Use `SCORERECORD_DISPLAY_TZ` to change the display timezone; it defaults to
 `America/Mexico_City`.
 

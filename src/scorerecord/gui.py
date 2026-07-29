@@ -1,4 +1,4 @@
-"""Read-only audit dashboard for ScoreRecord paper recommendations."""
+"""Forecast-only dashboard and health views for ScoreRecord."""
 
 from __future__ import annotations
 
@@ -230,6 +230,9 @@ def serve_dashboard(
             if parsed.path == "/today":
                 self._render_today(params)
                 return
+            if parsed.path == "/health":
+                self._render_health(params)
+                return
             if parsed.path.startswith("/match/"):
                 fixture_id = parsed.path.removeprefix("/match/").strip("/")
                 self._render_match(fixture_id, params)
@@ -241,10 +244,10 @@ def serve_dashboard(
 
         def _render_today(self, params: dict[str, list[str]]) -> None:
             date_filter = _parse_date(params.get("date", [""])[0])
-            view_mode = str(params.get("view", ["all"])[0]).strip().lower()
+            view_mode = str(params.get("view", ["forecast"])[0]).strip().lower()
             league_filter = gui_league_filter(params.get("league", ["all"])[0])
             if view_mode not in ("all", "forecast", "paper", "research"):
-                view_mode = "all"
+                view_mode = "forecast"
             try:
                 with connect(db_path) as conn:
                     data = load_forecast_data(
@@ -262,10 +265,11 @@ def serve_dashboard(
             self._write(body)
 
         def _render_match(self, fixture_id: str, params: dict[str, list[str]]) -> None:
-            view_mode = str(params.get("view", ["all"])[0]).strip().lower()
+            view_mode = str(params.get("view", ["forecast"])[0]).strip().lower()
             league_filter = gui_league_filter(params.get("league", ["all"])[0])
+            partial = str(params.get("partial", ["0"])[0]).strip().lower() in {"1", "true", "yes"}
             if view_mode not in ("all", "forecast", "paper", "research"):
-                view_mode = "all"
+                view_mode = "forecast"
             try:
                 with connect(db_path) as conn:
                     data = load_forecast_data(
@@ -275,7 +279,31 @@ def serve_dashboard(
                         league_filter=league_filter,
                         settings=settings
                     )
-                body = render_match_forecast(data, fixture_id, settings=settings)
+                body = render_match_forecast(
+                    data,
+                    fixture_id,
+                    settings=settings,
+                    partial=partial,
+                )
+            except Exception as exc:  # pragma: no cover - defensive web path
+                body = render_error(exc)
+            self._write(body)
+
+        def _render_health(self, params: dict[str, list[str]]) -> None:
+            date_filter = _parse_date(params.get("date", [""])[0])
+            league_filter = gui_league_filter(params.get("league", ["all"])[0])
+            try:
+                with connect(db_path) as conn:
+                    data = load_forecast_data(
+                        conn,
+                        target_date=date_filter,
+                        view_mode="forecast",
+                        league_filter=league_filter,
+                        settings=settings,
+                    )
+                body = render_health_page(
+                    data, settings=settings, refresh_seconds=refresh_seconds
+                )
             except Exception as exc:  # pragma: no cover - defensive web path
                 body = render_error(exc)
             self._write(body)
@@ -532,11 +560,9 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
 <body class="forecast-page">
   {_forecast_nav(data)}
   <main class="forecast-shell">
+    {_home_hero(data)}
     {_recreational_warning_banner(settings)}
     {_forecast_warning_banner(data)}
-    {_forecast_quality_panel(data)}
-    {_system_health_panel(data)}
-    {_forecast_stats(data)}
     {league_nav}
     {league_banner}
     {upcoming}
@@ -550,12 +576,166 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
         <button class="btn" type="submit">Ver</button>
       </form>
       <a class="btn ghost" href="/today?date={_e(data.next_date)}&view={_e(data.view_mode)}&league={_e(league)}">Siguiente</a>
-      <a class="btn ghost" href="/audit">Auditoria</a>
+      <a class="btn ghost" href="/health?date={_e(data.target_date)}&league={_e(league)}">Health</a>
     </section>
     <section class="match-grid">{cards}</section>
   </main>
+  {_match_modal_shell()}
+  {_forecast_modal_script()}
 </body>
 </html>"""
+
+
+def render_health_page(
+    data: ForecastData,
+    *,
+    settings: Settings | None = None,
+    refresh_seconds: int = 60,
+) -> str:
+    return f"""<!doctype html>
+<html lang="es" data-theme="scorerecord">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="{int(refresh_seconds)}">
+  <title>ScoreRecord Health</title>
+  <style>{_forecast_css()}</style>
+</head>
+<body class="forecast-page">
+  {_forecast_nav(data, active="health")}
+  <main class="forecast-shell">
+    <section class="health-hero">
+      <span>Health</span>
+      <h1>Estado operativo de ScoreRecord</h1>
+      <p>Resumen de servidor, corridas, modelo, calibradores, Elo, readiness y datos de la GUI forecast-only.</p>
+      <div class="hero-actions">
+        <a class="btn primary" href="/today?view=forecast&league=ALL">Ver partidos</a>
+        <a class="btn ghost" href="/health">Actualizar health</a>
+      </div>
+    </section>
+    {_recreational_warning_banner(settings)}
+    {_forecast_warning_banner(data)}
+    {_forecast_quality_panel(data)}
+    {_system_health_panel(data)}
+    {_forecast_stats(data)}
+    {_health_model_summary(data)}
+    {_upcoming_fixture_section(data)}
+  </main>
+</body>
+</html>"""
+
+
+def _home_hero(data: ForecastData) -> str:
+    return f"""
+    <section class="home-hero">
+      <div class="hero-copy">
+        <span>Pronosticos deportivos</span>
+        <h1>ScoreRecord</h1>
+        <p>
+          Sistema forecast-only para analizar partidos con modelos estadisticos,
+          trazabilidad de artifacts y explicaciones auditables. No es una
+          recomendacion de apuesta.
+        </p>
+      </div>
+      <div class="hero-actions">
+        <a class="btn primary" href="/today?view=forecast&league=ALL">Ver partidos</a>
+        <a class="btn ghost" href="/today?view=forecast&league=LIGA_MX">Liga MX</a>
+        <a class="btn ghost" href="/today?view=forecast&league=MLS">MLS</a>
+        <a class="btn ghost" href="/today?view=forecast&league=EPL">Premier League</a>
+        <a class="btn ghost" href="/health?date={_e(data.target_date)}&league={_e(data.league_filter)}">Health</a>
+      </div>
+    </section>
+    """
+
+
+def _health_model_summary(data: ForecastData) -> str:
+    items = [
+        ("Modelo", data.model_version or "sin prediccion"),
+        ("Artifact", _short_id(data.artifact_id) or "n/a"),
+        ("Market validation", data.market_validation_status or "NOT_TESTED"),
+        ("Prediction run", str(data.latest_run_id or "n/a")),
+        ("Fecha", data.target_date),
+        ("TZ", data.display_tz),
+    ]
+    cells = "".join(
+        f"""
+        <div class="health-summary-item">
+          <span>{_e(label)}</span>
+          <strong>{_e(value)}</strong>
+        </div>
+        """
+        for label, value in items
+    )
+    return f"""
+    <section class="health-summary-panel">
+      <div class="section-head">
+        <h2>Modelo activo en la vista</h2>
+        <span>{_e(data.generated_utc)}</span>
+      </div>
+      <div class="health-summary-grid">{cells}</div>
+    </section>
+    """
+
+
+def _match_modal_shell() -> str:
+    return """
+    <div id="match-modal" class="match-modal" hidden>
+      <div class="match-modal-backdrop" data-modal-close></div>
+      <section class="match-modal-panel" role="dialog" aria-modal="true" aria-label="Detalle de partido">
+        <button class="modal-close" type="button" data-modal-close aria-label="Cerrar">x</button>
+        <div id="match-modal-content" class="match-modal-content"></div>
+      </section>
+    </div>
+    """
+
+
+def _forecast_modal_script() -> str:
+    return """
+    <script>
+    (function () {
+      const modal = document.getElementById("match-modal");
+      const content = document.getElementById("match-modal-content");
+      if (!modal || !content) return;
+
+      function closeModal() {
+        modal.hidden = true;
+        content.innerHTML = "";
+        document.body.classList.remove("modal-open");
+      }
+
+      function openModal(html) {
+        content.innerHTML = html;
+        modal.hidden = false;
+        document.body.classList.add("modal-open");
+      }
+
+      document.addEventListener("click", async function (event) {
+        const trigger = event.target.closest("[data-detail-url]");
+        if (trigger) {
+          event.preventDefault();
+          openModal('<div class="modal-loading">Cargando detalle...</div>');
+          try {
+            const response = await fetch(trigger.getAttribute("data-detail-url"), {
+              headers: {"X-Requested-With": "ScoreRecordModal"}
+            });
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            openModal(await response.text());
+          } catch (error) {
+            openModal('<div class="modal-loading">No se pudo cargar el detalle.</div>');
+          }
+          return;
+        }
+        if (event.target.closest("[data-modal-close]")) {
+          closeModal();
+        }
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && !modal.hidden) closeModal();
+      });
+    })();
+    </script>
+    """
 
 
 def _league_nav(data: ForecastData) -> str:
@@ -611,6 +791,7 @@ def _upcoming_fixture_item(item: UpcomingFixtureLink, data: ForecastData) -> str
         f"/match/{_e(item.fixture_id)}?view={_e(data.view_mode)}"
         f"&league={_e(data.league_filter)}"
     )
+    modal_href = f"{match_href}&partial=1"
     competition = item.competition or league_label(item.league_code)
     return f"""
     <article class="upcoming-item">
@@ -620,18 +801,31 @@ def _upcoming_fixture_item(item: UpcomingFixtureLink, data: ForecastData) -> str
       </a>
       <div>
         <small>{_e(competition)} · {_e(league)}</small>
-        <a href="{match_href}">{_e(item.home)} vs {_e(item.away)}</a>
+        <a href="{match_href}" data-detail-url="{modal_href}">{_e(item.home)} vs {_e(item.away)}</a>
       </div>
     </article>
     """
 
 
-def render_match_forecast(data: ForecastData, fixture_id: str, *, settings: Settings | None = None) -> str:
+def render_match_forecast(
+    data: ForecastData,
+    fixture_id: str,
+    *,
+    settings: Settings | None = None,
+    partial: bool = False,
+) -> str:
     fixture = next((item for item in data.fixtures if item.fixture_id == fixture_id), None)
     if fixture is None:
         content = _empty_forecast_state("PARTIDO NO ENCONTRADO")
     else:
-        content = _match_detail(fixture, view_mode=data.view_mode, league=data.league_filter)
+        content = _match_detail(
+            fixture,
+            view_mode=data.view_mode,
+            league=data.league_filter,
+            embedded=partial,
+        )
+    if partial:
+        return content
     return f"""<!doctype html>
 <html lang="es" data-theme="scorerecord">
 <head>
@@ -645,8 +839,6 @@ def render_match_forecast(data: ForecastData, fixture_id: str, *, settings: Sett
   <main class="forecast-shell">
     {_recreational_warning_banner(settings)}
     {_forecast_warning_banner(data)}
-    {_forecast_quality_panel(data)}
-    {_system_health_panel(data)}
     {content}
   </main>
 </body>
@@ -1729,18 +1921,19 @@ def _forecast_state(
     return "forecast", "FORECAST_ONLY"
 
 
-def _forecast_nav(data: ForecastData) -> str:
+def _forecast_nav(data: ForecastData, *, active: str = "matches") -> str:
     league = getattr(data, "league_filter", "ALL")
+    matches_class = "active" if active == "matches" else ""
+    health_class = "active" if active == "health" else ""
     return f"""
     <header class="forecast-nav">
       <div>
         <div class="brand">ScoreRecord</div>
-        <div class="subline">Forecast multi-liga - pronostico estadistico</div>
+        <div class="subline">pronosticos deportivos</div>
       </div>
       <nav>
-        <a href="/today?date={_e(data.target_date)}&view=all&league={_e(league)}">Todo</a>
-        <a href="/today?date={_e(data.target_date)}&view=forecast&league={_e(league)}">Pronosticos</a>
-        <a href="/audit">Auditoria tecnica</a>
+        <a class="{matches_class}" href="/today?date={_e(data.target_date)}&view=forecast&league={_e(league)}">Partidos</a>
+        <a class="{health_class}" href="/health?date={_e(data.target_date)}&league={_e(league)}">Health</a>
         <span class="badge forecast">FORECAST_ONLY</span>
       </nav>
     </header>
@@ -1879,6 +2072,11 @@ def _forecast_card(fixture: ForecastFixture, view_mode: str = "all") -> str:
     insight = _forecast_card_insight(fixture)
     markets = _forecast_market_chips(fixture.markets[:8])
     paper_html = _render_paper_picks(fixture.paper_picks) if view_mode in ("all", "paper") else ""
+    detail_href = (
+        f"/match/{_e(fixture.fixture_id)}?view={_e(view_mode)}"
+        f"&league={_e(fixture.league_code or 'ALL')}"
+    )
+    modal_href = f"{detail_href}&partial=1"
     return f"""
     <article class="match-card {fixture.state}">
       <div class="match-card-head">
@@ -1894,7 +2092,7 @@ def _forecast_card(fixture: ForecastFixture, view_mode: str = "all") -> str:
       {paper_html}
       <div class="market-chips">{markets}</div>
       <div class="card-actions">
-        <a class="btn" href="/match/{_e(fixture.fixture_id)}?view={_e(view_mode)}">Detalle</a>
+        <a class="btn detail-button" href="{detail_href}" data-detail-url="{modal_href}">Detalle</a>
       </div>
     </article>
     """
@@ -1996,10 +2194,20 @@ def _quality_class(status: str) -> str:
     return f"quality-{status.lower().replace('_', '-')}"
 
 
-def _match_detail(fixture: ForecastFixture, view_mode: str = "all", league: str = "ALL") -> str:
+def _match_detail(
+    fixture: ForecastFixture,
+    view_mode: str = "all",
+    league: str = "ALL",
+    *,
+    embedded: bool = False,
+) -> str:
     snapshots = _forecast_snapshot_section(fixture)
     explanations = _forecast_explanation_section(fixture)
     evidence = _model_evidence_section(fixture)
+    back_link = "" if embedded else (
+        f'<a class="btn ghost" href="/today?date={_e(fixture.display_date or "")}'
+        f'&view={_e(view_mode)}&league={_e(league)}">Volver</a>'
+    )
     has_complete_odds = any(cov.status == "COVERAGE_OK" for cov in fixture.odds_coverage)
     if has_complete_odds:
         odds_section = f"""
@@ -2036,7 +2244,7 @@ informativa, no una señal de apuesta.</em>
         rows = '<tr><td colspan="6" class="empty">No hay mercados de goles para mostrar.</td></tr>'
     return f"""
     <section class="match-detail">
-      <a class="btn ghost" href="/today?date={_e(fixture.display_date or '')}&view={_e(view_mode)}&league={_e(league)}">Volver</a>
+      {back_link}
       <div class="detail-head">
         <div>
           <div class="kickoff">{_e(fixture.display_time)} - {_e(fixture.display_date or '')}</div>
@@ -2984,14 +3192,19 @@ def _forecast_css() -> str:
     return """
 :root {
   color-scheme: light;
-  --bg: #f4f6f8;
+  --primary: #34CF72;
+  --primary-dark: #13934D;
+  --primary-soft: #E8FFF1;
+  --secondary: #1C331D;
+  --secondary-soft: #EEF6EF;
+  --bg: #f2f7f3;
   --surface: #ffffff;
-  --surface-2: #eef2f6;
-  --ink: #101820;
-  --muted: #64717d;
-  --line: #d8e0e7;
-  --green: #0f7a55;
-  --blue: #2563eb;
+  --surface-2: #edf7f0;
+  --ink: #132315;
+  --muted: #607066;
+  --line: #cfe1d4;
+  --green: #13934D;
+  --blue: #1C331D;
   --amber: #b7791f;
   --red: #b42318;
   --purple: #6d28d9;
@@ -2999,7 +3212,9 @@ def _forecast_css() -> str:
 * { box-sizing: border-box; }
 body.forecast-page {
   margin: 0;
-  background: var(--bg);
+  background:
+    radial-gradient(circle at 15% 0%, rgba(52, 207, 114, 0.18), transparent 32%),
+    linear-gradient(180deg, #f8fbf8 0%, var(--bg) 42%, #eef6ef 100%);
   color: var(--ink);
   font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -3008,36 +3223,87 @@ body.forecast-page {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  padding: 16px 22px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
+  padding: 14px 24px;
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid rgba(28, 51, 29, 0.12);
+  backdrop-filter: blur(14px);
   position: sticky;
   top: 0;
-  z-index: 5;
+  z-index: 20;
 }
 .forecast-nav nav { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .forecast-nav a, .btn {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 11px;
+  border-radius: 10px;
+  padding: 9px 13px;
   min-height: 38px;
   color: var(--ink);
   background: var(--surface);
   text-decoration: none;
   font-weight: 700;
 }
-.forecast-nav a:hover, .btn:hover { border-color: var(--blue); color: var(--blue); }
-.brand { font-size: 22px; font-weight: 850; letter-spacing: 0; }
+.forecast-nav a:hover, .btn:hover,
+.forecast-nav a.active, .btn.primary {
+  border-color: var(--primary);
+  color: var(--secondary);
+  background: var(--primary-soft);
+}
+.btn.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--secondary);
+}
+.brand { font-size: 24px; font-weight: 900; letter-spacing: 0; color: var(--secondary); }
 .subline { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .forecast-shell { width: min(1180px, 100%); margin: 0 auto; padding: 18px; }
+.home-hero, .health-hero {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto;
+  gap: 18px;
+  align-items: end;
+  margin: 4px 0 16px;
+  padding: 24px;
+  border: 1px solid rgba(28, 51, 29, 0.12);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(52, 207, 114, 0.16), rgba(255,255,255,0.94) 42%),
+    var(--surface);
+  box-shadow: 0 18px 45px rgba(28, 51, 29, 0.08);
+}
+.health-hero { align-items: center; }
+.hero-copy span, .health-hero span {
+  color: var(--primary-dark);
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+.hero-copy h1, .health-hero h1 {
+  margin: 4px 0 6px;
+  font-size: clamp(34px, 6vw, 58px);
+  line-height: 1;
+  color: var(--secondary);
+}
+.health-hero h1 { font-size: clamp(28px, 4vw, 42px); }
+.hero-copy p, .health-hero p {
+  max-width: 720px;
+  color: #405645;
+  margin: 0;
+}
+.hero-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 .forecast-alert {
   display: flex;
   flex-wrap: wrap;
   gap: 10px 16px;
   align-items: center;
   padding: 12px 14px;
-  background: #ecfdf5;
-  border: 1px solid #b7dfc7;
+  background: var(--primary-soft);
+  border: 1px solid rgba(52, 207, 114, 0.38);
   border-left: 6px solid var(--green);
   border-radius: 10px;
 }
@@ -3177,6 +3443,85 @@ body.forecast-page {
 }
 .badge.forecast { color: var(--green); border-color: #b7dfc7; background: #ecfdf5; }
 .match-grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
+.health-summary-panel {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.health-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 10px;
+}
+.health-summary-item {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfffc;
+}
+.health-summary-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.health-summary-item strong {
+  display: block;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+.match-modal[hidden] { display: none; }
+.match-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.match-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(19, 35, 21, 0.45);
+  backdrop-filter: blur(6px);
+}
+.match-modal-panel {
+  position: relative;
+  width: min(1040px, 100%);
+  max-height: min(86vh, 980px);
+  overflow: auto;
+  border: 1px solid rgba(52, 207, 114, 0.38);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 30px 80px rgba(28, 51, 29, 0.28);
+  padding: 16px;
+}
+.modal-close {
+  position: sticky;
+  top: 0;
+  float: right;
+  z-index: 2;
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--secondary);
+  color: white;
+  font-weight: 900;
+  cursor: pointer;
+}
+.modal-loading {
+  padding: 28px;
+  color: var(--muted);
+  font-weight: 800;
+}
+body.modal-open .forecast-shell,
+body.modal-open .forecast-nav {
+  filter: blur(4px);
+}
 .match-card, .match-detail, .empty-forecast {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -3508,12 +3853,18 @@ p { color: var(--muted); margin: 4px 0 0; }
 .muted, .empty { color: var(--muted); }
 @media (max-width: 900px) {
   .forecast-nav, .match-card-head, .detail-head { flex-direction: column; }
+  .home-hero, .health-hero { grid-template-columns: 1fr; align-items: start; }
+  .hero-actions { justify-content: flex-start; }
   .quality-panel { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
   .forecast-stats { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+  .health-summary-grid { grid-template-columns: 1fr; }
   .match-grid { grid-template-columns: 1fr; }
   .primary-list { grid-template-columns: 1fr; }
   .odds-coverage-grid { grid-template-columns: 1fr; }
   .upcoming-list { grid-template-columns: 1fr; }
+  .match-modal { padding: 10px; }
+  .match-modal-panel { max-height: 92vh; padding: 10px; }
+  .quality-summary { grid-template-columns: 1fr; }
 }
 """
 

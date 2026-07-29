@@ -1025,3 +1025,20 @@ Output:
 - Deferred real performance dashboard, weekly drift detector, and permanent
   benchmark UI until forecast snapshots/results provide enough settled forward
   evidence.
+
+### 2026-07-29 - Forecast GUI polish and Health tab
+
+- Moved technical model-quality, operational-health, and forecast-stat panels
+  out of the main match list and into a dedicated `/health` page.
+- Simplified the main navbar to `Partidos` and `Health`; the legacy `/audit`
+  route remains hidden for compatibility but is no longer part of the primary
+  GUI.
+- Added a landing-style hero to the forecast page with the `ScoreRecord` brand,
+  subtitle `pronosticos deportivos`, a short project description, and direct
+  buttons for all matches, Liga MX, MLS, Premier League, and Health.
+- Updated forecast colors around primary `#34CF72` and secondary `#1C331D`.
+- Changed match detail links to open as an overlay modal over the current page,
+  with background blur, click-outside close, escape-key close, and standalone
+  `/match/<fixture_id>` kept as a fallback route.
+- Renamed the CLI help text and systemd unit description from the old
+  paper/audit wording to the current forecast-and-health dashboard language.

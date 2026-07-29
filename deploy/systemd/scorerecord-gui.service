@@ -1,5 +1,5 @@
 [Unit]
-Description=ScoreRecord read-only paper/audit dashboard
+Description=ScoreRecord forecast and health dashboard
 After=network-online.target
 
 [Service]
