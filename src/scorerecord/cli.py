@@ -29,6 +29,7 @@ from scorerecord.evaluate.goal_markets import run_goal_market_walk_forward
 from scorerecord.evaluate.market_residual import (
     run_market_residual_benchmark,
 )
+from scorerecord.evaluate.one_x_two_calibration import run_one_x_two_calibration_report
 from scorerecord.evaluate.policy_analysis import analyze_policy_grids
 from scorerecord.evaluate.recommendations import (
     compute_recommendation_clv,
@@ -496,6 +497,19 @@ def main(argv: list[str] | None = None) -> int:
     calibration.add_argument("--out-dir", default="outputs/backtests")
     calibration.add_argument("--start-year", type=int, default=2021)
     calibration.add_argument("--min-train", type=int, default=200)
+    one_x_two_calibration = subparsers.add_parser(
+        "one-x-two-calibration-report",
+        help="League-scoped diagnostic 1X2 calibration report.",
+    )
+    one_x_two_calibration.add_argument(
+        "--leagues",
+        default="LIGA_MX,MLS,EPL,ARGENTINA,BRASILEIRAO",
+        help="Comma-separated league codes.",
+    )
+    one_x_two_calibration.add_argument("--start-year", type=int, default=2021)
+    one_x_two_calibration.add_argument("--min-train", type=int, default=200)
+    one_x_two_calibration.add_argument("--out-dir", default="outputs/diagnostics")
+    one_x_two_calibration.add_argument("--json", action="store_true")
     gui = subparsers.add_parser("gui", help="Serve the forecast and health dashboard.")
     gui.add_argument("--host", default="127.0.0.1")
     gui.add_argument("--port", type=int, default=8765)
@@ -536,6 +550,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     sportmonks_probe.add_argument("--input-json", help="Path to local JSON fixture payload")
     sportmonks_probe.add_argument("--json", action="store_true")
+
+    provider_stats_probe = subparsers.add_parser(
+        "provider-stats-probe",
+        help="Read-only SportMonks/TheStatsAPI corners coverage probe.",
+    )
+    provider_stats_probe.add_argument(
+        "--providers",
+        default="sportmonks,thestatsapi",
+        help="Comma-separated providers: sportmonks,thestatsapi.",
+    )
+    provider_stats_probe.add_argument(
+        "--leagues",
+        default="LIGA_MX,MLS,EPL,ARGENTINA,BRASILEIRAO",
+        help="Comma-separated ScoreRecord league codes.",
+    )
+    provider_stats_probe.add_argument("--from", dest="from_date", help="YYYY-MM-DD")
+    provider_stats_probe.add_argument("--to", dest="to_date", help="YYYY-MM-DD")
+    provider_stats_probe.add_argument("--sample-size", type=int, default=12)
+    provider_stats_probe.add_argument("--out", default="outputs/coverage/provider_stats_probe.json")
+    provider_stats_probe.add_argument("--json", action="store_true")
 
     goals_v2 = subparsers.add_parser(
         "goals-v2-lambda-benchmark",
@@ -1372,6 +1406,28 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{k}: {v}")
             return 0 if result["status"] == "OK" else 1
 
+        if args.command == "provider-stats-probe":
+            from scorerecord.ingest.provider_stats_probe import run_provider_stats_probe
+
+            reports = run_provider_stats_probe(
+                leagues=_parse_str_tuple(args.leagues),
+                providers=_parse_str_tuple(args.providers),
+                sportmonks_key=settings.sportmonks_key,
+                sportmonks_base_url=settings.sportmonks_base_url,
+                thestatsapi_key=settings.thestatsapi_key,
+                thestatsapi_base_url=settings.thestatsapi_base_url,
+                date_from=date.fromisoformat(args.from_date) if args.from_date else None,
+                date_to=date.fromisoformat(args.to_date) if args.to_date else None,
+                sample_size=args.sample_size,
+                out_path=Path(args.out) if args.out else None,
+            )
+            if args.json:
+                print(json.dumps([dataclasses.asdict(report) for report in reports], indent=2))
+            else:
+                for report in reports:
+                    print(report.as_row())
+            return 0
+
         if args.command == "goals-v2-lambda-benchmark":
             from scorerecord.evaluate.goals_v2_lambda_benchmark import run_goals_v2_lambda_benchmark
 
@@ -1455,6 +1511,22 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=Path.cwd(),
             )
             print(summary.as_row())
+            return 0
+
+        if args.command == "one-x-two-calibration-report":
+            reports = run_one_x_two_calibration_report(
+                conn,
+                leagues=_parse_str_tuple(args.leagues),
+                start_year=args.start_year,
+                min_train=args.min_train,
+                out_dir=Path(args.out_dir),
+                cwd=Path.cwd(),
+            )
+            if args.json:
+                print(json.dumps([dataclasses.asdict(report) for report in reports], indent=2))
+            else:
+                for report in reports:
+                    print(report.as_row())
             return 0
 
         if args.command == "db-summary":

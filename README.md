@@ -22,12 +22,15 @@ homeserver:
 - Football-Data CSV ingestion for covered club leagues.
 - odds-api.io fixture and odds snapshot ingestion.
 - Read-only SportMonks/API-Football probes for provider validation.
+- Read-only SportMonks/TheStatsAPI stats probe for corners coverage validation.
 - Seed team aliases for common naming mismatches.
 - Elo calculation over international and club match history.
 - Pre/post-match Elo history for leakage-free walk-forward features.
 - Basic run tracking and data quality logging.
 - League-scoped model artifacts for club forecast pilots.
 - Forecast-only GUI at `/` and `/today`, with operational checks in `/health`.
+- Secondary result diagnostics for 1X2 and double chance, kept out of the
+  principal OU2.5/BTTS forecast selector.
 - CLI entry points that can run locally or on the homeserver.
 
 ## Quick Start
@@ -74,6 +77,8 @@ scorerecord analyze-policy-grids "outputs/backtests/policy_grid_real_odds_*.csv"
 scorerecord calibration-diagnostics --from 2021-08-01 --to 2025-05-31 --leagues EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,CHAMPIONSHIP --min-train 500
 scripts/run_multileague_validation.sh
 scorerecord calibration-report --from 2024-01-01 --to 2024-12-31
+scorerecord one-x-two-calibration-report --leagues LIGA_MX,MLS,EPL,ARGENTINA,BRASILEIRAO
+scorerecord provider-stats-probe --providers sportmonks,thestatsapi --leagues LIGA_MX,MLS,EPL,ARGENTINA,BRASILEIRAO
 scorerecord gui --host 127.0.0.1 --port 8765
 scorerecord db-summary
 ```
@@ -100,6 +105,10 @@ grade means the captured rows are sufficient for later analysis only; it does
 not change the forecast-only status of the product. The confidence label is model
 magnitude only and is not validated against World Cup results or market prices.
 The forecast dashboard is served from `/today`; operational model and server checks live in `/health`.
+Match cards may show secondary result/double-chance diagnostics from the same
+score matrix, but those are labeled as calibration-in-review and are not
+forecast principals. Corners are not shown until provider stats coverage and a
+separate benchmark pass.
 The older audit route is kept hidden for legacy review only.
 Use `SCORERECORD_DISPLAY_TZ` to change the display timezone; it defaults to
 `America/Mexico_City`.

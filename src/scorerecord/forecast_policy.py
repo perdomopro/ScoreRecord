@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
 FORECAST_MARKETS = ("OU1.5", "OU2.5", "OU3.5", "BTTS")
+RESULT_DIAGNOSTIC_MARKETS = ("1X2", "double_chance")
 SIGNAL_NO_SIGNAL = "NO_SIGNAL"
 SIGNAL_LEAN = "LEAN"
 SIGNAL_MODERATE = "MODERATE"

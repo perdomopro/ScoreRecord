@@ -1105,3 +1105,16 @@ Output:
   `/today?league=ARGENTINA`, `/today?league=BRASILEIRAO`, and `/health`,
   `db-health` passed, and `run_phase13_audit.py` returned `PASSED` with
   `CRITICAL=None` and `ERROR=None`.
+
+### 2026-07-29 - Result diagnostics and corners coverage gate
+
+- Added secondary GUI diagnostics for `Resultado estimado` and `Doble
+  oportunidad` using the existing Dixon-Coles score matrix outputs. These rows
+  are explicitly secondary and do not enter the OU2.5/BTTS principal selector.
+- Added `one-x-two-calibration-report` to evaluate league-scoped 1X2
+  calibration and discrimination before promoting result probabilities further.
+- Added `provider-stats-probe`, a read-only SportMonks/TheStatsAPI coverage
+  probe for recent finished-match stats and corners across active GUI leagues.
+- Reaffirmed the corners gate: ScoreRecord already has `fixture_stats`, but it
+  must not be populated or used for `corners_over_8.5`, `corners_over_9.5`, or
+  team-corners models until provider coverage is proven and benchmarked.

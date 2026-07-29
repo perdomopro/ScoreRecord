@@ -23,6 +23,7 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 8 - Market-anchored benchmark | Active path. Residual modeling. |
 | 9 | Pending. |
 | 13 - Daily multi-league forecast | Active for Liga MX, MLS, EPL, Argentina, and Brasileirao; daily timer enabled. |
+| 14 - Result diagnostics and corners discovery | Active: 1X2/double-chance diagnostics plus SportMonks/TheStatsAPI corners probe. |
 
 Open loops that remain after the remote gate:
 
@@ -57,6 +58,10 @@ Open loops that remain after the remote gate:
   for all five leagues.
 - `scorerecord-club-refresh.timer` is enabled for daily fixture/model refresh;
   the old `scorerecord-epl-pilot.timer` is disabled to avoid duplicate work.
+- Result probabilities are visible only as secondary diagnostics; OU2.5/BTTS
+  remain the principal forecast families.
+- Corners remain gated behind `provider-stats-probe` coverage and a future
+  benchmark; no corners market is shown in the GUI yet.
 
 ## Non-Negotiables
 

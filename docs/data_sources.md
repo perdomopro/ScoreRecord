@@ -74,12 +74,18 @@ Useful endpoint shapes:
   `GET /v3/football/fixtures/between/{from}/{to}?include=participants;league;state;scores`
 - League structure:
   `GET /v3/football/leagues/{league_id}?include=currentSeason.stages`
+- League search:
+  `GET /v3/football/leagues/search/{query}?include=currentSeason`
+- Corners coverage:
+  `GET /v3/football/fixtures/between/{from}/{to}?include=statistics;participants;league&filters=fixtureLeagues:{league_id}`
 
 Best ScoreRecord fit:
 
 - Enrich `/match` details with venue/state/lineups/xG only after fixture IDs are
   mapped to ScoreRecord fixtures.
 - Use as cross-check for final scores before settlement.
+- Probe corners through fixture statistics; SportMonks statistic type `34` is
+  `corners`.
 - Keep SportMonks predictions/value-bet data out of ScoreRecord model scoring.
 
 ## BigBallsData
@@ -114,6 +120,7 @@ Official docs:
 
 Useful endpoint shapes:
 
+- Base URL: `https://api.thestatsapi.com/api`
 - `GET /football/competitions?search=<league>`
 - `GET /football/competitions/{competition_id}/seasons`
 - `GET /football/matches?competition_id=<id>&season_id=<id>`
@@ -125,6 +132,7 @@ Best ScoreRecord fit:
 
 - Broad competition coverage if plan includes the target league.
 - xG and odds enrichment for markets that ScoreRecord does not yet model.
+- Corners coverage probe via `matches` + `matches/{id}/stats`.
 - Future comparison source for provider reliability.
 
 ## League admission checklist

@@ -15,7 +15,11 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from scorerecord.db import connect, init_db
-from scorerecord.forecast_policy import FORECAST_MARKETS, select_primary_forecasts
+from scorerecord.forecast_policy import (
+    FORECAST_MARKETS,
+    RESULT_DIAGNOSTIC_MARKETS,
+    select_primary_forecasts,
+)
 from scorerecord.forecast_policy import signal_strength as forecast_signal_strength
 from scorerecord.forecast_quality import ForecastQualityItem, forecast_quality_items
 from scorerecord.league_config import GUI_LEAGUE_ORDER, gui_league_filter, league_label
@@ -157,6 +161,7 @@ class ForecastFixture:
     primary: ForecastMarket | None
     primary_markets: list[ForecastMarket]
     markets: list[ForecastMarket]
+    result_markets: list[ForecastMarket]
     artifact_id: str | None
     model_version: str | None
     market_validation_status: str
@@ -399,6 +404,8 @@ def load_forecast_data(
     latest_run_id = _latest_prediction_run_id(conn, fixture_ids=fixture_ids)
     prediction_rows = _forecast_prediction_rows(conn, fixture_ids=fixture_ids)
     predictions_by_fixture = _group_forecast_predictions(prediction_rows)
+    result_prediction_rows = _result_prediction_rows(conn, fixture_ids=fixture_ids)
+    result_predictions_by_fixture = _group_forecast_predictions(result_prediction_rows)
     quality_items = forecast_quality_items(conn, latest_run_id)
     system_health_items = _system_health_items(conn, latest_run_id, quality_items, now)
     team_ratings = _latest_elo_by_team(conn, _team_ids_from_fixture_rows(rows))
@@ -439,6 +446,7 @@ def load_forecast_data(
         fixture = _forecast_fixture_from_row(
             row,
             predictions_by_fixture.get(str(row["fixture_id"]), []),
+            result_predictions_by_fixture.get(str(row["fixture_id"]), []),
             snapshots_by_fixture.get(str(row["fixture_id"]), []),
             odds_coverage_by_fixture.get(str(row["fixture_id"]), []),
             odds_horizons_by_fixture.get(str(row["fixture_id"]), []),
@@ -1116,11 +1124,31 @@ def _forecast_prediction_rows(
     conn: sqlite3.Connection,
     fixture_ids: list[str] | None = None,
 ) -> list[sqlite3.Row]:
+    return _prediction_rows_for_markets(conn, FORECAST_MARKETS, fixture_ids=fixture_ids)
+
+
+def _result_prediction_rows(
+    conn: sqlite3.Connection,
+    fixture_ids: list[str] | None = None,
+) -> list[sqlite3.Row]:
+    return _prediction_rows_for_markets(
+        conn,
+        RESULT_DIAGNOSTIC_MARKETS,
+        fixture_ids=fixture_ids,
+    )
+
+
+def _prediction_rows_for_markets(
+    conn: sqlite3.Connection,
+    markets: tuple[str, ...],
+    *,
+    fixture_ids: list[str] | None = None,
+) -> list[sqlite3.Row]:
     if fixture_ids is not None and not fixture_ids:
         return []
-    market_placeholders = ",".join("?" for _ in FORECAST_MARKETS)
+    market_placeholders = ",".join("?" for _ in markets)
     fixture_filter = ""
-    params: list[Any] = [*FORECAST_MARKETS]
+    params: list[Any] = [*markets]
     if fixture_ids is not None:
         fixture_placeholders = ",".join("?" for _ in fixture_ids)
         fixture_filter = f"AND p.fixture_id IN ({fixture_placeholders})"
@@ -1161,7 +1189,7 @@ def _forecast_prediction_rows(
         WHERE p.market IN ({market_placeholders})
         ORDER BY p.fixture_id, p.market, p.selection
         """,
-        (*params, *FORECAST_MARKETS),
+        (*params, *markets),
     ).fetchall()
 
 
@@ -1601,6 +1629,7 @@ def _group_forecast_snapshots(
 def _forecast_fixture_from_row(
     row: sqlite3.Row,
     predictions: list[ForecastMarket],
+    result_predictions: list[ForecastMarket],
     snapshots: list[ForecastSnapshotView],
     odds_coverage: list[OddsMarketCoverage],
     odds_horizons: list[OddsHorizonCoverage],
@@ -1624,6 +1653,7 @@ def _forecast_fixture_from_row(
     is_started = bool(kickoff_utc and now_utc >= kickoff_utc)
     monotonicity_ok = _ou_monotonicity_ok(predictions)
     visible_markets = predictions if is_resolved and monotonicity_ok else []
+    result_markets = result_predictions if is_resolved else []
     primary_markets = [] if is_started else select_primary_forecasts(visible_markets)
     primary = primary_markets[0] if primary_markets else None
     state, state_label = _forecast_state(
@@ -1664,6 +1694,7 @@ def _forecast_fixture_from_row(
         primary=primary,
         primary_markets=primary_markets,
         markets=visible_markets,
+        result_markets=result_markets,
         artifact_id=visible_markets[0].artifact_id if visible_markets else None,
         model_version=visible_markets[0].model_version if visible_markets else None,
         market_validation_status=(
@@ -2153,6 +2184,7 @@ def _render_paper_picks(paper_picks: list[dict[str, Any]]) -> str:
 
 def _forecast_card(fixture: ForecastFixture, view_mode: str = "all") -> str:
     primary = _primary_forecasts_block(fixture)
+    result_estimate = _result_estimate_card(fixture)
     insight = _forecast_card_insight(fixture)
     markets = _forecast_market_chips(fixture.markets[:8])
     paper_html = _render_paper_picks(fixture.paper_picks) if view_mode in ("all", "paper") else ""
@@ -2172,6 +2204,7 @@ def _forecast_card(fixture: ForecastFixture, view_mode: str = "all") -> str:
         <span class="state {fixture.state}">{_e(fixture.state_label)}</span>
       </div>
       {primary}
+      {result_estimate}
       {insight}
       {paper_html}
       <div class="market-chips">{markets}</div>
@@ -2211,6 +2244,51 @@ def _primary_forecast_item(market: ForecastMarket, uncertainty_points: float) ->
           </small>
         </div>
         """
+
+
+def _result_estimate_card(fixture: ForecastFixture) -> str:
+    if not fixture.primary_markets:
+        return ""
+    one_x_two = _result_markets_by_selection(fixture, "1X2")
+    if not {"home", "draw", "away"}.issubset(one_x_two):
+        return ""
+    best_selection, best_market = max(
+        one_x_two.items(),
+        key=lambda item: item[1].prob,
+    )
+    double_chance = _result_markets_by_selection(fixture, "double_chance")
+    best_dc = max(double_chance.values(), key=lambda market: market.prob, default=None)
+    dc_line = ""
+    if best_dc is not None:
+        dc_line = (
+            f'<small>Doble oportunidad mas alta: '
+            f'{_e(_double_chance_label(best_dc.selection, fixture))} '
+            f'{_pct(best_dc.prob)}</small>'
+        )
+    items = "".join(
+        f"""
+        <li>
+          <span>{_e(_result_selection_label(selection, fixture))}</span>
+          <strong>{_pct(market.prob)}</strong>
+        </li>
+        """
+        for selection, market in (
+            ("home", one_x_two["home"]),
+            ("draw", one_x_two["draw"]),
+            ("away", one_x_two["away"]),
+        )
+    )
+    return f"""
+    <section class="result-estimate-card" aria-label="Resultado estimado">
+      <div>
+        <span>Resultado estimado</span>
+        <strong>{_e(_result_selection_label(best_selection, fixture))} {_pct(best_market.prob)}</strong>
+        <small>Resultado del modelo; calibracion por liga en revision.</small>
+        {dc_line}
+      </div>
+      <ul>{items}</ul>
+    </section>
+    """
 
 
 def _forecast_card_insight(fixture: ForecastFixture) -> str:
@@ -2288,6 +2366,7 @@ def _match_detail(
     snapshots = _forecast_snapshot_section(fixture)
     explanations = _forecast_explanation_section(fixture)
     evidence = _model_evidence_section(fixture)
+    result_estimate = _result_estimate_detail_section(fixture)
     back_link = "" if embedded else (
         f'<a class="btn ghost" href="/today?date={_e(fixture.display_date or "")}'
         f'&view={_e(view_mode)}&league={_e(league)}">Volver</a>'
@@ -2341,6 +2420,7 @@ informativa, no una señal de apuesta.</em>
         <span class="state {fixture.state}">{_e(fixture.state_label)}</span>
       </div>
       {snapshots}
+      {result_estimate}
       {explanations}
       {evidence}
       <table class="forecast-table">
@@ -2391,6 +2471,64 @@ def _forecast_snapshot_section(fixture: ForecastFixture) -> str:
         </thead>
         <tbody>{rows}</tbody>
       </table>
+    </section>
+    """
+
+
+def _result_estimate_detail_section(fixture: ForecastFixture) -> str:
+    one_x_two = _result_markets_by_selection(fixture, "1X2")
+    double_chance = _result_markets_by_selection(fixture, "double_chance")
+    if not {"home", "draw", "away"}.issubset(one_x_two):
+        return ""
+    result_rows = "".join(
+        f"""
+        <tr>
+          <td>{_e(_result_selection_label(selection, fixture))}</td>
+          <td>{_pct(market.prob)}</td>
+          <td>{_num(market.fair_odds)}</td>
+        </tr>
+        """
+        for selection, market in (
+            ("home", one_x_two["home"]),
+            ("draw", one_x_two["draw"]),
+            ("away", one_x_two["away"]),
+        )
+    )
+    dc_rows = "".join(
+        f"""
+        <tr>
+          <td>{_e(_double_chance_label(market.selection, fixture))}</td>
+          <td>{_pct(market.prob)}</td>
+          <td>{_num(market.fair_odds)}</td>
+        </tr>
+        """
+        for market in sorted(double_chance.values(), key=lambda item: item.selection)
+    )
+    if not dc_rows:
+        dc_rows = '<tr><td colspan="3" class="empty">Sin doble oportunidad disponible.</td></tr>'
+    return f"""
+    <section class="result-detail-panel" aria-label="Resultado estimado">
+      <h2>Resultado estimado y doble oportunidad</h2>
+      <p>
+        Diagnostico secundario derivado de la matriz de marcadores del modelo.
+        La calibracion 1X2 por liga esta en revision; no es recomendacion.
+      </p>
+      <div class="result-detail-grid">
+        <div>
+          <h3>Resultado</h3>
+          <table class="forecast-table">
+            <thead><tr><th>Seleccion</th><th>Probabilidad</th><th>Precio teorico</th></tr></thead>
+            <tbody>{result_rows}</tbody>
+          </table>
+        </div>
+        <div>
+          <h3>Doble oportunidad</h3>
+          <table class="forecast-table">
+            <thead><tr><th>Seleccion</th><th>Probabilidad</th><th>Precio teorico</th></tr></thead>
+            <tbody>{dc_rows}</tbody>
+          </table>
+        </div>
+      </div>
     </section>
     """
 
@@ -2613,6 +2751,37 @@ def _forecast_label(market: ForecastMarket | None) -> str:
     if market.market == "BTTS":
         return "Ambos anotan: si" if market.selection == "yes" else "Ambos anotan: no"
     return f"{market.market} {market.selection}"
+
+
+def _result_markets_by_selection(
+    fixture: ForecastFixture,
+    market_name: str,
+) -> dict[str, ForecastMarket]:
+    return {
+        market.selection: market
+        for market in fixture.result_markets
+        if market.market == market_name
+    }
+
+
+def _result_selection_label(selection: str, fixture: ForecastFixture) -> str:
+    if selection == "home":
+        return f"Gana {fixture.home}"
+    if selection == "draw":
+        return "Empate"
+    if selection == "away":
+        return f"Gana {fixture.away}"
+    return selection
+
+
+def _double_chance_label(selection: str, fixture: ForecastFixture) -> str:
+    if selection == "1X":
+        return f"{fixture.home} o empate"
+    if selection == "X2":
+        return f"{fixture.away} o empate"
+    if selection == "12":
+        return "Cualquier equipo gana"
+    return selection
 
 
 def _forecast_family_label(market: ForecastMarket) -> str:
@@ -3853,6 +4022,68 @@ p { color: var(--muted); margin: 4px 0 0; }
   font-size: 12px;
   margin-top: 7px;
 }
+.result-estimate-card {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(220px, 1fr);
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #cfe5d6;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #fbfffd, #eefbf3);
+}
+.result-estimate-card span,
+.result-estimate-card small {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+}
+.result-estimate-card strong {
+  display: block;
+  margin: 4px 0;
+  color: var(--secondary);
+  font-size: 18px;
+}
+.result-estimate-card ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.result-estimate-card li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+.result-estimate-card li strong {
+  margin: 0;
+  font-size: 15px;
+}
+.result-detail-panel {
+  border: 1px solid #cfe5d6;
+  border-radius: 8px;
+  background: #fbfffd;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.result-detail-panel h2,
+.result-detail-panel h3 {
+  color: var(--secondary);
+}
+.result-detail-panel p {
+  color: var(--muted);
+  margin-top: 0;
+}
+.result-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
 .prediction-insight {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -4057,6 +4288,8 @@ p { color: var(--muted); margin: 4px 0 0; }
   .health-summary-grid { grid-template-columns: 1fr; }
   .match-grid { grid-template-columns: 1fr; }
   .primary-list { grid-template-columns: 1fr; }
+  .result-estimate-card { grid-template-columns: 1fr; }
+  .result-detail-grid { grid-template-columns: 1fr; }
   .odds-coverage-grid { grid-template-columns: 1fr; }
   .upcoming-list { grid-template-columns: 1fr; }
   .match-modal { padding: 10px; }

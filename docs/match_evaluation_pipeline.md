@@ -50,6 +50,7 @@ Provider fixtures/history
 | `PlattCalibrator` | `src/scorerecord/models/calibration.py` | Calibrates binary goal markets where enough historical rows exist. | Calibrator scope stored in artifact JSON. |
 | `select_primary_forecasts` | `src/scorerecord/forecast_policy.py` | Chooses OU2.5 GOALS principal and BTTS principal. | Excludes 1X2, exact score, double chance, OU1.5, OU3.5 from principal selection. |
 | `signal_strength` | `src/scorerecord/forecast_policy.py` | Labels `NO_SIGNAL`, `LEAN`, `MODERATE`, `STRONG`/display bands. | Magnitude label only; not betting confidence. |
+| `Resultado estimado` | `src/scorerecord/gui.py` | Shows secondary 1X2 and double-chance diagnostics from the same score matrix. | Not a primary forecast; league 1X2 calibration remains diagnostic. |
 
 ## Quality, evidence, and GUI
 
@@ -72,6 +73,8 @@ Provider fixtures/history
 | `scorerecord market-benchmark-report` | `src/scorerecord/evaluate/backtest.py` | Compares model probabilities against fair historical market probabilities. |
 | `scorerecord calibration-diagnostics` | `src/scorerecord/evaluate/calibration_diagnostics.py` | Segmented calibration diagnostics before changing models/policies. |
 | `scorerecord multi-league-readiness-report` | `src/scorerecord/ingest/readiness.py` | Checks if each league has history, fixtures, ratings, and predictions. |
+| `scorerecord one-x-two-calibration-report` | `src/scorerecord/evaluate/one_x_two_calibration.py` | League-scoped walk-forward 1X2 diagnostics for Dixon-Coles vs baselines. |
+| `scorerecord provider-stats-probe` | `src/scorerecord/ingest/provider_stats_probe.py` | Read-only SportMonks/TheStatsAPI coverage probe for stats and corners. |
 | `scripts/run_phase13_audit.py` | audit script | Full production integration audit for artifact separation, provenance, GUI, health, and readiness. |
 
 ## Operational cadence
@@ -107,3 +110,17 @@ Continental competitions such as Champions League, Europa League, Libertadores,
 and Sudamericana are provider-watchlist competitions only until ScoreRecord has
 explicit historical scope, artifact policy, alias coverage, and readiness gates
 for each one.
+
+## Corners gate
+
+Corners must not be modeled from the goal matrix. The accepted path is:
+
+1. Run `provider-stats-probe` for SportMonks and TheStatsAPI across active GUI
+   leagues.
+2. Accept a league for corners only when recent finished-match coverage is
+   `CORNERS_COVERAGE_OK` from at least one provider and provider IDs can be
+   mapped safely.
+3. Populate the existing `fixture_stats` table only after coverage is accepted.
+4. Build a simple league/team/home-away corners baseline and benchmark it before
+   adding markets such as `corners_over_8.5`, `corners_over_9.5`, or team
+   corners to the GUI.

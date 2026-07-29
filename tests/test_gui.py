@@ -118,6 +118,30 @@ def _insert_forecast_quality(
     )
 
 
+def _insert_result_predictions(conn: sqlite3.Connection, *, run_id: int) -> None:
+    for market, selection, prob in [
+        ("1X2", "home", 0.42),
+        ("1X2", "draw", 0.30),
+        ("1X2", "away", 0.28),
+        ("double_chance", "1X", 0.72),
+        ("double_chance", "12", 0.70),
+        ("double_chance", "X2", 0.58),
+    ]:
+        conn.execute(
+            """
+            INSERT INTO prediction (
+              run_id, fixture_id, artifact_id, model, market, selection, prob,
+              fair_odds, generated_utc, model_version
+            )
+            VALUES (
+              ?, 'm-forecast', 'artifact-forecast-1', 'dixon_coles',
+              ?, ?, ?, ?, '2026-07-04T12:00:00+00:00', ?
+            )
+            """,
+            (run_id, market, selection, prob, 1 / prob, MODEL_VERSION),
+        )
+
+
 def _insert_forecast_insight_inputs(conn: sqlite3.Connection, *, run_id: int) -> None:
     conn.execute(
         """
@@ -755,6 +779,31 @@ def test_forecast_selector_ignores_uncalibrated_1x2_rows() -> None:
     assert "1X2" not in html
 
 
+def test_forecast_card_renders_secondary_result_estimate() -> None:
+    conn = _conn()
+    run_id = _insert_forecast_fixture(conn)
+    _insert_result_predictions(conn, run_id=run_id)
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    html = render_today_forecast(
+        data, settings=Settings(db_path=Path(""), raw_dir=Path("")), refresh_seconds=60
+    )
+
+    fixture = data.fixtures[0]
+    assert all(market.market != "1X2" for market in fixture.markets)
+    assert all(market.market != "1X2" for market in fixture.primary_markets)
+    assert any(market.market == "1X2" for market in fixture.result_markets)
+    assert "Resultado estimado" in html
+    assert "Gana Mexico" in html
+    assert "Mexico o empate" in html
+    assert "Kelly" not in html
+    assert "stake" not in html.lower()
+
+
 def test_forecast_match_renders_goal_market_detail() -> None:
     conn = _conn()
     _insert_forecast_fixture(conn)
@@ -776,6 +825,27 @@ def test_forecast_match_renders_goal_market_detail() -> None:
     assert "No es una cuota real" in html
     assert "OU2.5" in html
     assert "Ambos anotan: si" in html
+
+
+def test_forecast_match_renders_result_and_double_chance_detail() -> None:
+    conn = _conn()
+    run_id = _insert_forecast_fixture(conn)
+    _insert_result_predictions(conn, run_id=run_id)
+
+    data = load_forecast_data(
+        conn,
+        fixture_id="m-forecast",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    html = render_match_forecast(
+        data, "m-forecast", settings=Settings(db_path=Path(""), raw_dir=Path(""))
+    )
+
+    assert "Resultado estimado y doble oportunidad" in html
+    assert "Gana Mexico" in html
+    assert "Empate" in html
+    assert "Canada o empate" in html
+    assert "calibracion 1X2 por liga esta en revision" in html
 
 
 def test_forecast_match_partial_is_modal_content_only() -> None:
