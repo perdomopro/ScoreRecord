@@ -7,6 +7,7 @@ from scorerecord.gui import (
     load_dashboard_data,
     load_forecast_data,
     render_dashboard,
+    render_history_page,
     render_health_page,
     render_home_page,
     render_match_forecast,
@@ -490,7 +491,7 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert "Pronostico principal del modelo (BTTS)" in html
     assert 'data-signal="NO_SIGNAL"' in html
     assert html.count('data-signal="NO_SIGNAL"') >= 2
-    assert "Sin senal clara" in html
+    assert "Sin señal clara" in html
     assert "No es recomendacion de apuesta" in html
     assert "Mexico" in html
     assert "Canada" in html
@@ -528,7 +529,10 @@ def test_home_page_is_landing_without_top_nav() -> None:
     assert "Argentina" in html
     assert "Brasileirao" in html
     assert "Health" in html
-    assert "FORECAST_ONLY" in html
+    assert "Historial" in html
+    assert "FORECAST_ONLY" not in html
+    assert "Proximos partidos cargados" not in html
+    assert "FORECAST_ONLY</strong>" not in html
     assert "Auditoria tecnica" not in html
 
 
@@ -655,7 +659,7 @@ def test_forecast_signal_strength_marks_ou25_moderate() -> None:
     assert data.fixtures[0].primary.selection == "over"
     assert "OU2.5: Over 59.00%" in html
     assert 'data-signal="MODERATE"' in html
-    assert "Senal moderada" in html
+    assert "Señal moderada" in html
 
 
 def test_forecast_quality_panel_renders_ok_and_warn() -> None:
@@ -820,7 +824,7 @@ def test_forecast_match_renders_goal_market_detail() -> None:
     assert "Mexico" in html
     assert "Canada" in html
     assert "Precio teorico del modelo" in html
-    assert "Fuerza de senal" in html
+    assert "Fuerza de señal" in html
     assert "90 min / tiempo reglamentario" in html
     assert "No es una cuota real" in html
     assert "OU2.5" in html
@@ -1111,11 +1115,52 @@ def test_forecast_renders_upcoming_fixture_links() -> None:
         settings=Settings(db_path=Path(""), raw_dir=Path("")),
         refresh_seconds=60,
     )
+    history_html = render_history_page(
+        data,
+        active_tab="upcoming",
+        settings=Settings(db_path=Path(""), raw_dir=Path("")),
+        refresh_seconds=60,
+    )
 
-    assert "Proximos partidos cargados" in html
-    assert "2026-07-27" in html
-    assert "Liga MX" in html
+    assert "Proximos partidos cargados" not in html
+    assert "Todos los próximos partidos cargados" in history_html
+    assert "2026-07-27" in history_html
+    assert "Liga MX" in history_html
     assert "Mundial 2026" not in html
+
+
+def test_history_page_renders_past_fixtures() -> None:
+    conn = _conn()
+    _insert_forecast_fixture(conn)
+    conn.execute(
+        """
+        UPDATE fixture
+        SET league_code='EPL', competition='English Premier League',
+            kickoff_utc='2026-07-20T18:00:00Z',
+            kickoff_local='2026-07-20T12:00:00',
+            home_score=2,
+            away_score=1
+        WHERE fixture_id='m-forecast'
+        """
+    )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-08-02",
+        now_utc=datetime(2026, 8, 2, 12, 0, tzinfo=UTC),
+        league_filter="EPL",
+    )
+    html = render_history_page(
+        data,
+        active_tab="past",
+        settings=Settings(db_path=Path(""), raw_dir=Path("")),
+        refresh_seconds=60,
+    )
+
+    assert "Todos los partidos pasados" in html
+    assert "Mexico vs Canada" in html
+    assert "2-1" in html
+    assert "Con predicción" in html
 
 
 def test_forecast_match_preserves_league() -> None:

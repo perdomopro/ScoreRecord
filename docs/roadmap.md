@@ -60,6 +60,9 @@ Open loops that remain after the remote gate:
   the old `scorerecord-epl-pilot.timer` is disabled to avoid duplicate work.
 - Result probabilities are visible only as secondary diagnostics; OU2.5/BTTS
   remain the principal forecast families.
+- Forecast GUI navigation was polished on 2026-08-02: `/` is a clean landing
+  page, `/today` no longer repeats the global upcoming-fixture inventory, and
+  `/history` owns upcoming loaded fixtures plus past loaded fixtures.
 - Corners remain gated behind `provider-stats-probe` coverage and a future
   benchmark; no corners market is shown in the GUI yet.
 
@@ -317,7 +320,7 @@ Technical work:
 Exit criteria:
 
 - A fixture can show independent principal forecasts for goals and BTTS.
-- Probabilities close to 50% render as `Sin senal clara`, not as strong forecasts.
+- Probabilities close to 50% render as `Sin señal clara`, not as strong forecasts.
 - Calibration, OU monotonicity, Elo coverage, and market-validation status are visible.
 - No page uses EV, Kelly, stake, value, or betting recommendation language.
 - Tests prove that an uncalibrated `1X2` row cannot be selected by the forecast UI.

@@ -185,6 +185,19 @@ class UpcomingFixtureLink:
 
 
 @dataclass(frozen=True)
+class HistoryFixtureLink:
+    fixture_id: str
+    display_date: str
+    display_time: str
+    league_code: str | None
+    competition: str | None
+    home: str
+    away: str
+    score: str | None
+    predicted: bool
+
+
+@dataclass(frozen=True)
 class ForecastData:
     target_date: str
     previous_date: str
@@ -207,6 +220,7 @@ class ForecastData:
     league_filter: str = "ALL"
     research_models: list[dict[str, Any]] = field(default_factory=list)
     upcoming_fixtures: list[UpcomingFixtureLink] = field(default_factory=list)
+    past_fixtures: list[HistoryFixtureLink] = field(default_factory=list)
 
 
 def serve_dashboard(
@@ -234,6 +248,9 @@ def serve_dashboard(
                 return
             if parsed.path == "/today":
                 self._render_today(params)
+                return
+            if parsed.path == "/history":
+                self._render_history(params)
                 return
             if parsed.path == "/health":
                 self._render_health(params)
@@ -332,6 +349,31 @@ def serve_dashboard(
                 body = render_error(exc)
             self._write(body)
 
+        def _render_history(self, params: dict[str, list[str]]) -> None:
+            date_filter = _parse_date(params.get("date", [""])[0])
+            league_filter = gui_league_filter(params.get("league", ["all"])[0])
+            tab = str(params.get("tab", ["upcoming"])[0]).strip().lower()
+            if tab not in {"upcoming", "past"}:
+                tab = "upcoming"
+            try:
+                with connect(db_path) as conn:
+                    data = load_forecast_data(
+                        conn,
+                        target_date=date_filter,
+                        view_mode="forecast",
+                        league_filter=league_filter,
+                        settings=settings,
+                    )
+                body = render_history_page(
+                    data,
+                    active_tab=tab,
+                    settings=settings,
+                    refresh_seconds=refresh_seconds,
+                )
+            except Exception as exc:  # pragma: no cover - defensive web path
+                body = render_error(exc)
+            self._write(body)
+
         def _render_audit(self, params: dict[str, list[str]]) -> None:
             selected_run_id = _parse_int(params.get("run_id", [""])[0])
             date_filter = _parse_date(params.get("date", [""])[0])
@@ -398,7 +440,13 @@ def load_forecast_data(
         display_tz=display_tz,
         now_utc=now,
         selected_date=selected_date,
-        limit=16,
+        limit=2000,
+    )
+    past_fixtures = _past_fixture_links(
+        conn,
+        display_tz=display_tz,
+        now_utc=now,
+        league_filter=league_filter,
     )
     fixture_ids = [str(row["fixture_id"]) for row in rows]
     latest_run_id = _latest_prediction_run_id(conn, fixture_ids=fixture_ids)
@@ -528,6 +576,7 @@ def load_forecast_data(
         league_filter=league_filter,
         research_models=research_models,
         upcoming_fixtures=upcoming_fixtures,
+        past_fixtures=past_fixtures,
     )
 
 
@@ -536,7 +585,6 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
     view_mode = data.view_mode
     league = data.league_filter
     league_nav = _league_nav(data)
-    upcoming = _upcoming_fixture_section(data)
     date_toolbar = _date_toolbar(data)
 
     if view_mode == "research":
@@ -552,21 +600,26 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
                 </li>'''
         cards += "</ul>"
     else:
-        current_comp = None
+        grouped_cards: dict[str, str] = {}
         for fixture in data.fixtures:
             if view_mode == "paper" and not fixture.paper_picks:
                 continue
             if view_mode == "forecast" and not fixture.primary:
                 continue
-            
-            # Competition Grouping
+
             if league == "ALL":
                 comp_label = fixture.competition or league_label(fixture.league_code)
-                if comp_label != current_comp:
-                    current_comp = comp_label
-                    cards += f'<h2 style="margin-top:2rem;margin-bottom:1rem;color:var(--txt-primary);border-bottom:1px solid var(--border);padding-bottom:0.5rem;">{_e(comp_label)}</h2>'
+                grouped_cards[comp_label] = (
+                    grouped_cards.get(comp_label, "") + _forecast_card(fixture, view_mode)
+                )
+            else:
+                cards += _forecast_card(fixture, view_mode)
 
-            cards += _forecast_card(fixture, view_mode)
+        if grouped_cards:
+            cards = "".join(
+                _league_match_group(comp_label, group_cards)
+                for comp_label, group_cards in grouped_cards.items()
+            )
 
         if not cards:
             if view_mode == "paper":
@@ -592,9 +645,8 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
     {_forecast_warning_banner(data)}
     {league_nav}
     {league_banner}
-    {upcoming}
     {date_toolbar}
-    <section class="match-grid">{cards}</section>
+    {cards if league == "ALL" else f'<section class="match-grid">{cards}</section>'}
   </main>
   {_match_modal_shell()}
   {_forecast_modal_script()}
@@ -620,10 +672,51 @@ def render_home_page(
 <body class="forecast-page landing-page">
   <main class="landing-shell">
     {_home_hero(data, landing=True)}
-    {_recreational_warning_banner(settings)}
-    {_forecast_warning_banner(data)}
-    {_upcoming_fixture_section(data)}
   </main>
+</body>
+</html>"""
+
+
+def render_history_page(
+    data: ForecastData,
+    *,
+    active_tab: str = "upcoming",
+    settings: Settings | None = None,
+    refresh_seconds: int = 60,
+) -> str:
+    active_tab = active_tab if active_tab in {"upcoming", "past"} else "upcoming"
+    content = (
+        _history_upcoming_section(data)
+        if active_tab == "upcoming"
+        else _history_past_section(data)
+    )
+    return f"""<!doctype html>
+<html lang="es" data-theme="scorerecord">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="{int(refresh_seconds)}">
+  <title>ScoreRecord Historial</title>
+  <style>{_forecast_css()}</style>
+</head>
+<body class="forecast-page">
+  {_forecast_nav(data, active="history")}
+  <main class="forecast-shell">
+    <section class="health-hero history-hero">
+      <span>Historial</span>
+      <h1>Partidos cargados</h1>
+      <p>
+        Inventario de próximos fixtures y partidos pasados disponibles en ScoreRecord.
+        Esta vista ayuda a saber qué está cargado, analizado y listo para auditoría.
+      </p>
+    </section>
+    {_recreational_warning_banner(settings)}
+    {_league_nav(data, base_path="/history", extra_params={"tab": active_tab})}
+    {_history_tabs(data, active_tab)}
+    {content}
+  </main>
+  {_match_modal_shell()}
+  {_forecast_modal_script()}
 </body>
 </html>"""
 
@@ -690,6 +783,13 @@ def _home_hero(data: ForecastData, *, landing: bool = False) -> str:
       <div class="hero-actions">
         <a class="btn primary" href="/today?view=forecast&league=ALL">Ver partidos</a>
         {league_buttons}
+        <div class="hero-dropdown">
+          <button class="btn ghost" type="button">Historial</button>
+          <div class="nav-dropdown-menu">
+            <a href="/history?tab=upcoming&league={_e(data.league_filter)}">Próximos cargados</a>
+            <a href="/history?tab=past&league={_e(data.league_filter)}">Partidos pasados</a>
+          </div>
+        </div>
         <a class="btn ghost" href="/health?date={_e(data.target_date)}&league={_e(data.league_filter)}">Health</a>
       </div>
     </section>
@@ -830,16 +930,24 @@ def _forecast_modal_script() -> str:
     """
 
 
-def _league_nav(data: ForecastData) -> str:
+def _league_nav(
+    data: ForecastData,
+    *,
+    base_path: str = "/today",
+    extra_params: dict[str, str] | None = None,
+) -> str:
     league = data.league_filter
     view_mode = data.view_mode
 
     def link(target: str, label: str) -> str:
         cls = "btn primary" if league == target else "btn ghost"
-        href = (
-            f"/today?date={_e(data.target_date)}&view={_e(view_mode)}"
-            f"&league={_e(target)}"
-        )
+        params = {
+            "date": data.target_date,
+            "view": view_mode,
+            "league": target,
+            **(extra_params or {}),
+        }
+        href = f"{base_path}?{_e(urlencode(params))}"
         return f'<a class="{cls}" href="{href}">{_e(label)}</a>'
 
     links = [link("ALL", "Todo")]
@@ -858,6 +966,15 @@ def _league_banner(league: str) -> str:
     """
 
 
+def _league_match_group(label: str, cards: str) -> str:
+    return f"""
+    <section class="league-match-group">
+      <h2 class="league-group-title">{_e(label)}</h2>
+      <div class="match-grid">{cards}</div>
+    </section>
+    """
+
+
 def _upcoming_fixture_section(data: ForecastData) -> str:
     if not data.upcoming_fixtures:
         return ""
@@ -865,10 +982,56 @@ def _upcoming_fixture_section(data: ForecastData) -> str:
     return f"""
     <section class="upcoming-panel">
       <div class="section-head">
-        <h2>Proximos partidos cargados</h2>
+        <h2>Próximos partidos cargados</h2>
         <span>{len(data.upcoming_fixtures)} visibles</span>
       </div>
       <div class="upcoming-list">{rows}</div>
+    </section>
+    """
+
+
+def _history_tabs(data: ForecastData, active_tab: str) -> str:
+    league = data.league_filter
+    upcoming_class = "btn primary" if active_tab == "upcoming" else "btn ghost"
+    past_class = "btn primary" if active_tab == "past" else "btn ghost"
+    return f"""
+    <section class="history-tabs" aria-label="Historial de partidos">
+      <a class="{upcoming_class}" href="/history?tab=upcoming&league={_e(league)}">
+        Próximos partidos cargados
+      </a>
+      <a class="{past_class}" href="/history?tab=past&league={_e(league)}">
+        Todos los partidos pasados
+      </a>
+    </section>
+    """
+
+
+def _history_upcoming_section(data: ForecastData) -> str:
+    if not data.upcoming_fixtures:
+        return _empty_forecast_state("No hay próximos partidos cargados para esta liga.")
+    rows = "".join(_upcoming_fixture_item(item, data) for item in data.upcoming_fixtures)
+    return f"""
+    <section class="upcoming-panel history-panel">
+      <div class="section-head">
+        <h2>Todos los próximos partidos cargados</h2>
+        <span>{len(data.upcoming_fixtures)} visibles</span>
+      </div>
+      <div class="upcoming-list">{rows}</div>
+    </section>
+    """
+
+
+def _history_past_section(data: ForecastData) -> str:
+    if not data.past_fixtures:
+        return _empty_forecast_state("No hay partidos pasados cargados para esta liga.")
+    rows = "".join(_history_past_item(item, data) for item in data.past_fixtures)
+    return f"""
+    <section class="upcoming-panel history-panel">
+      <div class="section-head">
+        <h2>Todos los partidos pasados</h2>
+        <span>{len(data.past_fixtures)} cargados</span>
+      </div>
+      <div class="history-list">{rows}</div>
     </section>
     """
 
@@ -895,6 +1058,30 @@ def _upcoming_fixture_item(item: UpcomingFixtureLink, data: ForecastData) -> str
         <small>{_e(competition)} · {_e(league)}</small>
         <a href="{match_href}" data-detail-url="{modal_href}">{_e(item.home)} vs {_e(item.away)}</a>
       </div>
+    </article>
+    """
+
+
+def _history_past_item(item: HistoryFixtureLink, data: ForecastData) -> str:
+    match_href = (
+        f"/match/{_e(item.fixture_id)}?view={_e(data.view_mode)}"
+        f"&league={_e(data.league_filter)}"
+    )
+    modal_href = f"{match_href}&partial=1"
+    competition = item.competition or league_label(item.league_code)
+    predicted = "Con predicción" if item.predicted else "Sin predicción"
+    return f"""
+    <article class="history-item">
+      <div class="upcoming-date">
+        <strong>{_e(item.display_date)}</strong>
+        <span>{_e(item.display_time)}</span>
+      </div>
+      <div>
+        <small>{_e(competition)} · {_e(item.league_code or 'ALL')}</small>
+        <a href="{match_href}" data-detail-url="{modal_href}">{_e(item.home)} vs {_e(item.away)}</a>
+      </div>
+      <strong class="score-pill">{_e(item.score or 'Final')}</strong>
+      <span class="history-prediction-state">{_e(predicted)}</span>
     </article>
     """
 
@@ -1552,6 +1739,73 @@ def _upcoming_fixture_links(
     return upcoming[:limit]
 
 
+def _past_fixture_links(
+    conn: sqlite3.Connection,
+    *,
+    display_tz: ZoneInfo,
+    now_utc: datetime,
+    league_filter: str,
+) -> list[HistoryFixtureLink]:
+    league_sql = ""
+    params: list[Any] = [now_utc.isoformat()]
+    if league_filter != "ALL":
+        league_sql = "AND f.league_code = ?"
+        params.append(league_filter)
+    rows = conn.execute(
+        f"""
+        SELECT
+          f.fixture_id,
+          f.kickoff_local,
+          f.kickoff_utc,
+          f.league_code,
+          f.competition,
+          f.home_score,
+          f.away_score,
+          f.home_placeholder,
+          f.away_placeholder,
+          ht.canonical AS home,
+          at.canonical AS away,
+          CASE WHEN p.fixture_id IS NULL THEN 0 ELSE 1 END AS predicted
+        FROM fixture f
+        LEFT JOIN team ht ON ht.team_id = f.home_id
+        LEFT JOIN team at ON at.team_id = f.away_id
+        LEFT JOIN (SELECT DISTINCT fixture_id FROM prediction) p
+          ON p.fixture_id = f.fixture_id
+        WHERE f.home_score IS NOT NULL
+          AND f.away_score IS NOT NULL
+          AND datetime(f.kickoff_utc) < datetime(?)
+          {league_sql}
+        ORDER BY datetime(f.kickoff_utc) DESC, f.fixture_id
+        """,
+        tuple(params),
+    ).fetchall()
+    past: list[HistoryFixtureLink] = []
+    for row in rows:
+        kickoff_utc = parse_kickoff_utc(
+            kickoff_utc=row["kickoff_utc"],
+            kickoff_local=row["kickoff_local"],
+        )
+        if kickoff_utc is None:
+            continue
+        local_dt = kickoff_utc.astimezone(display_tz)
+        home = str(row["home"] or row["home_placeholder"] or "Por definir")
+        away = str(row["away"] or row["away_placeholder"] or "Por definir")
+        past.append(
+            HistoryFixtureLink(
+                fixture_id=str(row["fixture_id"]),
+                display_date=local_dt.date().isoformat(),
+                display_time=local_dt.strftime("%H:%M"),
+                league_code=row["league_code"],
+                competition=row["competition"],
+                home=home,
+                away=away,
+                score=f"{int(row['home_score'])}-{int(row['away_score'])}",
+                predicted=bool(row["predicted"]),
+            )
+        )
+    return past
+
+
 def _group_forecast_predictions(
     rows: list[sqlite3.Row],
 ) -> dict[str, list[ForecastMarket]]:
@@ -2039,6 +2293,7 @@ def _forecast_state(
 def _forecast_nav(data: ForecastData, *, active: str = "matches") -> str:
     league = getattr(data, "league_filter", "ALL")
     matches_class = "active" if active == "matches" else ""
+    history_class = "active" if active == "history" else ""
     health_class = "active" if active == "health" else ""
     return f"""
     <header class="forecast-nav">
@@ -2048,6 +2303,13 @@ def _forecast_nav(data: ForecastData, *, active: str = "matches") -> str:
       </div>
       <nav>
         <a class="{matches_class}" href="/today?date={_e(data.target_date)}&view=forecast&league={_e(league)}">Partidos</a>
+        <div class="nav-dropdown">
+          <button class="{history_class}" type="button">Historial</button>
+          <div class="nav-dropdown-menu">
+            <a href="/history?tab=upcoming&league={_e(league)}">Próximos cargados</a>
+            <a href="/history?tab=past&league={_e(league)}">Partidos pasados</a>
+          </div>
+        </div>
         <a class="{health_class}" href="/health?date={_e(data.target_date)}&league={_e(league)}">Health</a>
         <span class="badge forecast">FORECAST_ONLY</span>
       </nav>
@@ -2427,7 +2689,7 @@ informativa, no una señal de apuesta.</em>
         <thead>
           <tr>
             <th>Mercado</th><th>Seleccion</th><th>Probabilidad</th>
-            <th>Fuerza de senal</th>
+            <th>Fuerza de señal</th>
             <th>Precio teorico del modelo</th><th>Artifact</th>
           </tr>
         </thead>
@@ -2466,7 +2728,7 @@ def _forecast_snapshot_section(fixture: ForecastFixture) -> str:
         <thead>
           <tr>
             <th>As of UTC</th><th>Mercado</th><th>Seleccion</th>
-            <th>Probabilidad</th><th>Senal</th><th>Resultado</th>
+            <th>Probabilidad</th><th>Señal</th><th>Resultado</th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
@@ -3504,7 +3766,7 @@ body.landing-page {
   z-index: 20;
 }
 .forecast-nav nav { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.forecast-nav a, .btn {
+.forecast-nav a, .forecast-nav button, .btn {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 9px 13px;
@@ -3513,12 +3775,48 @@ body.landing-page {
   background: var(--surface);
   text-decoration: none;
   font-weight: 700;
+  font: inherit;
+  cursor: pointer;
 }
 .forecast-nav a:hover, .btn:hover,
-.forecast-nav a.active, .btn.primary {
+.forecast-nav button:hover,
+.forecast-nav a.active, .forecast-nav button.active, .btn.primary {
   border-color: var(--primary);
   color: var(--secondary);
   background: var(--primary-soft);
+}
+.nav-dropdown, .hero-dropdown {
+  position: relative;
+  display: inline-flex;
+}
+.nav-dropdown-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  padding: 8px;
+  border: 1px solid rgba(28, 51, 29, 0.14);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.98);
+  box-shadow: 0 18px 45px rgba(28, 51, 29, 0.16);
+  z-index: 50;
+}
+.hero-dropdown .nav-dropdown-menu {
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.nav-dropdown:hover .nav-dropdown-menu,
+.nav-dropdown:focus-within .nav-dropdown-menu,
+.hero-dropdown:hover .nav-dropdown-menu,
+.hero-dropdown:focus-within .nav-dropdown-menu {
+  display: grid;
+  gap: 6px;
+}
+.nav-dropdown-menu a {
+  display: block;
+  white-space: nowrap;
 }
 .btn.primary {
   background: var(--primary);
@@ -3750,6 +4048,16 @@ body.landing-page {
 }
 .league-banner h2 { margin: 0 0 4px; color: var(--secondary); }
 .league-banner div { color: var(--muted); font-size: 13px; }
+.league-match-group {
+  margin: 22px 0 28px;
+}
+.league-group-title {
+  margin: 0 0 12px;
+  padding: 0 0 8px;
+  color: var(--secondary);
+  font-size: clamp(20px, 2.5vw, 26px);
+  border-bottom: 1px solid rgba(28, 51, 29, 0.16);
+}
 .section-head {
   display: flex;
   justify-content: space-between;
@@ -3782,6 +4090,51 @@ body.landing-page {
   color: var(--blue) !important;
 }
 .upcoming-date span { color: var(--muted); font-weight: 700; }
+.history-hero {
+  align-items: center;
+}
+.history-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0;
+}
+.history-panel {
+  border-left-color: var(--secondary);
+}
+.history-list {
+  display: grid;
+  gap: 8px;
+}
+.history-item {
+  display: grid;
+  grid-template-columns: 96px 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.history-item a {
+  color: var(--ink);
+  font-weight: 850;
+  text-decoration: none;
+}
+.history-item small { display: block; color: var(--muted); font-size: 12px; }
+.score-pill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--secondary);
+  color: #f3fff6;
+  white-space: nowrap;
+}
+.history-prediction-state {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
 .date-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .date-form label { color: var(--muted); font-size: 13px; }
 .date-form input {
@@ -4292,6 +4645,10 @@ p { color: var(--muted); margin: 4px 0 0; }
   .result-detail-grid { grid-template-columns: 1fr; }
   .odds-coverage-grid { grid-template-columns: 1fr; }
   .upcoming-list { grid-template-columns: 1fr; }
+  .history-item { grid-template-columns: 1fr; align-items: start; }
+  .score-pill, .history-prediction-state { width: fit-content; }
+  .nav-dropdown-menu { left: 0; right: auto; }
+  .hero-dropdown .nav-dropdown-menu { left: 0; transform: none; }
   .match-modal { padding: 10px; }
   .match-modal-panel { max-height: 92vh; padding: 10px; }
   .quality-summary { grid-template-columns: 1fr; }

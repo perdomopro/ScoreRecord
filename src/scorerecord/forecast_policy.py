@@ -51,14 +51,14 @@ def select_primary_forecasts(
 def signal_strength(prob: float) -> SignalStrength:
     delta = abs(prob - 0.50)
     if delta < 0.03:
-        return SignalStrength(SIGNAL_NO_SIGNAL, "Sin senal clara", "signal-no-signal")
+        return SignalStrength(SIGNAL_NO_SIGNAL, "Sin señal clara", "signal-no-signal")
     if delta < 0.08:
-        return SignalStrength(SIGNAL_LEAN, "Senal debil", "signal-lean")
+        return SignalStrength(SIGNAL_LEAN, "Señal débil", "signal-lean")
     if delta < 0.15:
-        return SignalStrength(SIGNAL_MODERATE, "Senal moderada", "signal-moderate")
+        return SignalStrength(SIGNAL_MODERATE, "Señal moderada", "signal-moderate")
     if delta < 0.20:
-        return SignalStrength(SIGNAL_STRONG, "Senal fuerte", "signal-strong")
-    return SignalStrength(SIGNAL_STRONG, "Senal muy fuerte", "signal-strong")
+        return SignalStrength(SIGNAL_STRONG, "Señal fuerte", "signal-strong")
+    return SignalStrength(SIGNAL_STRONG, "Señal muy fuerte", "signal-strong")
 
 
 def _market_rank(market: str) -> int:

@@ -915,7 +915,7 @@ Output:
 - Homeserver deploy applied schema version `6` and `db-health` passed after the `quality_status_json` migration. Remote focused tests passed `18 passed`, full suite passed `98 passed`, targeted `ruff` over touched Python files passed, and GUI smoke passed for `/healthz` plus `/today?date=2026-07-05`.
 - Homeserver validation after deploy: focused GUI/World Cup/fixture tests passed `18 passed`; full suite passed `89 passed`; targeted `ruff` over touched Python files passed; GUI smoke passed for `/healthz`, `/today?date=2026-07-05`, and `/match/wc2026-match-091`.
 - Homeserver validation after the `OU2.5` principal refinement: focused tests passed `18 passed`; full suite passed `89 passed`; targeted `ruff` passed; GUI smoke passed; direct forecast-data inspection confirmed `GOLES` primaries use `OU2.5` for the resolved July 5 fixtures.
-- Homeserver validation after the signal-strength and quality-panel layer: focused GUI/World Cup/fixture tests passed `20 passed`; full suite passed `91 passed`; targeted `ruff` passed; GUI smoke confirmed the model quality panel and `Fuerza de senal` appear on `/today?date=2026-07-05` and `/match/wc2026-match-091`.
+- Homeserver validation after the signal-strength and quality-panel layer: focused GUI/World Cup/fixture tests passed `20 passed`; full suite passed `91 passed`; targeted `ruff` passed; GUI smoke confirmed the model quality panel and `Fuerza de señal` appear on `/today?date=2026-07-05` and `/match/wc2026-match-091`.
 
 ### 2026-06-24 - Fase 1.5 traceability and Elo history
 
@@ -1037,8 +1037,8 @@ Output:
   Elo, calibrators, readiness, provider-fixture refresh, and current prediction
   run.
 - Refined forecast signal labels from generic "tendencia" wording to explicit
-  `Sin senal clara`, `Senal debil`, `Senal moderada`, `Senal fuerte`, and
-  `Senal muy fuerte`, while keeping internal signal codes stable for snapshots.
+  `Sin señal clara`, `Señal débil`, `Señal moderada`, `Señal fuerte`, and
+  `Señal muy fuerte`, while keeping internal signal codes stable for snapshots.
 - Deferred real performance dashboard, weekly drift detector, and permanent
   benchmark UI until forecast snapshots/results provide enough settled forward
   evidence.
@@ -1118,3 +1118,19 @@ Output:
 - Reaffirmed the corners gate: ScoreRecord already has `fixture_stats`, but it
   must not be populated or used for `corners_over_8.5`, `corners_over_9.5`, or
   team-corners models until provider coverage is proven and benchmarked.
+
+### 2026-08-02 - Forecast GUI navigation polish
+
+- Kept the landing page focused on the ScoreRecord brand, short description,
+  repository link, and primary navigation buttons only. Operational banners and
+  fixture inventory no longer render on the landing screen.
+- Added a dedicated `/history` page with tabs for upcoming loaded fixtures and
+  past loaded fixtures, plus a `Historial` dropdown in the main navigation.
+- Moved the upcoming loaded fixtures inventory out of `/today`, so `Ver
+  partidos` now shows the date/league forecast workflow without repeating the
+  global fixture inventory.
+- Fixed the competition grouping bug where a league/competition title occupied
+  a match-card slot inside the forecast grid. League titles now render as group
+  headings outside the card grid.
+- Updated visible signal labels from `Senal` to `Señal` while keeping internal
+  signal codes stable for snapshots and audit rows.
