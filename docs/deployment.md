@@ -113,8 +113,11 @@ Recommended schedule:
 - Hourly odds: `scorerecord-odds.timer`
 - Pre-play raw odds snapshots: use only after confirming the service no longer writes capture-time `is_closing=1`; closing is derived from complete `odds_snapshots` before kickoff.
 - Daily predictions + paper recommendations: keep stopped until `db-health`, `model-manifest`, `compute-edge --dry-run`, and `recommend --dry-run` are reviewed after deployment.
-- Nightly 23:30 settlement + CLV: `scorerecord-postmatch.timer`
-- Weekly monitoring, including goal-market gates and Platt coefficient drift: `scorerecord-weekly.timer`
+- Nightly 23:30 settlement + CLV: `scorerecord-postmatch.timer`; it also
+  settles frozen forecast snapshots from local fixture scores.
+- Weekly monitoring: `scorerecord-weekly.timer`; it records
+  `forecast-performance-report --record-quality`, prints `forecast-report`, then
+  runs goal-market gates, Platt coefficient drift, and DB summary.
 
 Resource limits are deliberately conservative:
 

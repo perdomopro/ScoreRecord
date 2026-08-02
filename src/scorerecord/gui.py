@@ -10,11 +10,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from scorerecord.db import connect, init_db
+from scorerecord.forecast_performance import (
+    ForecastPerformanceReport,
+    forecast_performance_report,
+)
 from scorerecord.forecast_policy import (
     FORECAST_MARKETS,
     RESULT_DIAGNOSTIC_MARKETS,
@@ -22,6 +27,8 @@ from scorerecord.forecast_policy import (
 )
 from scorerecord.forecast_policy import signal_strength as forecast_signal_strength
 from scorerecord.forecast_quality import ForecastQualityItem, forecast_quality_items
+from scorerecord.forecast_snapshots import ForecastSnapshotReport, forecast_snapshot_report
+from scorerecord.ingest.football_data import FOOTBALL_DATA_LEAGUES
 from scorerecord.league_config import GUI_LEAGUE_ORDER, gui_league_filter, league_label
 from scorerecord.odds_coverage import OddsMarketCoverage, load_fixture_odds_coverage
 from scorerecord.odds_horizons import (
@@ -186,7 +193,7 @@ class UpcomingFixtureLink:
 
 @dataclass(frozen=True)
 class HistoryFixtureLink:
-    fixture_id: str
+    fixture_id: str | None
     display_date: str
     display_time: str
     league_code: str | None
@@ -195,6 +202,30 @@ class HistoryFixtureLink:
     away: str
     score: str | None
     predicted: bool
+    source: str = "fixture"
+
+
+@dataclass(frozen=True)
+class MarketValidationMetric:
+    run_id: int | None
+    check_name: str
+    metric_name: str
+    value: float | None
+    created_utc: str | None
+
+
+@dataclass(frozen=True)
+class MarketValidationArtifact:
+    status: str
+    count: int
+    latest_created_utc: str | None
+
+
+@dataclass(frozen=True)
+class MarketValidationData:
+    artifacts: list[MarketValidationArtifact]
+    metrics: list[MarketValidationMetric]
+    summary_status: str
 
 
 @dataclass(frozen=True)
@@ -228,17 +259,30 @@ def serve_dashboard(
     *,
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
-    refresh_seconds: int = 60,
+    refresh_seconds: int = 0,
     settings: Settings | None = None,
 ) -> None:
     with connect(db_path) as conn:
         init_db(conn)
 
     class Handler(BaseHTTPRequestHandler):
+        _response_cache: dict[str, tuple[float, str, str]] = {}
+        _cache_ttl_seconds = 10.0
+
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             if parsed.path == "/healthz":
                 self._write("ok\n", content_type="text/plain; charset=utf-8")
+                return
+
+            cached = self._cache_get(self.path)
+            if cached is not None:
+                body, content_type = cached
+                self._write(
+                    body,
+                    content_type=content_type,
+                    cache_response=False,
+                )
                 return
 
             params = parse_qs(parsed.query)
@@ -254,6 +298,15 @@ def serve_dashboard(
                 return
             if parsed.path == "/health":
                 self._render_health(params)
+                return
+            if parsed.path == "/performance":
+                self._render_performance(params)
+                return
+            if parsed.path == "/market":
+                self._render_market(params)
+                return
+            if parsed.path == "/signals":
+                self._render_signals(params)
                 return
             if parsed.path.startswith("/match/"):
                 fixture_id = parsed.path.removeprefix("/match/").strip("/")
@@ -277,7 +330,8 @@ def serve_dashboard(
                         target_date=date_filter, 
                         view_mode=view_mode, 
                         league_filter=league_filter,
-                        settings=settings
+                        settings=settings,
+                        upcoming_limit=80,
                     )
                 body = render_today_forecast(
                     data, settings=settings, refresh_seconds=refresh_seconds
@@ -299,7 +353,8 @@ def serve_dashboard(
                         fixture_id=fixture_id, 
                         view_mode=view_mode, 
                         league_filter=league_filter,
-                        settings=settings
+                        settings=settings,
+                        upcoming_limit=0,
                     )
                 body = render_match_forecast(
                     data,
@@ -322,6 +377,7 @@ def serve_dashboard(
                         view_mode="forecast",
                         league_filter=league_filter,
                         settings=settings,
+                        upcoming_limit=40,
                     )
                 body = render_home_page(
                     data, settings=settings, refresh_seconds=refresh_seconds
@@ -341,6 +397,7 @@ def serve_dashboard(
                         view_mode="forecast",
                         league_filter=league_filter,
                         settings=settings,
+                        upcoming_limit=0,
                     )
                 body = render_health_page(
                     data, settings=settings, refresh_seconds=refresh_seconds
@@ -363,10 +420,84 @@ def serve_dashboard(
                         view_mode="forecast",
                         league_filter=league_filter,
                         settings=settings,
+                        upcoming_limit=2000,
+                        include_past_fixtures=True,
                     )
                 body = render_history_page(
                     data,
                     active_tab=tab,
+                    settings=settings,
+                    refresh_seconds=refresh_seconds,
+                )
+            except Exception as exc:  # pragma: no cover - defensive web path
+                body = render_error(exc)
+            self._write(body)
+
+        def _render_performance(self, params: dict[str, list[str]]) -> None:
+            date_filter = _parse_date(params.get("date", [""])[0])
+            league_filter = gui_league_filter(params.get("league", ["all"])[0])
+            try:
+                with connect(db_path) as conn:
+                    data = load_forecast_data(
+                        conn,
+                        target_date=date_filter,
+                        view_mode="forecast",
+                        league_filter=league_filter,
+                        settings=settings,
+                        upcoming_limit=0,
+                    )
+                    report = forecast_performance_report(conn)
+                    snapshot_report = forecast_snapshot_report(conn)
+                body = render_performance_page(
+                    data,
+                    report,
+                    snapshot_report,
+                    settings=settings,
+                    refresh_seconds=refresh_seconds,
+                )
+            except Exception as exc:  # pragma: no cover - defensive web path
+                body = render_error(exc)
+            self._write(body)
+
+        def _render_market(self, params: dict[str, list[str]]) -> None:
+            date_filter = _parse_date(params.get("date", [""])[0])
+            league_filter = gui_league_filter(params.get("league", ["all"])[0])
+            try:
+                with connect(db_path) as conn:
+                    data = load_forecast_data(
+                        conn,
+                        target_date=date_filter,
+                        view_mode="forecast",
+                        league_filter=league_filter,
+                        settings=settings,
+                        upcoming_limit=0,
+                    )
+                    market_data = load_market_validation_data(conn)
+                body = render_market_page(
+                    data,
+                    market_data,
+                    settings=settings,
+                    refresh_seconds=refresh_seconds,
+                )
+            except Exception as exc:  # pragma: no cover - defensive web path
+                body = render_error(exc)
+            self._write(body)
+
+        def _render_signals(self, params: dict[str, list[str]]) -> None:
+            date_filter = _parse_date(params.get("date", [""])[0])
+            league_filter = gui_league_filter(params.get("league", ["all"])[0])
+            try:
+                with connect(db_path) as conn:
+                    data = load_forecast_data(
+                        conn,
+                        target_date=date_filter,
+                        view_mode="forecast",
+                        league_filter=league_filter,
+                        settings=settings,
+                        upcoming_limit=80,
+                    )
+                body = render_signals_page(
+                    data,
                     settings=settings,
                     refresh_seconds=refresh_seconds,
                 )
@@ -400,8 +531,11 @@ def serve_dashboard(
             *,
             status: int = 200,
             content_type: str = "text/html; charset=utf-8",
+            cache_response: bool = True,
         ) -> None:
             encoded = body.encode("utf-8")
+            if cache_response and status == 200 and "Dashboard Error" not in body:
+                self._cache_set(self.path, body, content_type)
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(encoded)))
@@ -409,7 +543,23 @@ def serve_dashboard(
             self.end_headers()
             self.wfile.write(encoded)
 
+        def _cache_get(self, key: str) -> tuple[str, str] | None:
+            item = self._response_cache.get(key)
+            if item is None:
+                return None
+            created, body, content_type = item
+            if monotonic() - created > self._cache_ttl_seconds:
+                self._response_cache.pop(key, None)
+                return None
+            return body, content_type
+
+        def _cache_set(self, key: str, body: str, content_type: str) -> None:
+            if len(self._response_cache) > 128:
+                self._response_cache.clear()
+            self._response_cache[key] = (monotonic(), body, content_type)
+
     server = ThreadingHTTPServer((host, port), Handler)
+    server.daemon_threads = True
     try:
         server.serve_forever()
     finally:
@@ -426,6 +576,8 @@ def load_forecast_data(
     view_mode: str = "all",
     league_filter: str = "ALL",
     settings: Settings | None = None,
+    upcoming_limit: int = 80,
+    include_past_fixtures: bool = False,
 ) -> ForecastData:
     display_tz = _display_tz(display_tz_name)
     now = now_utc or datetime.now(UTC)
@@ -434,19 +586,36 @@ def load_forecast_data(
     previous_date = (date.fromisoformat(selected_date) - timedelta(days=1)).isoformat()
     next_date = (date.fromisoformat(selected_date) + timedelta(days=1)).isoformat()
     league_filter = gui_league_filter(league_filter)
-    rows = _forecast_fixture_rows(conn, fixture_id=fixture_id, league_filter=league_filter)
-    upcoming_fixtures = _upcoming_fixture_links(
-        rows,
-        display_tz=display_tz,
-        now_utc=now,
-        selected_date=selected_date,
-        limit=2000,
+    inventory_rows = _forecast_fixture_rows(conn, fixture_id=fixture_id, league_filter=league_filter)
+    upcoming_fixtures = (
+        _upcoming_fixture_links(
+            inventory_rows,
+            display_tz=display_tz,
+            now_utc=now,
+            selected_date=selected_date,
+            limit=upcoming_limit,
+        )
+        if upcoming_limit > 0
+        else []
     )
-    past_fixtures = _past_fixture_links(
-        conn,
-        display_tz=display_tz,
-        now_utc=now,
-        league_filter=league_filter,
+    past_fixtures = (
+        _past_fixture_links(
+            conn,
+            display_tz=display_tz,
+            now_utc=now,
+            league_filter=league_filter,
+        )
+        if include_past_fixtures
+        else []
+    )
+    rows = (
+        inventory_rows
+        if fixture_id is not None
+        else _fixture_rows_for_local_date(
+            inventory_rows,
+            display_tz=display_tz,
+            target_date=selected_date,
+        )
     )
     fixture_ids = [str(row["fixture_id"]) for row in rows]
     latest_run_id = _latest_prediction_run_id(conn, fixture_ids=fixture_ids)
@@ -634,7 +803,7 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="{int(refresh_seconds)}">
+  {_auto_refresh_meta(refresh_seconds)}
   <title>ScoreRecord Forecast</title>
   <style>{_forecast_css()}</style>
 </head>
@@ -646,6 +815,7 @@ def render_today_forecast(data: ForecastData, *, settings: Settings | None = Non
     {league_nav}
     {league_banner}
     {date_toolbar}
+    {_top_signals_panel(data)}
     {cards if league == "ALL" else f'<section class="match-grid">{cards}</section>'}
   </main>
   {_match_modal_shell()}
@@ -665,7 +835,7 @@ def render_home_page(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="{int(refresh_seconds)}">
+  {_auto_refresh_meta(refresh_seconds)}
   <title>ScoreRecord</title>
   <style>{_forecast_css()}</style>
 </head>
@@ -695,7 +865,7 @@ def render_history_page(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="{int(refresh_seconds)}">
+  {_auto_refresh_meta(refresh_seconds)}
   <title>ScoreRecord Historial</title>
   <style>{_forecast_css()}</style>
 </head>
@@ -732,7 +902,7 @@ def render_health_page(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="{int(refresh_seconds)}">
+  {_auto_refresh_meta(refresh_seconds)}
   <title>ScoreRecord Health</title>
   <style>{_forecast_css()}</style>
 </head>
@@ -754,8 +924,120 @@ def render_health_page(
     {_system_health_panel(data)}
     {_forecast_stats(data)}
     {_health_model_summary(data)}
-    {_upcoming_fixture_section(data)}
   </main>
+</body>
+</html>"""
+
+
+def render_performance_page(
+    data: ForecastData,
+    report: ForecastPerformanceReport,
+    snapshot_report: ForecastSnapshotReport,
+    *,
+    settings: Settings | None = None,
+    refresh_seconds: int = 60,
+) -> str:
+    return f"""<!doctype html>
+<html lang="es" data-theme="scorerecord">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {_auto_refresh_meta(refresh_seconds)}
+  <title>ScoreRecord Performance</title>
+  <style>{_forecast_css()}</style>
+</head>
+<body class="forecast-page">
+  {_forecast_nav(data, active="performance")}
+  <main class="forecast-shell">
+    <section class="health-hero">
+      <span>Performance</span>
+      <h1>Precisión del modelo</h1>
+      <p>
+        Comparación de predicciones ya liquidadas contra marcadores finales.
+        Es evaluación estadística, no rendimiento financiero.
+      </p>
+    </section>
+    {_recreational_warning_banner(settings)}
+    {_performance_summary_panel(report, snapshot_report)}
+    {_performance_table("Por mercado", report.by_market)}
+    {_performance_table("Por liga", report.by_league)}
+  </main>
+</body>
+</html>"""
+
+
+def render_market_page(
+    data: ForecastData,
+    market_data: MarketValidationData,
+    *,
+    settings: Settings | None = None,
+    refresh_seconds: int = 60,
+) -> str:
+    return f"""<!doctype html>
+<html lang="es" data-theme="scorerecord">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {_auto_refresh_meta(refresh_seconds)}
+  <title>ScoreRecord Mercado</title>
+  <style>{_forecast_css()}</style>
+</head>
+<body class="forecast-page">
+  {_forecast_nav(data, active="market")}
+  <main class="forecast-shell">
+    <section class="health-hero market-hero">
+      <span>Mercado</span>
+      <h1>Modelo vs mercado</h1>
+      <p>
+        El mercado es la referencia colectiva de probabilidades implícitas. Si el
+        modelo tiene peor log-loss que el mercado, sus probabilidades pueden servir
+        como pronóstico recreativo, pero no como evidencia de ventaja independiente.
+      </p>
+    </section>
+    {_recreational_warning_banner(settings)}
+    {_market_status_panel(market_data)}
+    {_market_explainer_panel()}
+    {_market_metrics_panel(market_data)}
+  </main>
+</body>
+</html>"""
+
+
+def render_signals_page(
+    data: ForecastData,
+    *,
+    settings: Settings | None = None,
+    refresh_seconds: int = 60,
+) -> str:
+    return f"""<!doctype html>
+<html lang="es" data-theme="scorerecord">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {_auto_refresh_meta(refresh_seconds)}
+  <title>ScoreRecord Señales</title>
+  <style>{_forecast_css()}</style>
+</head>
+<body class="forecast-page">
+  {_forecast_nav(data, active="signals")}
+  <main class="forecast-shell">
+    <section class="health-hero signals-hero">
+      <span>Top 3</span>
+      <h1>Mejores señales del día</h1>
+      <p>
+        Partidos ordenados por separación del 50% en OU2.5 y BTTS, ponderados por
+        calidad de datos. No usa cuotas ni calcula valor.
+      </p>
+      <div class="hero-actions">
+        <a class="btn primary" href="/today?date={_e(data.target_date)}&league={_e(data.league_filter)}">Ver todos</a>
+        <a class="btn ghost" href="/market">Contexto de mercado</a>
+      </div>
+    </section>
+    {_recreational_warning_banner(settings)}
+    {_top_signals_panel(data, expanded=True)}
+  </main>
+  {_match_modal_shell()}
+  {_forecast_modal_script()}
 </body>
 </html>"""
 
@@ -782,6 +1064,7 @@ def _home_hero(data: ForecastData, *, landing: bool = False) -> str:
       </div>
       <div class="hero-actions">
         <a class="btn primary" href="/today?view=forecast&league=ALL">Ver partidos</a>
+        <a class="btn ghost" href="/signals?league={_e(data.league_filter)}">Mejores señales</a>
         {league_buttons}
         <div class="hero-dropdown">
           <button class="btn ghost" type="button">Historial</button>
@@ -790,6 +1073,8 @@ def _home_hero(data: ForecastData, *, landing: bool = False) -> str:
             <a href="/history?tab=past&league={_e(data.league_filter)}">Partidos pasados</a>
           </div>
         </div>
+        <a class="btn ghost" href="/performance?league={_e(data.league_filter)}">Performance</a>
+        <a class="btn ghost" href="/market?league={_e(data.league_filter)}">Mercado</a>
         <a class="btn ghost" href="/health?date={_e(data.target_date)}&league={_e(data.league_filter)}">Health</a>
       </div>
     </section>
@@ -866,6 +1151,268 @@ def _health_model_summary(data: ForecastData) -> str:
       </div>
       <div class="health-summary-grid">{cells}</div>
     </section>
+    """
+
+
+def load_market_validation_data(conn: sqlite3.Connection) -> MarketValidationData:
+    artifact_rows = conn.execute(
+        """
+        SELECT market_validation_status, COUNT(*) AS count, MAX(created_utc) AS latest
+        FROM model_artifact
+        GROUP BY market_validation_status
+        ORDER BY latest DESC
+        """
+    ).fetchall()
+    artifacts = [
+        MarketValidationArtifact(
+            status=str(row["market_validation_status"] or "NOT_TESTED"),
+            count=int(row["count"] or 0),
+            latest_created_utc=str(row["latest"]) if row["latest"] else None,
+        )
+        for row in artifact_rows
+    ]
+    metric_rows = conn.execute(
+        """
+        SELECT run_id, check_name, metric_name, metric_value, created_utc
+        FROM data_quality
+        WHERE lower(check_name) LIKE '%market%'
+           OR lower(metric_name) LIKE '%market%'
+           OR lower(check_name) LIKE '%benchmark%'
+           OR lower(metric_name) LIKE '%benchmark%'
+        ORDER BY quality_id DESC
+        LIMIT 24
+        """
+    ).fetchall()
+    metrics = [
+        MarketValidationMetric(
+            run_id=int(row["run_id"]) if row["run_id"] is not None else None,
+            check_name=str(row["check_name"]),
+            metric_name=str(row["metric_name"]),
+            value=float(row["metric_value"]) if row["metric_value"] is not None else None,
+            created_utc=str(row["created_utc"]) if row["created_utc"] else None,
+        )
+        for row in metric_rows
+    ]
+    statuses = {artifact.status.upper() for artifact in artifacts}
+    if "PROMISING" in statuses or "FORWARD_VALIDATED" in statuses:
+        summary = "PROMISING"
+    elif "INCONCLUSIVE" in statuses:
+        summary = "INCONCLUSIVE"
+    elif "REJECTED" in statuses or "REJECTED_FOR_INDEPENDENT_VALUE" in statuses:
+        summary = "REJECTED"
+    else:
+        summary = "NOT_TESTED"
+    return MarketValidationData(artifacts=artifacts, metrics=metrics, summary_status=summary)
+
+
+def _performance_summary_panel(
+    report: ForecastPerformanceReport,
+    snapshot_report: ForecastSnapshotReport,
+) -> str:
+    items = [
+        ("Decisiones evaluadas", report.decisions),
+        ("Filas de predicción", report.prediction_rows),
+        ("Fixtures con resultado", report.fixture_count),
+        ("Último settlement", report.latest_settled_utc or "n/a"),
+        ("Snapshots congelados", snapshot_report.total_snapshots),
+        ("Snapshots liquidados", snapshot_report.settled_snapshots),
+    ]
+    cells = "".join(
+        f"""
+        <div class="stat">
+          <span>{_e(label)}</span>
+          <strong>{_v(value)}</strong>
+        </div>
+        """
+        for label, value in items
+    )
+    return f"""
+    <section class="forecast-stats performance-stats">
+      {cells}
+    </section>
+    """
+
+
+def _performance_table(title: str, rows: list[Any]) -> str:
+    if not rows:
+        return _empty_forecast_state("Sin resultados liquidados todavía")
+    body = "".join(
+        f"""
+        <tr>
+          <td>{_e(row.group_value)}</td>
+          <td>{row.decisions}</td>
+          <td>{row.prediction_rows}</td>
+          <td>{_pct(row.accuracy)}</td>
+          <td>{_num(row.brier)}</td>
+          <td>{_num(row.logloss)}</td>
+        </tr>
+        """
+        for row in rows
+    )
+    return f"""
+    <section class="health-summary-panel">
+      <div class="section-head">
+        <h2>{_e(title)}</h2>
+        <span>Top-pick accuracy; Brier/log-loss por unidad estadística</span>
+      </div>
+      <table class="forecast-table">
+        <thead>
+          <tr>
+            <th>Grupo</th><th>Decisiones</th><th>Filas</th>
+            <th>Accuracy</th><th>Brier</th><th>Log-loss</th>
+          </tr>
+        </thead>
+        <tbody>{body}</tbody>
+      </table>
+    </section>
+    """
+
+
+def _market_status_panel(market_data: MarketValidationData) -> str:
+    artifact_rows = "".join(
+        f"""
+        <div class="quality-item {_market_status_class(item.status)}">
+          <span>{_e(item.status)}</span>
+          <strong>{item.count}</strong>
+          <small>{_e(item.latest_created_utc or 'sin fecha')}</small>
+        </div>
+        """
+        for item in market_data.artifacts
+    )
+    if not artifact_rows:
+        artifact_rows = """
+        <div class="quality-item quality-warn">
+          <span>Artifacts</span><strong>WARN</strong><small>Sin artifacts registrados</small>
+        </div>
+        """
+    return f"""
+    <section class="quality-panel market-status-panel">
+      <div class="panel-title">Estado de validación contra mercado: {_e(market_data.summary_status)}</div>
+      {artifact_rows}
+    </section>
+    """
+
+
+def _market_explainer_panel() -> str:
+    return """
+    <section class="health-summary-panel market-explainer">
+      <div class="section-head">
+        <h2>Qué significa perder contra el mercado</h2>
+        <span>Lectura operativa</span>
+      </div>
+      <p>
+        El mercado agrega información pública, noticias, dinero y correcciones de muchas
+        casas. Si ScoreRecord tiene peor log-loss que la probabilidad justa del mercado,
+        el modelo no debe usarse como señal de ventaja independiente.
+      </p>
+      <p>
+        Esto no invalida la GUI como pronóstico: sigue explicando goles, BTTS, resultado
+        estimado, cobertura y calidad de datos. Lo que bloquea es el lenguaje de edge,
+        tamaño de posición o recomendación de apuesta.
+      </p>
+    </section>
+    """
+
+
+def _market_metrics_panel(market_data: MarketValidationData) -> str:
+    if not market_data.metrics:
+        return """
+        <section class="health-summary-panel">
+          <div class="section-head">
+            <h2>Métricas recientes</h2>
+            <span>Sin filas de benchmark en data_quality</span>
+          </div>
+          <p class="muted">Ejecuta los reportes de benchmark para poblar esta sección.</p>
+        </section>
+        """
+    rows = "".join(
+        f"""
+        <tr>
+          <td>{_e(str(metric.run_id or 'n/a'))}</td>
+          <td>{_e(metric.check_name)}</td>
+          <td>{_e(metric.metric_name)}</td>
+          <td>{_num(metric.value)}</td>
+          <td>{_e(metric.created_utc or 'n/a')}</td>
+        </tr>
+        """
+        for metric in market_data.metrics
+    )
+    return f"""
+    <section class="health-summary-panel">
+      <div class="section-head">
+        <h2>Métricas recientes</h2>
+        <span>data_quality</span>
+      </div>
+      <table class="forecast-table">
+        <thead><tr><th>Run</th><th>Check</th><th>Métrica</th><th>Valor</th><th>Creado</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+    """
+
+
+def _market_status_class(status: str) -> str:
+    normalized = status.lower().replace("_", "-")
+    if "rejected" in normalized:
+        return "quality-warn"
+    if normalized in {"promising", "forward-validated"}:
+        return "quality-ok"
+    if normalized == "not-tested":
+        return "quality-not-tested"
+    return f"quality-{normalized}"
+
+
+def _top_signals_panel(data: ForecastData, *, expanded: bool = False) -> str:
+    fixtures = _top_signal_fixtures(data, limit=3)
+    if not fixtures:
+        return "" if not expanded else _empty_forecast_state("Sin señales para esta fecha")
+    rows = "".join(_top_signal_item(fixture, data) for fixture in fixtures)
+    title = "Mejores 3 señales del día" if expanded else "Top 3 señales del día"
+    action = "" if expanded else '<a class="btn ghost" href="/signals">Ver detalle</a>'
+    return f"""
+    <section class="top-signals-panel">
+      <div class="section-head">
+        <h2>{title}</h2>
+        {action}
+      </div>
+      <div class="top-signal-list">{rows}</div>
+    </section>
+    """
+
+
+def _top_signal_fixtures(data: ForecastData, *, limit: int) -> list[ForecastFixture]:
+    candidates = [
+        fixture
+        for fixture in data.fixtures
+        if fixture.primary_markets and fixture.state == "forecast"
+    ]
+    return sorted(candidates, key=_signal_sort_key, reverse=True)[:limit]
+
+
+def _signal_sort_key(fixture: ForecastFixture) -> tuple[float, int]:
+    signal_delta = max(abs(market.prob - 0.5) for market in fixture.primary_markets)
+    return (signal_delta * (fixture.insight.quality_score / 100.0), fixture.insight.quality_score)
+
+
+def _top_signal_item(fixture: ForecastFixture, data: ForecastData) -> str:
+    market = max(fixture.primary_markets, key=lambda item: abs(item.prob - 0.5))
+    signal = forecast_signal_strength(market.prob)
+    detail_href = (
+        f"/match/{_e(fixture.fixture_id)}?view=forecast&league={_e(fixture.league_code or data.league_filter)}"
+    )
+    modal_href = f"{detail_href}&partial=1"
+    return f"""
+    <article class="top-signal-item {signal.css_class}">
+      <div>
+        <span>{_e(fixture.display_time)} · {_e(fixture.competition or league_label(fixture.league_code))}</span>
+        <strong>{_e(fixture.home)} vs {_e(fixture.away)}</strong>
+        <small>{_e(signal.label)} · {_e(_forecast_diagnostic_label(market))}</small>
+      </div>
+      <div>
+        <strong>{fixture.insight.quality_score}%</strong>
+        <a class="btn detail-button" href="{detail_href}" data-detail-url="{modal_href}">Detalle</a>
+      </div>
+    </article>
     """
 
 
@@ -1063,6 +1610,22 @@ def _upcoming_fixture_item(item: UpcomingFixtureLink, data: ForecastData) -> str
 
 
 def _history_past_item(item: HistoryFixtureLink, data: ForecastData) -> str:
+    if item.fixture_id is None:
+        competition = item.competition or league_label(item.league_code)
+        return f"""
+        <article class="history-item">
+          <div class="upcoming-date">
+            <strong>{_e(item.display_date)}</strong>
+            <span>{_e(item.display_time)}</span>
+          </div>
+          <div>
+            <small>{_e(competition)} · {_e(item.league_code or 'ALL')}</small>
+            <span>{_e(item.home)} vs {_e(item.away)}</span>
+          </div>
+          <strong class="score-pill">{_e(item.score or 'Final')}</strong>
+          <span class="history-prediction-state">Histórico cargado</span>
+        </article>
+        """
     match_href = (
         f"/match/{_e(item.fixture_id)}?view={_e(data.view_mode)}"
         f"&league={_e(data.league_filter)}"
@@ -1183,7 +1746,7 @@ def render_dashboard(data: DashboardData, *, refresh_seconds: int) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="{int(refresh_seconds)}">
+  {_auto_refresh_meta(refresh_seconds)}
   <title>{title} Audit</title>
   <style>{_css()}</style>
 </head>
@@ -1739,7 +2302,63 @@ def _upcoming_fixture_links(
     return upcoming[:limit]
 
 
+def _fixture_rows_for_local_date(
+    rows: list[sqlite3.Row],
+    *,
+    display_tz: ZoneInfo,
+    target_date: str,
+) -> list[sqlite3.Row]:
+    selected: list[sqlite3.Row] = []
+    for row in rows:
+        kickoff_utc = parse_kickoff_utc(
+            kickoff_utc=row["kickoff_utc"],
+            kickoff_local=row["kickoff_local"],
+        )
+        if kickoff_utc is None:
+            continue
+        if kickoff_utc.astimezone(display_tz).date().isoformat() == target_date:
+            selected.append(row)
+    return selected
+
+
 def _past_fixture_links(
+    conn: sqlite3.Connection,
+    *,
+    display_tz: ZoneInfo,
+    now_utc: datetime,
+    league_filter: str,
+) -> list[HistoryFixtureLink]:
+    fixture_links = _past_fixture_links_from_fixture(
+        conn,
+        display_tz=display_tz,
+        now_utc=now_utc,
+        league_filter=league_filter,
+    )
+    historical_links = _past_fixture_links_from_historical_match(
+        conn,
+        league_filter=league_filter,
+    )
+    seen: set[tuple[str, str, str, str]] = set()
+    merged: list[HistoryFixtureLink] = []
+    for item in sorted(
+        [*fixture_links, *historical_links],
+        key=lambda link: (link.display_date, link.display_time, link.home, link.away),
+        reverse=True,
+    ):
+        key = (
+            item.display_date,
+            (item.league_code or "").upper(),
+            item.home.casefold(),
+            item.away.casefold(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged[:1000]
+
+
+def _past_fixture_links_from_fixture(
     conn: sqlite3.Connection,
     *,
     display_tz: ZoneInfo,
@@ -1801,9 +2420,105 @@ def _past_fixture_links(
                 away=away,
                 score=f"{int(row['home_score'])}-{int(row['away_score'])}",
                 predicted=bool(row["predicted"]),
+                source="fixture",
             )
         )
     return past
+
+
+def _past_fixture_links_from_historical_match(
+    conn: sqlite3.Connection,
+    *,
+    league_filter: str,
+) -> list[HistoryFixtureLink]:
+    league_codes = _historical_codes_for_gui_filter(league_filter)
+    if not league_codes:
+        return []
+    placeholders = ",".join("?" for _ in league_codes)
+    rows = conn.execute(
+        f"""
+        SELECT
+          hm.source,
+          hm.source_event_id,
+          hm.league_code,
+          hm.season,
+          hm.match_date,
+          hm.home_team,
+          hm.away_team,
+          hm.home_goals,
+          hm.away_goals,
+          f.fixture_id,
+          CASE WHEN p.fixture_id IS NULL THEN 0 ELSE 1 END AS predicted
+        FROM historical_match hm
+        LEFT JOIN fixture f
+          ON f.source_event_id = hm.source_event_id
+         AND f.league_code = ?
+        LEFT JOIN (SELECT DISTINCT fixture_id FROM prediction) p
+          ON p.fixture_id = f.fixture_id
+        WHERE hm.league_code IN ({placeholders})
+          AND hm.home_goals IS NOT NULL
+          AND hm.away_goals IS NOT NULL
+        ORDER BY hm.match_date DESC, hm.source_event_id DESC
+        LIMIT 1000
+        """,
+        (league_filter if league_filter != "ALL" else "", *league_codes),
+    ).fetchall()
+    links: list[HistoryFixtureLink] = []
+    for row in rows:
+        internal_code = _gui_league_from_historical_code(str(row["league_code"]))
+        links.append(
+            HistoryFixtureLink(
+                fixture_id=str(row["fixture_id"]) if row["fixture_id"] else None,
+                display_date=str(row["match_date"]),
+                display_time="Final",
+                league_code=internal_code,
+                competition=league_label(internal_code),
+                home=str(row["home_team"]),
+                away=str(row["away_team"]),
+                score=f"{int(row['home_goals'])}-{int(row['away_goals'])}",
+                predicted=bool(row["predicted"]),
+                source=str(row["source"] or "historical_match"),
+            )
+        )
+    return links
+
+
+def _historical_codes_for_gui_filter(league_filter: str) -> list[str]:
+    preferred = {
+        "EPL": "E0",
+        "LIGA_MX": "MEX",
+        "MLS": "USA",
+        "ARGENTINA": "ARG",
+        "BRASILEIRAO": "BRA",
+    }
+    if league_filter == "ALL":
+        codes: set[str] = set()
+        for code in GUI_LEAGUE_ORDER:
+            codes.add(code)
+            if code in preferred:
+                codes.add(preferred[code])
+            alias = FOOTBALL_DATA_LEAGUES.get(code)
+            if alias:
+                codes.add(alias)
+        return sorted(codes)
+    codes = {league_filter}
+    if league_filter in preferred:
+        codes.add(preferred[league_filter])
+    alias = FOOTBALL_DATA_LEAGUES.get(league_filter)
+    if alias:
+        codes.add(alias)
+    return sorted(codes)
+
+
+def _gui_league_from_historical_code(value: str) -> str:
+    mapping = {
+        "E0": "EPL",
+        "MEX": "LIGA_MX",
+        "USA": "MLS",
+        "ARG": "ARGENTINA",
+        "BRA": "BRASILEIRAO",
+    }
+    return mapping.get(value.upper(), value)
 
 
 def _group_forecast_predictions(
@@ -2295,6 +3010,9 @@ def _forecast_nav(data: ForecastData, *, active: str = "matches") -> str:
     matches_class = "active" if active == "matches" else ""
     history_class = "active" if active == "history" else ""
     health_class = "active" if active == "health" else ""
+    signals_class = "active" if active == "signals" else ""
+    performance_class = "active" if active == "performance" else ""
+    market_class = "active" if active == "market" else ""
     return f"""
     <header class="forecast-nav">
       <div>
@@ -2303,6 +3021,7 @@ def _forecast_nav(data: ForecastData, *, active: str = "matches") -> str:
       </div>
       <nav>
         <a class="{matches_class}" href="/today?date={_e(data.target_date)}&view=forecast&league={_e(league)}">Partidos</a>
+        <a class="{signals_class}" href="/signals?date={_e(data.target_date)}&league={_e(league)}">Mejores señales</a>
         <div class="nav-dropdown">
           <button class="{history_class}" type="button">Historial</button>
           <div class="nav-dropdown-menu">
@@ -2310,6 +3029,8 @@ def _forecast_nav(data: ForecastData, *, active: str = "matches") -> str:
             <a href="/history?tab=past&league={_e(league)}">Partidos pasados</a>
           </div>
         </div>
+        <a class="{performance_class}" href="/performance?league={_e(league)}">Performance</a>
+        <a class="{market_class}" href="/market?league={_e(league)}">Mercado</a>
         <a class="{health_class}" href="/health?date={_e(data.target_date)}&league={_e(league)}">Health</a>
         <span class="badge forecast">FORECAST_ONLY</span>
       </nav>
@@ -2487,7 +3208,7 @@ def _primary_forecasts_block(fixture: ForecastFixture) -> str:
     )
     return f"""
     <div class="primary-forecast multi">
-      <div class="primary-title">Pronosticos principales del modelo</div>
+      <div class="primary-title">Pronósticos principales del modelo</div>
       <div class="primary-list">{items}</div>
     </div>
     """
@@ -2497,12 +3218,13 @@ def _primary_forecast_item(market: ForecastMarket, uncertainty_points: float) ->
     signal = forecast_signal_strength(market.prob)
     return f"""
         <div class="primary-pick {signal.css_class}" data-signal="{_e(signal.code)}">
-          <span>Pronostico principal del modelo ({_e(_forecast_family_label(market))})</span>
+          <span>Pronóstico principal del modelo ({_e(_forecast_family_label(market))})</span>
           <strong>{_e(signal.label)}</strong>
           <em>{_e(_forecast_diagnostic_label(market))}</em>
           <small>{_e(_uncertainty_label(market.prob, uncertainty_points))}</small>
           <small>
-            NO VALIDADO CONTRA MERCADO. Usalo solo como pronostico recreativo.
+            NO VALIDADO CONTRA MERCADO. Úsalo solo como pronóstico recreativo.
+            <a href="/market">Ver contexto</a>.
           </small>
         </div>
         """
@@ -2998,7 +3720,7 @@ def _empty_forecast_state(label: str) -> str:
     <section class="empty-forecast">
       <h1>{_e(label)}</h1>
       <p>No hay fixtures pronosticables para esta vista. Revisa fixture-summary,
-      ingest-worldcup y predict-fixtures antes de interpretar la pantalla.</p>
+      refresh de liga y predict-fixtures antes de interpretar la pantalla.</p>
     </section>
     """
 
@@ -3629,6 +4351,12 @@ def _v(value: Any) -> str:
     return _e(str(value))
 
 
+def _auto_refresh_meta(refresh_seconds: int) -> str:
+    if refresh_seconds <= 0:
+        return ""
+    return f'<meta http-equiv="refresh" content="{int(refresh_seconds)}">'
+
+
 def _e(value: Any) -> str:
     return html.escape(str(value or ""), quote=True)
 
@@ -4184,6 +4912,58 @@ body.landing-page {
   display: block;
   margin-top: 6px;
   overflow-wrap: anywhere;
+}
+.top-signals-panel {
+  margin: 14px 0;
+  padding: 14px;
+  border: 1px solid rgba(28, 51, 29, 0.14);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.92), rgba(232,255,241,0.78)),
+    var(--surface);
+  box-shadow: 0 12px 34px rgba(28, 51, 29, 0.08);
+}
+.top-signal-list {
+  display: grid;
+  gap: 10px;
+}
+.top-signal-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--green);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.86);
+}
+.top-signal-item.signal-no-signal { border-left-color: var(--muted); }
+.top-signal-item.signal-lean { border-left-color: #8bc79e; }
+.top-signal-item.signal-moderate { border-left-color: var(--primary); }
+.top-signal-item.signal-strong { border-left-color: var(--secondary); }
+.top-signal-item span,
+.top-signal-item small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.top-signal-item strong {
+  display: block;
+  color: var(--secondary);
+  font-size: 17px;
+}
+.performance-stats {
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+}
+.market-explainer p {
+  color: #405645;
+  margin: 8px 0;
+}
+.market-status-panel .panel-title {
+  grid-column: 1 / -1;
+  color: var(--secondary);
+  font-weight: 900;
 }
 .match-modal[hidden] { display: none; }
 .match-modal {

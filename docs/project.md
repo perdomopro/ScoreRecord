@@ -1134,3 +1134,34 @@ Output:
   headings outside the card grid.
 - Updated visible signal labels from `Senal` to `Señal` while keeping internal
   signal codes stable for snapshots and audit rows.
+
+### 2026-08-02 - Forward performance and market context GUI
+
+- Added `src/scorerecord/forecast_performance.py` plus
+  `scorerecord forecast-performance-report` to summarize settled
+  `prediction_result` rows by market and league. Accuracy is calculated from
+  the highest-probability selection per fixture/market, while Brier and
+  log-loss keep the proper statistical unit.
+- Added `/performance` to the forecast-only GUI with settled decisions,
+  prediction rows, fixtures with results, latest settlement timestamp, and
+  accuracy/Brier/log-loss by market and league.
+- Added `/market` as an educational, audit-only page that explains what it
+  means for ScoreRecord to lose against the market and shows the latest
+  model-artifact market-validation statuses plus recent `data_quality`
+  benchmark rows.
+- Added `/signals` plus a compact `/today` notification panel showing the top
+  three forecast signals for the selected date/league. Ranking uses distance
+  from 50% in OU2.5/BTTS weighted by the existing forecast data-quality score;
+  it does not use odds, EV, staking, or value language.
+- Optimized GUI data loading so `/health`, `/match`, `/performance`, and
+  `/market` no longer build the full upcoming/past fixture inventory. The full
+  inventory is loaded only by `/history`.
+- Disabled auto-refresh by default and added a short in-process GUI response
+  cache to absorb repeated proxy/browser requests without recalculating SQLite
+  queries. Browser responses still use `Cache-Control: no-store`.
+- Expanded `/history?tab=past` to include scored `historical_match` rows from
+  Football-Data for Liga MX, MLS, EPL, Argentina, and Brasileirao when matching
+  `fixture` scores are not present.
+- Updated `scorerecord-postmatch.service` to settle frozen forecast snapshots
+  after fixture settlement, and updated `scorerecord-weekly.service` to record
+  forecast-performance metrics in `data_quality`.

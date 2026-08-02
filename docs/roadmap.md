@@ -22,7 +22,7 @@ advance a phase as trusted until the previous phase exit criteria are actually m
 | 7 - Independent evaluation | Bypassed. Model rejected for independent value. |
 | 8 - Market-anchored benchmark | Active path. Residual modeling. |
 | 9 | Pending. |
-| 13 - Daily multi-league forecast | Active for Liga MX, MLS, EPL, Argentina, and Brasileirao; daily timer enabled. |
+| 13 - Daily multi-league forecast | Active for Liga MX, MLS, EPL, Argentina, and Brasileirao; daily timer enabled; GUI now includes signals, history, market context, and performance. |
 | 14 - Result diagnostics and corners discovery | Active: 1X2/double-chance diagnostics plus SportMonks/TheStatsAPI corners probe. |
 
 Open loops that remain after the remote gate:
@@ -63,6 +63,12 @@ Open loops that remain after the remote gate:
 - Forecast GUI navigation was polished on 2026-08-02: `/` is a clean landing
   page, `/today` no longer repeats the global upcoming-fixture inventory, and
   `/history` owns upcoming loaded fixtures plus past loaded fixtures.
+- Forward performance surfaced on 2026-08-02: `/performance` reads settled
+  `prediction_result` rows, `/market` explains model-vs-market status without
+  betting language, `/signals` shows the top three OU2.5/BTTS signals, and
+  `/history?tab=past` now falls back to scored `historical_match` rows.
+- The weekly timer now records `forecast-performance-report --record-quality`;
+  postmatch settlement also settles frozen forecast snapshots.
 - Corners remain gated behind `provider-stats-probe` coverage and a future
   benchmark; no corners market is shown in the GUI yet.
 
@@ -570,12 +576,14 @@ Objective: Expand ScoreRecord from a single World Cup tournament to a fully auto
     forecast refresh loop.
   - Added `docs/data_sources.md` and `docs/match_evaluation_pipeline.md`.
 
-### Phase 13.5 - Forward evidence and monitoring (NEXT)
+### Phase 13.5 - Forward evidence and monitoring (ACTIVE)
 - Accumulate forecast snapshots and settled outcomes before claiming real
   performance.
-- Build a performance page from `forecast_snapshot`/`prediction_result` with
-  accuracy, Brier, logloss, calibration, skipped fixtures, and reasons by league
-  and market.
+- Performance page is implemented from `forecast_snapshot`/`prediction_result`
+  with settled decisions, prediction rows, accuracy, Brier, and log-loss by
+  league and market.
+- Market context page is implemented to explain rejected/inconclusive market
+  validation and prevent confusing forecast quality with betting edge.
 - Add drift monitoring only after there is a stable baseline distribution per
   league/market. The detector should compare weekly prediction distributions,
   Elo distribution, calibrator status, and no-prediction rates.

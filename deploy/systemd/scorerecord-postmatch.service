@@ -10,4 +10,4 @@ Environment=OPENBLAS_NUM_THREADS=2
 MemoryMax=700M
 Nice=10
 IOSchedulingClass=idle
-ExecStart=/bin/sh -lc '/home/adrian/scorerecord/.venv/bin/scorerecord settle-fixtures && /home/adrian/scorerecord/.venv/bin/scorerecord compute-clv'
+ExecStart=/bin/sh -lc '/home/adrian/scorerecord/.venv/bin/scorerecord settle-fixtures && /home/adrian/scorerecord/.venv/bin/scorerecord settle-forecast-snapshots && /home/adrian/scorerecord/.venv/bin/scorerecord compute-clv'

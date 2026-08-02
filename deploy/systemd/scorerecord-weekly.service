@@ -10,4 +10,4 @@ Environment=OPENBLAS_NUM_THREADS=2
 MemoryMax=900M
 Nice=10
 IOSchedulingClass=idle
-ExecStart=/bin/sh -lc '/home/adrian/scorerecord/.venv/bin/scorerecord goal-markets && /home/adrian/scorerecord/.venv/bin/scorerecord calibrator-drift && /home/adrian/scorerecord/.venv/bin/scorerecord db-summary'
+ExecStart=/bin/sh -lc '/home/adrian/scorerecord/.venv/bin/scorerecord settle-forecast-snapshots && /home/adrian/scorerecord/.venv/bin/scorerecord forecast-performance-report --record-quality && /home/adrian/scorerecord/.venv/bin/scorerecord forecast-report && /home/adrian/scorerecord/.venv/bin/scorerecord goal-markets && /home/adrian/scorerecord/.venv/bin/scorerecord calibrator-drift && /home/adrian/scorerecord/.venv/bin/scorerecord db-summary'

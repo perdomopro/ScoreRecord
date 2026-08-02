@@ -39,6 +39,10 @@ from scorerecord.evaluate.settlement import settle_fixtures
 from scorerecord.evaluate.tune_decay import run_decay_sweep
 from scorerecord.evaluate.walk_forward import run_walk_forward
 from scorerecord.features.elo import rebuild_elo
+from scorerecord.forecast_performance import (
+    forecast_performance_report,
+    record_forecast_performance_report,
+)
 from scorerecord.forecast_snapshots import (
     forecast_snapshot_report,
     freeze_forecast_snapshot,
@@ -203,6 +207,15 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser(
         "forecast-report",
         help="Report frozen forecast snapshot settlement metrics.",
+    )
+    performance = subparsers.add_parser(
+        "forecast-performance-report",
+        help="Report settled forecast performance from prediction_result.",
+    )
+    performance.add_argument(
+        "--record-quality",
+        action="store_true",
+        help="Persist summary rows in data_quality under an ingest_run.",
     )
     subparsers.add_parser("model-manifest", help="Print the frozen model manifest.")
     settle = subparsers.add_parser("settle-fixtures", help="Settle finished fixtures.")
@@ -513,7 +526,12 @@ def main(argv: list[str] | None = None) -> int:
     gui = subparsers.add_parser("gui", help="Serve the forecast and health dashboard.")
     gui.add_argument("--host", default="127.0.0.1")
     gui.add_argument("--port", type=int, default=8765)
-    gui.add_argument("--refresh-seconds", type=int, default=60)
+    gui.add_argument(
+        "--refresh-seconds",
+        type=int,
+        default=0,
+        help="Auto-refresh interval in seconds. Disabled by default.",
+    )
     subparsers.add_parser("db-summary", help="Print useful database counts.")
 
     api_probe = subparsers.add_parser(
@@ -948,6 +966,16 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "forecast-report":
             report = forecast_snapshot_report(conn)
+            for row in report.as_rows():
+                print(row)
+            return 0
+
+        if args.command == "forecast-performance-report":
+            report = (
+                record_forecast_performance_report(conn, cwd=Path.cwd())
+                if args.record_quality
+                else forecast_performance_report(conn)
+            )
             for row in report.as_rows():
                 print(row)
             return 0

@@ -4,15 +4,21 @@ from pathlib import Path
 
 from scorerecord.db import init_db
 from scorerecord.gui import (
+    load_market_validation_data,
     load_dashboard_data,
     load_forecast_data,
+    render_market_page,
+    render_performance_page,
     render_dashboard,
     render_history_page,
     render_health_page,
     render_home_page,
     render_match_forecast,
+    render_signals_page,
     render_today_forecast,
 )
+from scorerecord.forecast_performance import forecast_performance_report
+from scorerecord.forecast_snapshots import forecast_snapshot_report
 from scorerecord.models.manifest import MODEL_VERSION
 from scorerecord.settings import Settings
 
@@ -486,9 +492,9 @@ def test_forecast_today_reads_predictions_not_recommendations() -> None:
     assert "pronosticos deportivos" in html
     assert "Health" in html
     assert "Auditoria tecnica" not in html
-    assert "Pronosticos principales del modelo" in html
-    assert "Pronostico principal del modelo" in html
-    assert "Pronostico principal del modelo (BTTS)" in html
+    assert "Pronósticos principales del modelo" in html
+    assert "Pronóstico principal del modelo" in html
+    assert "Pronóstico principal del modelo (BTTS)" in html
     assert 'data-signal="NO_SIGNAL"' in html
     assert html.count('data-signal="NO_SIGNAL"') >= 2
     assert "Sin señal clara" in html
@@ -1149,6 +1155,7 @@ def test_history_page_renders_past_fixtures() -> None:
         target_date="2026-08-02",
         now_utc=datetime(2026, 8, 2, 12, 0, tzinfo=UTC),
         league_filter="EPL",
+        include_past_fixtures=True,
     )
     html = render_history_page(
         data,
@@ -1174,3 +1181,156 @@ def test_forecast_match_preserves_league() -> None:
     html = render_match_forecast(data, "m-forecast", settings=Settings(db_path=Path(""), raw_dir=Path("")))
     assert "English Premier League" in html
     assert "league=EPL" in html
+
+
+def test_history_page_renders_historical_matches_without_fixture_scores() -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        INSERT INTO historical_match (
+          source, source_event_id, league_code, season, match_date,
+          home_team, away_team, home_goals, away_goals, result_1x2
+        )
+        VALUES (
+          'football-data', 'mex-2026-08-01-pumas-america', 'MEX', '2026-2027',
+          '2026-08-01', 'Pumas', 'America', 1, 0, 'H'
+        )
+        """
+    )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-08-02",
+        now_utc=datetime(2026, 8, 2, 12, 0, tzinfo=UTC),
+        league_filter="LIGA_MX",
+        include_past_fixtures=True,
+    )
+    html = render_history_page(
+        data,
+        active_tab="past",
+        settings=Settings(db_path=Path(""), raw_dir=Path("")),
+        refresh_seconds=60,
+    )
+
+    assert "Pumas vs America" in html
+    assert "1-0" in html
+    assert "Histórico cargado" in html
+    assert "/match/None" not in html
+
+
+def test_performance_page_reports_settled_prediction_results() -> None:
+    conn = _conn()
+    prediction_run = _insert_forecast_fixture(conn)
+    settlement_run = _run(conn, "settle-fixtures")
+    for market, selection, prob, label in [
+        ("BTTS", "yes", 0.62, 1),
+        ("BTTS", "no", 0.38, 0),
+        ("OU2.5", "over", 0.44, 0),
+        ("OU2.5", "under", 0.56, 1),
+    ]:
+        conn.execute(
+            """
+            INSERT INTO prediction_result (
+              settlement_run_id, prediction_run_id, fixture_id, model_version,
+              market, selection, predicted_prob, label, brier, logloss,
+              settled_utc, prediction_generated_utc
+            )
+            VALUES (
+              ?, ?, 'm-forecast', ?, ?, ?, ?, ?, 0.10, 0.50,
+              '2026-07-05T00:30:00+00:00', '2026-07-04T12:00:00+00:00'
+            )
+            """,
+            (settlement_run, prediction_run, MODEL_VERSION, market, selection, prob, label),
+        )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 5, 12, 0, tzinfo=UTC),
+        upcoming_limit=0,
+    )
+    report = forecast_performance_report(conn)
+    html = render_performance_page(
+        data,
+        report,
+        forecast_snapshot_report(conn),
+        settings=Settings(db_path=Path(""), raw_dir=Path("")),
+        refresh_seconds=60,
+    )
+
+    assert report.decisions == 2
+    assert report.prediction_rows == 4
+    assert "Precisión del modelo" in html
+    assert "BTTS" in html
+    assert "OU2.5" in html
+    assert "100.00%" in html
+
+
+def test_market_page_explains_rejected_market_validation() -> None:
+    conn = _conn()
+    _insert_forecast_fixture(conn)
+    conn.execute(
+        """
+        UPDATE model_artifact
+        SET market_validation_status='REJECTED_FOR_INDEPENDENT_VALUE'
+        WHERE artifact_id='artifact-forecast-1'
+        """
+    )
+    run_id = _run(conn, "market-benchmark-report")
+    conn.execute(
+        """
+        INSERT INTO data_quality (run_id, check_name, metric_name, metric_value)
+        VALUES (?, 'market_benchmark', 'model_minus_market_logloss', 0.009)
+        """,
+        (run_id,),
+    )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+        upcoming_limit=0,
+    )
+    market_data = load_market_validation_data(conn)
+    html = render_market_page(
+        data,
+        market_data,
+        settings=Settings(db_path=Path(""), raw_dir=Path("")),
+        refresh_seconds=60,
+    )
+
+    assert market_data.summary_status == "REJECTED"
+    assert "Qué significa perder contra el mercado" in html
+    assert "REJECTED_FOR_INDEPENDENT_VALUE" in html
+    assert "model_minus_market_logloss" in html
+    assert "Kelly" not in html
+
+
+def test_signals_page_renders_top_three_forecasts() -> None:
+    conn = _conn()
+    _insert_forecast_fixture(conn)
+    conn.execute(
+        """
+        UPDATE prediction
+        SET prob = CASE selection WHEN 'over' THEN 0.64 ELSE 0.36 END,
+            fair_odds = CASE selection WHEN 'over' THEN 1.0 / 0.64 ELSE 1.0 / 0.36 END
+        WHERE fixture_id = 'm-forecast'
+          AND market = 'OU2.5'
+        """
+    )
+
+    data = load_forecast_data(
+        conn,
+        target_date="2026-07-04",
+        now_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+    )
+    html = render_signals_page(
+        data,
+        settings=Settings(db_path=Path(""), raw_dir=Path("")),
+        refresh_seconds=60,
+    )
+
+    assert "Mejores señales del día" in html
+    assert "Mexico vs Canada" in html
+    assert "OU2.5: Over 64.00%" in html
+    assert "NO VALIDADO CONTRA MERCADO" not in html

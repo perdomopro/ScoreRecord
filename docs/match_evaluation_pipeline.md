@@ -58,10 +58,11 @@ Provider fixtures/history
 | --- | --- |
 | `src/scorerecord/forecast_quality.py` | Reads `data_quality` rows for calibration sanity, OU monotonicity, and Elo coverage. |
 | `src/scorerecord/forecast_snapshots.py` | Freezes pre-kickoff GUI principal forecasts and settles them later. |
+| `src/scorerecord/forecast_performance.py` | Aggregates settled `prediction_result` rows into top-pick accuracy, Brier, and log-loss by market and league. |
 | `src/scorerecord/odds_coverage.py` | Summarizes current odds coverage per fixture for match detail pages. |
 | `src/scorerecord/odds_horizons.py` | Summarizes pre-kickoff odds capture horizons. |
 | `src/scorerecord/health.py` | Database health checks used by deployment and `/health`. |
-| `src/scorerecord/gui.py` | Renders landing page `/`, forecast list `/today`, match modal `/match/<id>`, and health `/health`. |
+| `src/scorerecord/gui.py` | Renders landing `/`, forecast list `/today`, top signals `/signals`, match modal `/match/<id>`, loaded fixtures `/history`, performance `/performance`, market context `/market`, and health `/health`. |
 
 ## Evaluation and reports
 
@@ -69,6 +70,7 @@ Provider fixtures/history
 | --- | --- | --- |
 | `scorerecord forecast-report` | `src/scorerecord/forecast_snapshots.py` | Accuracy, Brier, log-loss by market/signal from frozen snapshots. |
 | `scorerecord settle-forecast-snapshots` | `src/scorerecord/forecast_snapshots.py` | Settles frozen OU2.5/BTTS forecast snapshots. |
+| `scorerecord forecast-performance-report --record-quality` | `src/scorerecord/forecast_performance.py` | Summarizes settled prediction performance and optionally persists the weekly evidence in `data_quality`. |
 | `scorerecord historical-odds-report --market OU2.5` | `src/scorerecord/evaluate/historical_odds.py` | Audits Football-Data historical odds coverage and overround. |
 | `scorerecord market-benchmark-report` | `src/scorerecord/evaluate/backtest.py` | Compares model probabilities against fair historical market probabilities. |
 | `scorerecord calibration-diagnostics` | `src/scorerecord/evaluate/calibration_diagnostics.py` | Segmented calibration diagnostics before changing models/policies. |
@@ -86,8 +88,8 @@ Recommended minimal cadence on the homeserver:
 | Daily early morning | `scorerecord-club-refresh.timer` | Pick up new fixtures at least several days ahead and regenerate forecast-only predictions. |
 | Hourly when fixtures are near | `scorerecord-odds.timer` | Keep odds coverage snapshots fresh for informational coverage. |
 | Pre-kickoff window | `scorerecord-preplay-odds.timer` | Capture last pre-kickoff market snapshots for later analysis. |
-| Postmatch | `scorerecord-postmatch.timer` | Ingest/settle results and frozen forecast snapshots. |
-| Weekly | `scorerecord-weekly.timer` | Run diagnostics, drift checks, coverage summaries, and readiness reports. |
+| Postmatch | `scorerecord-postmatch.timer` | Settle finished fixture predictions and frozen forecast snapshots from local scores. |
+| Weekly | `scorerecord-weekly.timer` | Persist performance evidence, run diagnostics, drift checks, coverage summaries, and readiness reports. |
 
 Daily refresh is enough for fixture discovery because odds-api.io returns many
 pending events beyond the next three days. Hourly polling should be reserved for
