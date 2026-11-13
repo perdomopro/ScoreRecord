@@ -21,6 +21,18 @@ Provider fixtures/history
   -> settlement and reports after results
 ```
 
+As of 2026-11-13 only the first half of this flow runs automatically. The daily
+job goes from provider fixtures to GUI predictions; nothing brings results back
+in, so `match_history` stops in May-July 2026, snapshots are not frozen, and
+settlement has nothing to settle. Details in
+[critical-review.md](critical-review.md).
+
+```text
+Automated daily:   provider fixtures -> Elo -> Dixon-Coles artifact -> predictions -> GUI
+Manual only:       Football-Data results -> historical_match -> bridge -> match_history
+Not wired:         fixture scores, forecast snapshot freeze, club odds capture
+```
+
 ## Ingestion and fixture sources
 
 | Command/script | Module | Purpose | Writes |
@@ -45,7 +57,7 @@ Provider fixtures/history
 
 | Command/module | Code | Purpose | Guardrail |
 | --- | --- | --- | --- |
-| `scorerecord predict-fixtures --league <CODE>` | `src/scorerecord/predict/fixtures.py` | Trains/fetches a league-scoped Dixon-Coles artifact and writes markets. | Fixture league must match artifact league. |
+| `scorerecord predict-fixtures --league <CODE>` | `src/scorerecord/predict/fixtures.py` | Retrains a league-scoped Dixon-Coles artifact on every call and writes markets for every future fixture. | Fixture league must match artifact league. Training rows are cut at `TRAINING_POLICY.trained_until`, a fixed `2026-06-11` for all scopes. |
 | `DixonColes` | `src/scorerecord/models/dixon_coles.py` | Generates score matrix and goal-market probabilities. | Uses league-scoped training rows. |
 | `PlattCalibrator` | `src/scorerecord/models/calibration.py` | Calibrates binary goal markets where enough historical rows exist. | Calibrator scope stored in artifact JSON. |
 | `select_primary_forecasts` | `src/scorerecord/forecast_policy.py` | Chooses OU2.5 GOALS principal and BTTS principal. | Excludes 1X2, exact score, double chance, OU1.5, OU3.5 from principal selection. |
@@ -81,15 +93,15 @@ Provider fixtures/history
 
 ## Operational cadence
 
-Recommended minimal cadence on the homeserver:
+Cadence on the homeserver and what each timer actually achieves today:
 
-| Cadence | Command/timer | Reason |
-| --- | --- | --- |
-| Daily early morning | `scorerecord-club-refresh.timer` | Pick up new fixtures at least several days ahead and regenerate forecast-only predictions. |
-| Hourly when fixtures are near | `scorerecord-odds.timer` | Keep odds coverage snapshots fresh for informational coverage. |
-| Pre-kickoff window | `scorerecord-preplay-odds.timer` | Capture last pre-kickoff market snapshots for later analysis. |
-| Postmatch | `scorerecord-postmatch.timer` | Settle finished fixture predictions and frozen forecast snapshots from local scores. |
-| Weekly | `scorerecord-weekly.timer` | Persist performance evidence, run diagnostics, drift checks, coverage summaries, and readiness reports. |
+| Cadence | Command/timer | Intended reason | Observed 2026-11-13 |
+| --- | --- | --- | --- |
+| Daily 05:35 | `scorerecord-club-refresh.timer` | Pick up new fixtures and regenerate forecast-only predictions. | Works for leagues with provider events. Retrains on unchanged data. |
+| Hourly | `scorerecord-odds.timer` | Keep odds coverage snapshots fresh. | `matched_events=0`; queries the World Cup slug. |
+| Pre-kickoff window | `scorerecord-preplay-odds.timer` | Capture last pre-kickoff market snapshots. | Not enabled. |
+| Daily 23:30 | `scorerecord-postmatch.timer` | Settle predictions and frozen snapshots from local scores. | `settled=0`; club fixtures never get scores. |
+| Sunday 09:00 | `scorerecord-weekly.timer` | Persist performance evidence, gates, drift checks. | Runs. Drift compares runs from different leagues and raises false alerts. |
 
 Daily refresh is enough for fixture discovery because odds-api.io returns many
 pending events beyond the next three days. Hourly polling should be reserved for
@@ -100,13 +112,13 @@ odds freshness, not full model rebuilds.
 As of the 2026-07-29 homeserver validation, the forecast-only GUI is backed by
 league-scoped refreshes for:
 
-| League code | GUI label | Status |
-| --- | --- | --- |
-| `LIGA_MX` | Liga MX | Active forecast pilot |
-| `MLS` | MLS | Active forecast pilot |
-| `EPL` | Premier League | Active forecast pilot |
-| `ARGENTINA` | Argentina | Active forecast pilot |
-| `BRASILEIRAO` | Brasileirao | Active forecast pilot |
+| League code | GUI label | Status 2026-07-29 | Future fixtures 2026-11-13 | History ends |
+| --- | --- | --- | --- | --- |
+| `LIGA_MX` | Liga MX | Active forecast pilot | 10 | 2026-07-27 |
+| `MLS` | MLS | Active forecast pilot | 0 | 2026-07-26 |
+| `EPL` | Premier League | Active forecast pilot | 151 | 2026-05-24 |
+| `ARGENTINA` | Argentina | Active forecast pilot | 0 (provider returns no events) | 2026-07-26 |
+| `BRASILEIRAO` | Brasileirao | Active forecast pilot | 41 | 2026-07-26 |
 
 Continental competitions such as Champions League, Europa League, Libertadores,
 and Sudamericana are provider-watchlist competitions only until ScoreRecord has

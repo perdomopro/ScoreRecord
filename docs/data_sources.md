@@ -45,6 +45,18 @@ Current catalog-backed league slugs:
 | `LIBERTADORES` | Libertadores | `international-clubs-conmebol-libertadores-knockout-stage` | Provider watchlist only |
 | `SUDAMERICANA` | Sudamericana | `international-clubs-conmebol-sudamericana-knockout-stage` | Provider watchlist only |
 
+Slug caveats found on 2026-11-13:
+
+- Slugs are tied to a tournament phase. `mexico-liga-mx-apertura` and
+  `argentina-primera-lpf-clausura` stop returning events when the phase ends;
+  `league_config.py` holds one slug per league and has no off-season state.
+- `argentina-primera-lpf-clausura` currently returns zero events and `usa-mls`
+  has no pending regular-season events. Re-check both against `/leagues`.
+- Each event carries `status` and `scores`. ScoreRecord ignores both today,
+  which is why club fixtures never receive a final score.
+- `fetch-odds` uses one slug from `ODDS_API_IO_LEAGUE`, defaulting to
+  `international-fifa-world-cup`, and is not driven by `league_config.py`.
+
 Guardrail:
 
 Do not surface a league as a forecast pilot until it has historical rows, bridged

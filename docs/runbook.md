@@ -6,20 +6,25 @@ never paste API keys into commands, commits, reports, or screenshots.
 
 ## Current Operating Truth
 
+As of 2026-11-13:
+
 - Product mode remains `FORECAST_ONLY` / research.
 - Phase 3 rejected independent Dixon-Coles value against club OU2.5 market
   probabilities, so Phase 6 value/paper candidates stay blocked.
-- The active operating path is multi-league forecasting and market-anchored
-  research, not betting recommendations.
-- The local `.venv` in this workspace is stale: its Python points at a removed
-  WindowsApps Python 3.11 path. Full tests can still run with the Codex bundled
-  Python by pre-importing bundled NumPy and then loading pytest from the stale
-  venv site-packages.
-- Local `db-health` is green except `odds_snapshots` is empty. That means the
-  local DB is structurally healthy but has no live odds capture evidence.
-- Local `fixture-summary` currently has no future World Cup fixtures. Club/EPL
-  fixtures are the practical path for a daily GUI after the World Cup schedule
-  window has passed.
+- The active operating path is multi-league club forecasting. Future fixtures
+  exist for `EPL`, `LIGA_MX`, and `BRASILEIRAO`; `MLS` has none left and
+  `ARGENTINA` returns no provider events.
+- Production publishes forecasts daily but does not learn or measure: results
+  are not ingested, the training cutoff is fixed at 2026-06-11, odds capture
+  matches zero fixtures, and no forecast snapshots are frozen. `db-health` and
+  `/health` stay green through all of that. See
+  [critical-review.md](critical-review.md) and
+  [improvement-plan.md](improvement-plan.md).
+- The working copy has no `.venv` and no local database. Create both with the
+  setup below; a local DB is only needed to run the CLI or GUI locally.
+- Full `pytest` is not green: 3 tests in `test_league_aware_artifacts.py` seed a
+  fixture on 2026-08-15, which is now in the past, so the fixture is skipped as
+  already started.
 
 ## Environment Variables
 
@@ -35,6 +40,9 @@ ODDS_API_IO_BOOKMAKERS=Bet365,Unibet
 ODDS_API_IO_LEAGUE=international-fifa-world-cup
 ```
 
+`ODDS_API_IO_LEAGUE` accepts a single slug and only affects `fetch-odds`. The
+World Cup value shown here is the code default and matches no club fixture.
+
 Optional provider variables:
 
 ```dotenv
@@ -45,63 +53,42 @@ RESPONSIBLE_GAMBLING_URL=<url>
 
 ## Local Setup
 
-Preferred setup after repairing Python on Windows:
+Any Python 3.11 or newer works (verified with 3.14 on Windows and 3.13 on the
+homeserver):
 
 ```powershell
-python -m venv .venv
+py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
+pip install tzdata
 ```
 
-If the local Python launcher is unavailable, use the Codex bundled Python for
-CLI commands:
+`tzdata` is required on Windows because `zoneinfo` has no system timezone
+database there. Without it 36 tests fail with `ZoneInfoNotFoundError`. It is
+not yet declared in `pyproject.toml`.
 
-```powershell
-$py = "C:\Users\ajvpl\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-$env:PYTHONPATH = "src"
-& $py -m scorerecord.cli db-health
-```
-
-To run pytest with the current stale venv without mixing its incompatible NumPy:
-
-```powershell
-$py = "C:\Users\ajvpl\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-$env:PYTHONPATH = "src"
-& $py -c "import sys, numpy; sys.path.append(r'.venv\Lib\site-packages'); import pytest; raise SystemExit(pytest.main(['-q']))"
-```
-
-`ruff.exe` still works directly from the stale venv:
-
-```powershell
-.\.venv\Scripts\ruff.exe check src tests scripts
-```
-
-Full-repo `ruff` currently has legacy findings. For commits, run targeted ruff
-over touched files and keep the full-repo debt visible instead of pretending it
-is closed.
+Full-repo `ruff` has legacy findings. For commits, run targeted ruff over
+touched files and keep the full-repo debt visible instead of pretending it is
+closed.
 
 ## Local Validation Gate
 
 Run this before committing:
 
 ```powershell
-$py = "C:\Users\ajvpl\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-$env:PYTHONPATH = "src"
-& $py -m compileall src tests scripts
-& $py -c "import sys, numpy; sys.path.append(r'.venv\Lib\site-packages'); import pytest; raise SystemExit(pytest.main(['-q']))"
-.\.venv\Scripts\ruff.exe check <touched-python-files>
+python -m compileall -q src tests scripts
+python -m pytest -q
+python -m ruff check <touched-python-files>
 git diff --check
 git status --short
 ```
 
-Current verified local result on 2026-07-28:
+Verified local result on 2026-11-13 (Windows, Python 3.14, numpy, `tzdata`):
 
 ```text
-compileall src tests scripts: passed
-pytest -q: 241 passed
-targeted ruff for Phase 13 artifact-scope files: passed
-git diff --check: passed
-full-repo ruff: fails with legacy style findings
+pytest -q: 270 passed, 3 failed (test_league_aware_artifacts.py, hardcoded past date)
+pytest -q without tzdata: 237 passed, 36 failed
+ruff check src tests: 256 findings (208 E501)
 ```
 
 ## Core Local Commands
@@ -181,11 +168,28 @@ scorerecord fixture-summary --limit 12
 
 ## Club Forecast Leagues
 
-Supported GUI club presets:
+Supported GUI club presets (`src/scorerecord/league_config.py`):
 
-- `LIGA_MX`: odds-api.io slug `mexico-liga-mx-apertura`
+- `LIGA_MX`: odds-api.io slug `mexico-liga-mx-apertura` (Apertura only; the
+  Clausura needs a different slug)
 - `MLS`: odds-api.io slug `usa-mls`
 - `EPL`: odds-api.io slug `england-premier-league`
+- `ARGENTINA`: odds-api.io slug `argentina-primera-lpf-clausura` (returns no
+  events as of 2026-11-13)
+- `BRASILEIRAO`: odds-api.io slug `brazil-brasileiro-serie-a`
+
+The daily production loop is `scripts/run_daily_club_forecast.sh`, which calls
+`run-club-pilot-refresh` once per league. That command does not ingest results.
+To bring match history up to date by hand, per league:
+
+```powershell
+scorerecord ingest-football-data --league EPL --season 2026-2027 --refresh
+scorerecord bridge-club-history --league EPL --source football-data --from-season 2026-2027 --to-season 2026-2027 --allow-create-teams
+scorerecord build-elo
+```
+
+New rows only reach the model once the fixed `trained_until = 2026-06-11`
+cutoff in `models/manifest.py` is replaced (improvement plan, phase 1.2).
 
 First-time setup for Liga MX or MLS requires historical rows, bridge, ratings,
 fixtures, and predictions:
@@ -284,11 +288,9 @@ ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "syst
 
 ## Git Workflow
 
-This local clone currently has no `origin` remote configured. Add one once the
-GitHub/Git server repo exists:
+`origin` is the GitHub repository and the default branch is `main`:
 
 ```powershell
-git remote add origin <repo-url>
 git remote -v
 ```
 
@@ -299,7 +301,7 @@ git status --short
 git diff --stat
 git add <files>
 git commit -m "Short imperative summary"
-git push -u origin master
+git push -u origin <branch>
 ```
 
 If you prefer feature branches:
@@ -319,6 +321,30 @@ Do not commit:
 - generated `outputs/` artifacts unless intentionally needed for a report
 
 ## Troubleshooting
+
+Read-only production checks that expose the silent failures:
+
+```bash
+journalctl --user -u scorerecord-odds.service -n 5 --no-pager        # matched_events=0 means no odds
+journalctl --user -u scorerecord-postmatch.service -n 5 --no-pager   # settled=0 means no results
+cd /home/adrian/scorerecord && .venv/bin/python - <<'EOF'
+import sqlite3
+c = sqlite3.connect("file:data/scorerecord.db?mode=ro", uri=True)
+for title, sql in [
+    ("played fixtures without score",
+     "SELECT league_code, COUNT(*) FROM fixture WHERE kickoff_utc < datetime('now','-2 days') AND home_score IS NULL GROUP BY 1"),
+    ("latest training row per competition",
+     "SELECT tournament, MAX(date) FROM match_history GROUP BY 1 ORDER BY 2 DESC LIMIT 12"),
+    ("forecast snapshots",
+     "SELECT COUNT(*), MAX(as_of_utc) FROM forecast_snapshot"),
+]:
+    print("##", title)
+    for row in c.execute(sql):
+        print(*row)
+EOF
+```
+
+The server has no `sqlite3` command-line tool, hence the venv Python.
 
 No matches on dashboard:
 
