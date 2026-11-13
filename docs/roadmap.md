@@ -4,7 +4,33 @@ Purpose: keep the project decomposable into small, safe increments. Each phase h
 objective, technical work, exit criteria, dependencies, and run-sized increments. Do not
 advance a phase as trusted until the previous phase exit criteria are actually met.
 
-## Current State - 2026-07-29
+## Current State - 2026-11-13
+
+A production audit superseded the phase statuses below. Phases 13 and 13.5 are
+recorded as active, but the forward loop they depend on is not working:
+
+| Claim in this roadmap | Observed on the homeserver |
+| --- | --- |
+| Phase 13 daily multi-league forecast is active for five leagues | Runs daily; only `EPL`, `LIGA_MX`, `BRASILEIRAO` have future fixtures. Every artifact has `trained_until = 2026-06-11` and unchanged training rows. |
+| Phase 13.5 accumulates snapshots and settled outcomes | `forecast_snapshot` has 4 rows from July. 855 played club fixtures have no score. Nightly settlement reports `settled=0`. |
+| Phase 5 odds layer keeps coverage fresh | Hourly `fetch-odds` queries the World Cup slug: `matched_events=0` on every run since July. |
+| Full `pytest` is green | 3 tests fail on a hardcoded past date; 36 more fail on Windows without `tzdata`. |
+
+Next work is defined in [improvement-plan.md](improvement-plan.md), which
+replaces the "Future 13.X" list as the forward plan:
+
+| Plan phase | Scope |
+| --- | --- |
+| 0 | Containment: backup, stop the empty odds job, decide public exposure |
+| 1 | Close the data loop: results, rolling training cutoff, snapshots, per-league odds, storage, truthful health |
+| 2 | Code hygiene: dependencies, date-proof tests, CI, dead files |
+| 3 | GUI redesign |
+| 4 | Models behind a single comparison gate |
+| 5 | More leagues and markets |
+
+The sections below are kept as history.
+
+## State on 2026-07-29
 
 | Phase | State |
 | --- | --- |

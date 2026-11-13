@@ -288,6 +288,26 @@ API keys, SSH passwords, bookmaker credentials, and bankroll amounts must not be
 
 ## Change Log
 
+### 2026-11-13 - Full audit and improvement plan
+
+- Audited the repository, the homeserver deployment, the production database
+  (read-only), and the live GUI. No code or server state was changed.
+- Main finding: the daily job publishes forecasts but the feedback loop is
+  open. Club results are not ingested, the training cutoff is fixed at
+  2026-06-11 for every scope, `fetch-odds` targets the World Cup slug, and
+  forecast snapshots are not frozen. Health checks stay green throughout.
+- Measured model behaviour on the latest runs: Over 2.5 probabilities have a
+  standard deviation of 0.04-0.05 across fixtures and BTTS 0.02-0.03, so the
+  principal goal forecasts sit close to league base rates; 1X2 spreads 0.07-0.15.
+- Rewrote `docs/critical-review.md` as the current audit and added
+  `docs/improvement-plan.md` with phased work.
+- Corrected `README.md`, `docs/deployment.md`, `docs/runbook.md`,
+  `docs/roadmap.md`, `docs/match_evaluation_pipeline.md`, and
+  `docs/data_sources.md` to describe what production actually does.
+- The "Purpose", "Data Sources", and "Database Responsibilities" sections above
+  predate the multi-league pipeline in places (for example `fixture` now holds
+  club fixtures, and `historical_match`/`historical_odds` are not listed).
+
 ### 2026-07-14 - Phase 11.2.0 Multi-book Sharp/Soft Coverage Audit and Phase 12 Recreational Forecast-only Framing
 
 - Phase 11.2.0 audit revealed that the local DB lacks sharp reference bookmakers (only soft books like Bet365 and Unibet are captured).

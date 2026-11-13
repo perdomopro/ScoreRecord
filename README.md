@@ -10,6 +10,31 @@ Repository: https://github.com/Perdomazo/ScoreRecord
 The public GUI is deliberately not a betting app: it does not show EV, Kelly,
 stake sizing, or "best bet" language in the forecast view.
 
+## Status (2026-11-13)
+
+The daily pipeline runs on the homeserver, but a full audit found that the
+feedback loop is broken: club results are not ingested, the training cutoff is
+frozen at 2026-06-11, hourly odds capture targets the World Cup slug, and
+forecast snapshots are not frozen. Forecasts are published every day from a
+stale model and are never settled.
+
+- What is wrong and the evidence: [docs/critical-review.md](docs/critical-review.md)
+- What to do about it, in order: [docs/improvement-plan.md](docs/improvement-plan.md)
+
+## How Production Runs
+
+```text
+05:35 daily   club-refresh   fixtures (odds-api.io) -> Elo -> Dixon-Coles + Platt -> prediction
+hourly        odds           fetch-odds -> odds_snapshots
+23:30 daily   postmatch      settle-fixtures -> settle-forecast-snapshots -> compute-clv
+Sun 09:00     weekly         performance report, goal-market gates, calibrator drift
+always on     gui            read-only dashboard on port 8765
+```
+
+All jobs are systemd user timers on the homeserver and share one SQLite file,
+`data/scorerecord.db`. The GUI only reads. See
+[docs/deployment.md](docs/deployment.md) for units, limits, and exposure.
+
 ## Current Scope
 
 ScoreRecord is implemented as a lightweight Python package designed for a small
@@ -35,10 +60,14 @@ homeserver:
 
 ## Quick Start
 
+Python 3.11 or newer. On Windows also install `tzdata`; the standard library has
+no timezone database there and 36 tests fail without it.
+
 ```powershell
-py -3.11 -m venv .venv
+py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
+pip install tzdata
 scorerecord init-db
 scorerecord migrate-db
 scorerecord db-health
@@ -170,7 +199,13 @@ This is educational/research software. It estimates probabilities with uncertain
 
 ## Full Project Notes
 
-See [docs/project.md](docs/project.md) for the full architecture, quality gates, and
-change log. See [docs/roadmap.md](docs/roadmap.md) for the phased execution plan.
-See [docs/runbook.md](docs/runbook.md) for local validation, homeserver deploy,
-git workflow, EPL pilot commands, and troubleshooting.
+| Document | Use it for |
+| --- | --- |
+| [docs/critical-review.md](docs/critical-review.md) | Current audit: what is broken or weak, with evidence |
+| [docs/improvement-plan.md](docs/improvement-plan.md) | Phased implementation plan |
+| [docs/deployment.md](docs/deployment.md) | Homeserver layout, timers, exposure |
+| [docs/runbook.md](docs/runbook.md) | Local setup, validation, deploy, troubleshooting |
+| [docs/match_evaluation_pipeline.md](docs/match_evaluation_pipeline.md) | Which code produces each forecast |
+| [docs/data_sources.md](docs/data_sources.md) | Providers, slugs, admission checklist |
+| [docs/roadmap.md](docs/roadmap.md) | Phase history up to Phase 14 |
+| [docs/project.md](docs/project.md) | Architecture notes and change log |
