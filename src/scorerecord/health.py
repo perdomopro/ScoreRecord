@@ -1,9 +1,22 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 
 from scorerecord.db import schema_version
+from scorerecord.league_config import GUI_LEAGUE_ORDER
+from scorerecord.maintenance import latest_backup_age_hours
+
+RESULT_GRACE_HOURS = 48
+# Fixtures still unscored after this long were postponed or re-issued by the
+# provider under another id; they stop counting as a freshness problem.
+RESULT_WINDOW_DAYS = 21
+HISTORY_LAG_DAYS = 3
+BACKUP_MAX_AGE_HOURS = 48
+SNAPSHOT_WINDOW_HOURS = 20
+ODDS_WINDOW_HOURS = 24
 
 
 @dataclass(frozen=True)
@@ -68,8 +81,229 @@ def db_health_checks(conn: sqlite3.Connection) -> list[HealthCheck]:
         _odds_closing_flag_check(conn),
         _snapshot_coverage_check(conn),
         _failed_run_check(conn),
+        *pipeline_health_checks(conn),
     ]
     return checks
+
+
+def pipeline_health_checks(conn: sqlite3.Connection) -> list[HealthCheck]:
+    """Freshness checks for the daily forecast loop.
+
+    These report WARNING, never FAIL: they describe a loop that is not closing,
+    which the refresh job itself is supposed to repair.
+    """
+    return [
+        _results_freshness_check(conn),
+        _history_freshness_check(conn),
+        _training_freshness_check(conn),
+        _league_horizon_check(conn),
+        _forecast_snapshot_check(conn),
+        _club_odds_check(conn),
+        _backup_check(conn),
+    ]
+
+
+def _club_placeholders() -> str:
+    return ",".join("?" for _ in GUI_LEAGUE_ORDER)
+
+
+def _results_freshness_check(conn: sqlite3.Connection) -> HealthCheck:
+    rows = conn.execute(
+        f"""
+        SELECT league_code, COUNT(*) AS n
+        FROM fixture
+        WHERE league_code IN ({_club_placeholders()})
+          AND kickoff_utc IS NOT NULL
+          AND datetime(kickoff_utc) < datetime('now', ?)
+          AND datetime(kickoff_utc) >= datetime('now', ?)
+          AND home_score IS NULL
+          AND status != 'cancelled'
+        GROUP BY league_code
+        ORDER BY league_code
+        """,
+        (*GUI_LEAGUE_ORDER, f"-{RESULT_GRACE_HOURS} hours", f"-{RESULT_WINDOW_DAYS} days"),
+    ).fetchall()
+    total = sum(int(row["n"]) for row in rows)
+    details = " ".join(f"{row['league_code']}={row['n']}" for row in rows)
+    return HealthCheck(
+        "results_freshness",
+        "OK" if total == 0 else "WARNING",
+        f"played_without_score={total}",
+        details,
+    )
+
+
+def _history_freshness_check(conn: sqlite3.Connection) -> HealthCheck:
+    """Finished fixtures must reach match_history, which is what models train on."""
+    lagging = []
+    for league in GUI_LEAGUE_ORDER:
+        row = conn.execute(
+            """
+            SELECT
+              (SELECT MAX(substr(kickoff_utc, 1, 10)) FROM fixture
+                WHERE league_code = ? AND home_score IS NOT NULL) AS last_result,
+              (SELECT MAX(substr(date, 1, 10)) FROM match_history
+                WHERE tournament = ?) AS last_history
+            """,
+            (league, league),
+        ).fetchone()
+        if not row["last_result"]:
+            continue
+        gap = conn.execute(
+            "SELECT julianday(?) - julianday(COALESCE(?, '1970-01-01'))",
+            (row["last_result"], row["last_history"]),
+        ).fetchone()[0]
+        if gap is not None and float(gap) > HISTORY_LAG_DAYS:
+            lagging.append(f"{league}:history={row['last_history']},results={row['last_result']}")
+    return HealthCheck(
+        "history_freshness",
+        "OK" if not lagging else "WARNING",
+        f"lagging_leagues={len(lagging)}",
+        " ".join(lagging),
+    )
+
+
+def _training_freshness_check(conn: sqlite3.Connection) -> HealthCheck:
+    """The newest artifact of each league must cover its newest history."""
+    artifacts: dict[str, str] = {}
+    for row in conn.execute(
+        """
+        SELECT trained_until, details_json
+        FROM model_artifact
+        ORDER BY created_utc DESC, artifact_id DESC
+        LIMIT 400
+        """
+    ).fetchall():
+        try:
+            details = json.loads(str(row["details_json"] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        policy = details.get("training_policy")
+        league = str(policy.get("league_code") or "") if isinstance(policy, dict) else ""
+        if league and league not in artifacts:
+            artifacts[league] = str(row["trained_until"])
+    stale = []
+    for league in GUI_LEAGUE_ORDER:
+        if not _league_has_future_fixtures(conn, league):
+            continue
+        last_history = conn.execute(
+            "SELECT MAX(substr(date, 1, 10)) FROM match_history WHERE tournament = ?",
+            (league,),
+        ).fetchone()[0]
+        trained_until = artifacts.get(league)
+        if not last_history or not trained_until:
+            continue
+        gap = conn.execute(
+            "SELECT julianday(?) - julianday(?)", (last_history, trained_until)
+        ).fetchone()[0]
+        if gap is not None and float(gap) > HISTORY_LAG_DAYS:
+            stale.append(f"{league}:trained_until={trained_until},history={last_history}")
+    return HealthCheck(
+        "training_freshness",
+        "OK" if not stale else "WARNING",
+        f"stale_leagues={len(stale)}",
+        " ".join(stale),
+    )
+
+
+def _league_has_future_fixtures(conn: sqlite3.Connection, league: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1 FROM fixture
+        WHERE league_code = ?
+          AND kickoff_utc IS NOT NULL
+          AND datetime(kickoff_utc) > datetime('now')
+          AND status != 'cancelled'
+        LIMIT 1
+        """,
+        (league,),
+    ).fetchone()
+    return row is not None
+
+
+def _league_horizon_check(conn: sqlite3.Connection) -> HealthCheck:
+    empty = [
+        league for league in GUI_LEAGUE_ORDER if not _league_has_future_fixtures(conn, league)
+    ]
+    return HealthCheck(
+        "league_horizon",
+        "OK" if not empty else "WARNING",
+        f"leagues_without_future_fixtures={len(empty)}",
+        " ".join(empty),
+    )
+
+
+def _forecast_snapshot_check(conn: sqlite3.Connection) -> HealthCheck:
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*) AS n
+        FROM fixture f
+        WHERE f.league_code IN ({_club_placeholders()})
+          AND f.kickoff_utc IS NOT NULL
+          AND datetime(f.kickoff_utc) > datetime('now')
+          AND datetime(f.kickoff_utc) <= datetime('now', ?)
+          AND f.status != 'cancelled'
+          AND EXISTS (SELECT 1 FROM prediction p WHERE p.fixture_id = f.fixture_id)
+          AND NOT EXISTS (SELECT 1 FROM forecast_snapshot fs WHERE fs.fixture_id = f.fixture_id)
+        """,
+        (*GUI_LEAGUE_ORDER, f"+{SNAPSHOT_WINDOW_HOURS} hours"),
+    ).fetchone()
+    missing = int(row["n"] or 0)
+    return HealthCheck(
+        "forecast_snapshots",
+        "OK" if missing == 0 else "WARNING",
+        f"upcoming_without_snapshot={missing}",
+        f"window_hours={SNAPSHOT_WINDOW_HOURS}",
+    )
+
+
+def _club_odds_check(conn: sqlite3.Connection) -> HealthCheck:
+    row = conn.execute(
+        f"""
+        SELECT
+          COUNT(*) AS upcoming,
+          SUM(
+            CASE WHEN EXISTS (
+              SELECT 1 FROM odds_snapshots os WHERE os.fixture_id = f.fixture_id
+            ) THEN 1 ELSE 0 END
+          ) AS with_odds
+        FROM fixture f
+        WHERE f.league_code IN ({_club_placeholders()})
+          AND f.home_id IS NOT NULL
+          AND f.away_id IS NOT NULL
+          AND f.kickoff_utc IS NOT NULL
+          AND datetime(f.kickoff_utc) > datetime('now')
+          AND datetime(f.kickoff_utc) <= datetime('now', ?)
+          AND f.status != 'cancelled'
+        """,
+        (*GUI_LEAGUE_ORDER, f"+{ODDS_WINDOW_HOURS} hours"),
+    ).fetchone()
+    upcoming = int(row["upcoming"] or 0)
+    with_odds = int(row["with_odds"] or 0)
+    return HealthCheck(
+        "club_odds_capture",
+        "OK" if upcoming == 0 or with_odds > 0 else "WARNING",
+        f"with_odds={with_odds}/{upcoming}",
+        f"window_hours={ODDS_WINDOW_HOURS}",
+    )
+
+
+def _backup_check(conn: sqlite3.Connection) -> HealthCheck:
+    db_file = next(
+        (str(row[2]) for row in conn.execute("PRAGMA database_list") if row[1] == "main"),
+        "",
+    )
+    if not db_file:
+        return HealthCheck("backup_age", "OK", "in_memory_database")
+    age = latest_backup_age_hours(Path(db_file))
+    if age is None:
+        return HealthCheck("backup_age", "WARNING", "no_backup_found")
+    return HealthCheck(
+        "backup_age",
+        "OK" if age <= BACKUP_MAX_AGE_HOURS else "WARNING",
+        f"hours={age:.1f}",
+        f"max_hours={BACKUP_MAX_AGE_HOURS}",
+    )
 
 
 def _integrity_check(conn: sqlite3.Connection) -> HealthCheck:

@@ -15,6 +15,16 @@ def _health_status(conn: sqlite3.Connection) -> str:
     checks = db_health_checks(conn)
     return "OK" if all(c.status in ("OK", "WARNING") for c in checks) else "DB_HEALTH_FAILED"
 
+def _combined_ingest_status(slug_statuses: dict[str, str]) -> str:
+    statuses = set(slug_statuses.values())
+    failures = statuses - {"OK", "OK_WITH_SKIPPED_EVENTS", "NO_EVENTS_RETURNED"}
+    if failures:
+        return sorted(failures)[0]
+    if statuses == {"NO_EVENTS_RETURNED"}:
+        return "NO_EVENTS_RETURNED"
+    return "OK"
+
+
 def _write_artifact(result: dict[str, Any], outputs_dir: Path | None) -> None:
     if outputs_dir:
         benchmarks_dir = outputs_dir / "benchmarks"
@@ -36,8 +46,11 @@ def run_epl_pilot_refresh(
     max_requests: int = 1,
     dry_run: bool = False,
     outputs_dir: Path | None = None,
+    extra_league_slugs: tuple[str, ...] = (),
+    skip_elo: bool = False,
+    horizon_days: int | None = None,
 ) -> dict[str, Any]:
-    
+
     result: dict[str, Any] = {
         "status": "OK",
         "dry_run": dry_run,
@@ -67,29 +80,39 @@ def run_epl_pilot_refresh(
             result["next_action"] = "Fix DB health issues"
             return result
 
-        # 2. Ingest
-        ingest_result = ingest_fixtures_odds_api_io(
-            conn=conn,
-            api_key=api_key,
-            base_url=base_url,
-            sport=sport,
-            league_code=league_code,
-            league_slug=league_slug,
-            competition=competition,
-            season=season,
-            raw_dir=None,
-            max_requests=max_requests,
-            dry_run=dry_run,
-            verify_league_slug=False,
-        )
-        
-        result["api_requests_used"] = ingest_result.get("api_requests_used", 0)
-        result["events_seen"] = ingest_result.get("events_seen", 0)
-        result["events_valid"] = ingest_result.get("events_valid", 0)
-        result["fixtures_inserted"] = ingest_result.get("fixtures_inserted", 0)
-        result["fixtures_updated"] = ingest_result.get("fixtures_updated", 0)
-        result["unresolved_fixtures"] = ingest_result.get("unresolved_fixtures", 0)
-        result["ingest_status"] = ingest_result.get("status", "UNKNOWN")
+        # 2. Ingest every provider slug of the competition (regular phase,
+        # second half-season, playoffs). A slug without events is normal.
+        slug_statuses: dict[str, str] = {}
+        for slug in (league_slug, *extra_league_slugs):
+            ingest_result = ingest_fixtures_odds_api_io(
+                conn=conn,
+                api_key=api_key,
+                base_url=base_url,
+                sport=sport,
+                league_code=league_code,
+                league_slug=slug,
+                competition=competition,
+                season=season,
+                raw_dir=None,
+                max_requests=max_requests,
+                dry_run=dry_run,
+                verify_league_slug=False,
+            )
+            slug_statuses[slug] = str(ingest_result.get("status", "UNKNOWN"))
+            for key in (
+                "api_requests_used",
+                "events_seen",
+                "events_valid",
+                "fixtures_inserted",
+                "fixtures_updated",
+                "unresolved_fixtures",
+            ):
+                result[key] += int(ingest_result.get(key, 0) or 0)
+            result.setdefault("unmapped_names", []).extend(
+                ingest_result.get("unmapped_names", [])
+            )
+        result["slug_statuses"] = slug_statuses
+        result["ingest_status"] = _combined_ingest_status(slug_statuses)
 
         if result["ingest_status"] == "NO_EVENTS_RETURNED":
             result["status"] = "OK_NO_EVENTS"
@@ -103,9 +126,13 @@ def run_epl_pilot_refresh(
             return result
 
         if result["unresolved_fixtures"] > 0:
-            result["status"] = "UNRESOLVED_FIXTURES"
-            result["next_action"] = "Run alias-gap-report and add SEED_ALIASES"
-            return result
+            # Unresolved fixtures are skipped by the publisher, not fatal:
+            # playoff brackets list placeholders ("WC Finalist 1") until the
+            # previous round is played. A real club name here needs an alias.
+            result["next_action"] = (
+                "Unresolved names are skipped; add SEED_ALIASES if any is a real club: "
+                + ", ".join(sorted(set(result.get("unmapped_names", []))))
+            )
 
         # 5. Check duplicate source_event_ids
         dups = conn.execute(
@@ -133,23 +160,27 @@ def run_epl_pilot_refresh(
             result["would_publish_predictions"] = True
             return result
 
-        # 6. Build Elo
-        try:
-            with ingest_run(conn, "build-elo", source="match_history", cwd=Path.cwd()):
-                rebuild_elo(conn)
-            result["build_elo_status"] = "OK"
-        except Exception as e:
-            result["status"] = "BUILD_ELO_FAILED"
-            result["build_elo_status"] = f"ERROR: {e}"
-            result["next_action"] = "Check build-elo logs"
-            return result
+        # 6. Build Elo (the daily script rebuilds it once for all leagues)
+        if skip_elo:
+            result["build_elo_status"] = "SKIPPED_BY_CALLER"
+        else:
+            try:
+                with ingest_run(conn, "build-elo", source="match_history", cwd=Path.cwd()):
+                    rebuild_elo(conn)
+                result["build_elo_status"] = "OK"
+            except Exception as e:
+                result["status"] = "BUILD_ELO_FAILED"
+                result["build_elo_status"] = f"ERROR: {e}"
+                result["next_action"] = "Check build-elo logs"
+                return result
 
         # 7. Publish predictions (EPL scoped)
         try:
             pred_summary = publish_fixture_predictions(
                 conn,
                 cwd=Path.cwd(),
-                league=league_code
+                league=league_code,
+                horizon_days=horizon_days,
             )
             result["predicted_fixtures"] = pred_summary.predicted_fixtures
             result["inserted_predictions"] = pred_summary.inserted_predictions

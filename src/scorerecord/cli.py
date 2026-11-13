@@ -58,8 +58,15 @@ from scorerecord.ingest.football_data import (
 from scorerecord.ingest.history import ingest_history
 from scorerecord.ingest.odds import fetch_live_odds, odds_snapshot_coverage_report
 from scorerecord.ingest.readiness import audit_leagues
+from scorerecord.ingest.results import (
+    ingest_results_odds_api_io,
+    promote_finished_fixtures,
+    refresh_results_football_data,
+    sync_fixture_scores_from_history,
+)
 from scorerecord.ingest.worldcup import ingest_worldcup_2026, resolve_fixture_teams
-from scorerecord.league_config import league_config, normalize_league_code
+from scorerecord.league_config import GUI_LEAGUE_ORDER, league_config, normalize_league_code
+from scorerecord.maintenance import backup_database, prune_predictions, vacuum
 from scorerecord.models.manifest import build_model_manifest
 from scorerecord.odds_coverage import load_fixture_odds_coverage
 from scorerecord.odds_coverage_summary import (
@@ -90,7 +97,37 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("init-db", help="Create/update database schema and seed aliases.")
     subparsers.add_parser("migrate-db", help="Apply idempotent database migrations.")
     subparsers.add_parser("db-version", help="Print applied database migration versions.")
-    subparsers.add_parser("db-health", help="Run SQLite, schema, and pipeline health checks.")
+    db_health = subparsers.add_parser(
+        "db-health", help="Run SQLite, schema, and pipeline health checks."
+    )
+    db_health.add_argument(
+        "--strict", action="store_true", help="Exit 1 on WARNING as well as FAIL."
+    )
+    results = subparsers.add_parser(
+        "ingest-results",
+        help="Refresh results from Football-Data and write final scores onto fixtures.",
+    )
+    results.add_argument(
+        "--provider-results",
+        action="store_true",
+        help="Also ask odds-api.io for settled events (it rarely keeps them).",
+    )
+    results.add_argument(
+        "--league", help="Club league code. Defaults to every GUI league."
+    )
+    results.add_argument(
+        "--lookback-days", type=int, default=10, help="How far back to ask for settled events."
+    )
+    results.add_argument("--dry-run", action="store_true")
+    results.add_argument("--json", action="store_true")
+    prune = subparsers.add_parser(
+        "prune-predictions",
+        help="Delete prediction rows superseded by a newer run of the same fixture.",
+    )
+    prune.add_argument("--dry-run", action="store_true")
+    prune.add_argument("--vacuum", action="store_true", help="Reclaim disk space afterwards.")
+    backup = subparsers.add_parser("backup-db", help="Back up the database and rotate copies.")
+    backup.add_argument("--keep", type=int, default=7, help="Rotating copies to keep.")
     failures = subparsers.add_parser("db-failures", help="Print recent failed ingest runs.")
     failures.add_argument("--days", type=int, default=7)
     failures.add_argument("--limit", type=int, default=10)
@@ -193,6 +230,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Filter predictions to a specific league_code (e.g., EPL).",
     )
+    predict_fixtures.add_argument(
+        "--horizon-days",
+        type=int,
+        default=None,
+        help="Only publish fixtures kicking off within this many days.",
+    )
     freeze_forecast = subparsers.add_parser(
         "freeze-forecast-snapshot",
         help="Freeze forecast-only GUI principals before kickoff.",
@@ -200,6 +243,16 @@ def main(argv: list[str] | None = None) -> int:
     freeze_date = freeze_forecast.add_mutually_exclusive_group(required=True)
     freeze_date.add_argument("--date", help="Forecast date to freeze, YYYY-MM-DD.")
     freeze_date.add_argument("--today", action="store_true", help="Freeze today's forecast date.")
+    freeze_date.add_argument(
+        "--window-hours",
+        type=float,
+        help="Freeze fixtures kicking off within this many hours (all leagues).",
+    )
+    freeze_forecast.add_argument(
+        "--include-result",
+        action="store_true",
+        help="Also freeze the most likely 1X2 outcome.",
+    )
     subparsers.add_parser(
         "settle-forecast-snapshots",
         help="Settle frozen forecast-only snapshots against final scores.",
@@ -287,6 +340,15 @@ def main(argv: list[str] | None = None) -> int:
     club_pilot.add_argument("--season", help="Internal season override")
     club_pilot.add_argument("--max-requests", type=int, default=1, help="Max requests to make")
     club_pilot.add_argument(
+        "--skip-elo", action="store_true", help="Do not rebuild Elo (caller already did)."
+    )
+    club_pilot.add_argument(
+        "--horizon-days",
+        type=int,
+        default=21,
+        help="Only publish fixtures kicking off within this many days.",
+    )
+    club_pilot.add_argument(
         "--dry-run", action="store_true", help="Do not write DB changes or publish predictions"
     )
     club_pilot.add_argument("--json", action="store_true", help="Print output as JSON")
@@ -298,6 +360,12 @@ def main(argv: list[str] | None = None) -> int:
     odds.add_argument("--bookmakers", help="Comma-separated Odds-API.io bookmaker names.")
     odds.add_argument("--fixture-id")
     odds.add_argument("--max-requests", type=int, default=90)
+    odds.add_argument(
+        "--horizon-hours",
+        type=float,
+        default=48.0,
+        help="Only fetch fixtures kicking off within this many hours (0 disables).",
+    )
     odds.add_argument("--min-interval-seconds", type=float, default=36.0)
     odds.add_argument(
         "--closing",
@@ -689,6 +757,59 @@ def main(argv: list[str] | None = None) -> int:
             checks = db_health_checks(conn)
             for check in checks:
                 print(check.as_row())
+            failing = {"FAIL", "WARNING"} if args.strict else {"FAIL"}
+            return 1 if any(check.status in failing for check in checks) else 0
+
+        if args.command == "ingest-results":
+            leagues = [args.league] if args.league else list(GUI_LEAGUE_ORDER)
+            exit_code = 0
+            for league_name in leagues:
+                preset = league_config(league_name)
+                result = refresh_results_football_data(
+                    conn,
+                    settings.raw_dir,
+                    league_code=preset.code,
+                    season=preset.season,
+                    dry_run=args.dry_run,
+                    cwd=Path.cwd(),
+                )
+                result["fixture_scores"] = sync_fixture_scores_from_history(
+                    conn, leagues=(preset.code,), dry_run=args.dry_run
+                )
+                if args.provider_results:
+                    result["provider"] = ingest_results_odds_api_io(
+                        conn,
+                        api_key=settings.odds_api_io_key,
+                        base_url=settings.odds_api_io_base_url,
+                        sport=preset.odds_api_io_sport,
+                        league_code=preset.code,
+                        league_slugs=preset.odds_api_io_slugs,
+                        lookback_days=args.lookback_days,
+                        dry_run=args.dry_run,
+                        cwd=Path.cwd(),
+                    )
+                result["promoted"] = promote_finished_fixtures(
+                    conn, leagues=(preset.code,), dry_run=args.dry_run
+                )
+                if result["status"] != "OK":
+                    exit_code = 1
+                if args.json:
+                    print(json.dumps(result, indent=2))
+                else:
+                    print(" ".join(f"{key}={value}" for key, value in result.items()))
+            return exit_code
+
+        if args.command == "prune-predictions":
+            summary = prune_predictions(conn, dry_run=args.dry_run)
+            print(summary.as_row())
+            if args.vacuum and not args.dry_run:
+                vacuum(conn)
+                print("vacuum=done")
+            return 0
+
+        if args.command == "backup-db":
+            target = backup_database(conn, settings.db_path, keep=args.keep)
+            print(f"backup={target} bytes={target.stat().st_size}")
             return 0
 
         if args.command == "db-failures":
@@ -942,6 +1063,7 @@ def main(argv: list[str] | None = None) -> int:
                 exact_top_n=args.exact_top_n,
                 cwd=Path.cwd(),
                 league=args.league,
+                horizon_days=args.horizon_days,
             )
             print(summary.as_row())
             return 0
@@ -955,6 +1077,8 @@ def main(argv: list[str] | None = None) -> int:
                 target_date=target_date,
                 today=args.today,
                 cwd=Path.cwd(),
+                window_hours=args.window_hours,
+                include_result=args.include_result,
             )
             print(summary.as_row())
             return 0
@@ -1004,7 +1128,7 @@ def main(argv: list[str] | None = None) -> int:
                 comp = "English Premier League" if args.league == "EPL" else args.league
 
             raw_dir = Path(settings.raw_dir) if settings.raw_dir else None
-            
+
             mock_events = None
             if args.input_json:
                 with open(args.input_json, encoding="utf-8") as f:
@@ -1059,7 +1183,7 @@ def main(argv: list[str] | None = None) -> int:
                 for k, v in result.items():
                     print(f"{k}: {v}")
             return 0
-        
+
         if args.command in ("run-epl-pilot-refresh", "run-club-pilot-refresh"):
             from scorerecord.ingest.epl_pilot_refresh import run_epl_pilot_refresh
 
@@ -1083,6 +1207,11 @@ def main(argv: list[str] | None = None) -> int:
                 max_requests=args.max_requests,
                 dry_run=args.dry_run,
                 outputs_dir=outputs_dir,
+                extra_league_slugs=(
+                    () if args.league_slug else preset.odds_api_io_extra_slugs
+                ),
+                skip_elo=getattr(args, "skip_elo", False),
+                horizon_days=getattr(args, "horizon_days", None),
             )
 
             if args.json:
@@ -1091,7 +1220,7 @@ def main(argv: list[str] | None = None) -> int:
                 for k, v in result.items():
                     print(f"{k}: {v}")
             return 0 if result["status"] in ("OK", "OK_NO_EVENTS") else 1
-            
+
         if args.command == "fetch-odds":
             preplay_window_minutes = (
                 args.preplay_window_minutes
@@ -1115,6 +1244,7 @@ def main(argv: list[str] | None = None) -> int:
                 closing_window_minutes=preplay_window_minutes,
                 min_interval_seconds=args.min_interval_seconds,
                 cwd=Path.cwd(),
+                horizon_hours=args.horizon_hours or None,
             )
             print(summary.as_row())
             return 0

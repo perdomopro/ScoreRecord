@@ -5,11 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "scorerecord"
 version = "0.1.0"
-description = "Offline-first football betting research toolkit for World Cup 2026."
+description = "Forecast-only football prediction system: league-scoped models, audited forecasts, and a lightweight dashboard."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.26",
+  "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

@@ -22,9 +22,10 @@ As of 2026-11-13:
   [improvement-plan.md](improvement-plan.md).
 - The working copy has no `.venv` and no local database. Create both with the
   setup below; a local DB is only needed to run the CLI or GUI locally.
-- Full `pytest` is not green: 3 tests in `test_league_aware_artifacts.py` seed a
-  fixture on 2026-08-15, which is now in the past, so the fixture is skipped as
-  already started.
+- Full `pytest` is green again (292 passed); the date-dependent tests now use a
+  fixed clock and `tzdata` is a declared Windows dependency.
+- The loop fixes are in the working tree, not on the server. See "After the
+  next deploy" in [deployment.md](deployment.md).
 
 ## Environment Variables
 
@@ -60,12 +61,10 @@ homeserver):
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
-pip install tzdata
 ```
 
-`tzdata` is required on Windows because `zoneinfo` has no system timezone
-database there. Without it 36 tests fail with `ZoneInfoNotFoundError`. It is
-not yet declared in `pyproject.toml`.
+`tzdata` is installed automatically on Windows, where `zoneinfo` has no system
+timezone database.
 
 Full-repo `ruff` has legacy findings. For commits, run targeted ruff over
 touched files and keep the full-repo debt visible instead of pretending it is
@@ -86,8 +85,7 @@ git status --short
 Verified local result on 2026-11-13 (Windows, Python 3.14, numpy, `tzdata`):
 
 ```text
-pytest -q: 270 passed, 3 failed (test_league_aware_artifacts.py, hardcoded past date)
-pytest -q without tzdata: 237 passed, 36 failed
+pytest -q: 292 passed
 ruff check src tests: 256 findings (208 E501)
 ```
 
@@ -178,18 +176,24 @@ Supported GUI club presets (`src/scorerecord/league_config.py`):
   events as of 2026-11-13)
 - `BRASILEIRAO`: odds-api.io slug `brazil-brasileiro-serie-a`
 
-The daily production loop is `scripts/run_daily_club_forecast.sh`, which calls
-`run-club-pilot-refresh` once per league. That command does not ingest results.
-To bring match history up to date by hand, per league:
+The daily production loop is `scripts/run_daily_club_forecast.sh`. Its steps can
+be run by hand:
 
 ```powershell
-scorerecord ingest-football-data --league EPL --season 2026-2027 --refresh
-scorerecord bridge-club-history --league EPL --source football-data --from-season 2026-2027 --to-season 2026-2027 --allow-create-teams
+scorerecord backup-db --keep 7
+scorerecord ingest-results --league EPL        # Football-Data -> match_history -> fixture scores
 scorerecord build-elo
+scorerecord run-club-pilot-refresh --league EPL --skip-elo --horizon-days 21 --json
+scorerecord freeze-forecast-snapshot --window-hours 36 --include-result
+scorerecord settle-fixtures
+scorerecord settle-forecast-snapshots
+scorerecord prune-predictions --dry-run
+scorerecord db-health --strict
 ```
 
-New rows only reach the model once the fixed `trained_until = 2026-06-11`
-cutoff in `models/manifest.py` is replaced (improvement plan, phase 1.2).
+`ingest-results` never creates teams. If Football-Data uses a club name with no
+alias, the bridge reports it under `missing_teams` and that league stays stale
+until the alias is added.
 
 First-time setup for Liga MX or MLS requires historical rows, bridge, ratings,
 fixtures, and predictions:

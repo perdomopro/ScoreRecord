@@ -61,6 +61,18 @@ def signal_strength(prob: float) -> SignalStrength:
     return SignalStrength(SIGNAL_STRONG, "Señal muy fuerte", "signal-strong")
 
 
+def result_signal_strength(prob: float) -> SignalStrength:
+    """Signal label for the most likely 1X2 outcome, measured against 1/3."""
+    delta = prob - 1.0 / 3.0
+    if delta < 0.07:
+        return SignalStrength(SIGNAL_NO_SIGNAL, "Sin señal clara", "signal-no-signal")
+    if delta < 0.17:
+        return SignalStrength(SIGNAL_LEAN, "Señal débil", "signal-lean")
+    if delta < 0.27:
+        return SignalStrength(SIGNAL_MODERATE, "Señal moderada", "signal-moderate")
+    return SignalStrength(SIGNAL_STRONG, "Señal fuerte", "signal-strong")
+
+
 def _market_rank(market: str) -> int:
     order = {market_name: index for index, market_name in enumerate(FORECAST_MARKETS)}
     return -order.get(market, 99)

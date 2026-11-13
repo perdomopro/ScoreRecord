@@ -6,6 +6,7 @@ import html
 import json
 import os
 import sqlite3
+import sys
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +29,7 @@ from scorerecord.forecast_policy import (
 from scorerecord.forecast_policy import signal_strength as forecast_signal_strength
 from scorerecord.forecast_quality import ForecastQualityItem, forecast_quality_items
 from scorerecord.forecast_snapshots import ForecastSnapshotReport, forecast_snapshot_report
+from scorerecord.health import pipeline_health_checks
 from scorerecord.ingest.football_data import FOOTBALL_DATA_LEAGUES
 from scorerecord.league_config import GUI_LEAGUE_ORDER, gui_league_filter, league_label
 from scorerecord.odds_coverage import OddsMarketCoverage, load_fixture_odds_coverage
@@ -287,7 +289,7 @@ def serve_dashboard(
 
             params = parse_qs(parsed.query)
             mode = str(params.get("mode", [""])[0]).strip().lower()
-            if parsed.path in {"/", "/index.html"} and mode != "audit":
+            if parsed.path in {"/", "/index.html"} and not (mode == "audit" and _audit_enabled()):
                 self._render_home(params)
                 return
             if parsed.path == "/today":
@@ -312,7 +314,7 @@ def serve_dashboard(
                 fixture_id = parsed.path.removeprefix("/match/").strip("/")
                 self._render_match(fixture_id, params)
                 return
-            if parsed.path == "/audit" or mode == "audit":
+            if (parsed.path == "/audit" or mode == "audit") and _audit_enabled():
                 self._render_audit(params)
                 return
             self.send_error(404)
@@ -326,11 +328,12 @@ def serve_dashboard(
             try:
                 with connect(db_path) as conn:
                     data = load_forecast_data(
-                        conn, 
-                        target_date=date_filter, 
-                        view_mode=view_mode, 
+                        conn,
+                        target_date=date_filter,
+                        view_mode=view_mode,
                         league_filter=league_filter,
                         settings=settings,
+                        auto_advance=True,
                         upcoming_limit=80,
                     )
                 body = render_today_forecast(
@@ -349,9 +352,9 @@ def serve_dashboard(
             try:
                 with connect(db_path) as conn:
                     data = load_forecast_data(
-                        conn, 
-                        fixture_id=fixture_id, 
-                        view_mode=view_mode, 
+                        conn,
+                        fixture_id=fixture_id,
+                        view_mode=view_mode,
                         league_filter=league_filter,
                         settings=settings,
                         upcoming_limit=0,
@@ -377,6 +380,7 @@ def serve_dashboard(
                         view_mode="forecast",
                         league_filter=league_filter,
                         settings=settings,
+                        auto_advance=True,
                         upcoming_limit=40,
                     )
                 body = render_home_page(
@@ -494,6 +498,7 @@ def serve_dashboard(
                         view_mode="forecast",
                         league_filter=league_filter,
                         settings=settings,
+                        auto_advance=True,
                         upcoming_limit=80,
                     )
                 body = render_signals_page(
@@ -540,8 +545,12 @@ def serve_dashboard(
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(encoded)))
             self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(encoded)
+            try:
+                self.end_headers()
+                self.wfile.write(encoded)
+            except (BrokenPipeError, ConnectionResetError):
+                # The client went away before the response was written.
+                return
 
         def _cache_get(self, key: str) -> tuple[str, str] | None:
             item = self._response_cache.get(key)
@@ -578,15 +587,22 @@ def load_forecast_data(
     settings: Settings | None = None,
     upcoming_limit: int = 80,
     include_past_fixtures: bool = False,
+    auto_advance: bool = False,
 ) -> ForecastData:
     display_tz = _display_tz(display_tz_name)
     now = now_utc or datetime.now(UTC)
     now_local = now.astimezone(display_tz)
     selected_date = target_date or now_local.date().isoformat()
-    previous_date = (date.fromisoformat(selected_date) - timedelta(days=1)).isoformat()
-    next_date = (date.fromisoformat(selected_date) + timedelta(days=1)).isoformat()
     league_filter = gui_league_filter(league_filter)
     inventory_rows = _forecast_fixture_rows(conn, fixture_id=fixture_id, league_filter=league_filter)
+    if auto_advance and target_date is None and fixture_id is None:
+        # No date requested: open the next day that has an unstarted fixture
+        # instead of an empty "today".
+        selected_date = _next_fixture_date(
+            inventory_rows, display_tz=display_tz, now_utc=now, default=selected_date
+        )
+    previous_date = (date.fromisoformat(selected_date) - timedelta(days=1)).isoformat()
+    next_date = (date.fromisoformat(selected_date) + timedelta(days=1)).isoformat()
     upcoming_fixtures = (
         _upcoming_fixture_links(
             inventory_rows,
@@ -1058,8 +1074,8 @@ def _home_hero(data: ForecastData, *, landing: bool = False) -> str:
           trazabilidad de artifacts y explicaciones auditables. No es una
           recomendacion de apuesta.
         </p>
-        <a class="repo-link" href="https://github.com/Perdomazo/ScoreRecord" target="_blank" rel="noreferrer">
-          github.com/Perdomazo/ScoreRecord
+        <a class="repo-link" href="https://github.com/perdomopro/ScoreRecord" target="_blank" rel="noreferrer">
+          github.com/perdomopro/ScoreRecord
         </a>
       </div>
       <div class="hero-actions">
@@ -1806,13 +1822,21 @@ def render_dashboard(data: DashboardData, *, refresh_seconds: int) -> str:
 </html>"""
 
 
+def _audit_enabled() -> bool:
+    """The paper-betting audit view is archived; opt in explicitly to see it."""
+    return os.getenv("SCORERECORD_ENABLE_AUDIT", "").strip() == "1"
+
+
 def render_error(exc: Exception) -> str:
+    # Details go to the service log, not to the visitor.
+    print(f"gui error: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
     return f"""<!doctype html>
-<html lang="en">
+<html lang="es">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ScoreRecord</title><style>{_css()}</style></head>
 <body><main>
-<section class="section error"><h1>Dashboard Error</h1><pre>{_e(str(exc))}</pre></section>
+<section class="section error"><h1>Dashboard Error</h1>
+<p>No se pudo generar esta página. El detalle quedó en el log del servicio.</p></section>
 </main></body>
 </html>"""
 
@@ -1970,7 +1994,7 @@ def _forecast_fixture_rows(
 ) -> list[sqlite3.Row]:
     fixture_filter = "AND f.fixture_id = ?" if fixture_id else ""
     score_filter = "" if fixture_id else "AND f.home_score IS NULL AND f.away_score IS NULL"
-    
+
     league_sql = ""
     params: tuple[Any, ...] = ()
     if fixture_id:
@@ -1978,7 +2002,7 @@ def _forecast_fixture_rows(
     elif league_filter and league_filter != "ALL":
         league_sql = "AND f.league_code = ?"
         params = (league_filter,)
-    
+
     return conn.execute(
         f"""
         SELECT
@@ -2163,7 +2187,26 @@ def _system_health_items(
             "OK" if latest_run_id is not None else "WARN",
             f"run {latest_run_id}" if latest_run_id is not None else "no run",
         ),
+        *[
+            SystemHealthItem(
+                _PIPELINE_CHECK_LABELS.get(check.name, check.name),
+                "OK" if check.status == "OK" else "WARN",
+                f"{check.value} {check.details}".strip(),
+            )
+            for check in pipeline_health_checks(conn)
+        ],
     ]
+
+
+_PIPELINE_CHECK_LABELS = {
+    "results_freshness": "Resultados",
+    "history_freshness": "Historial de entrenamiento",
+    "training_freshness": "Modelo al día",
+    "league_horizon": "Ligas con partidos",
+    "forecast_snapshots": "Pronósticos congelados",
+    "club_odds_capture": "Cuotas",
+    "backup_age": "Respaldo",
+}
 
 
 def _latest_run_by_jobs(
@@ -2300,6 +2343,26 @@ def _upcoming_fixture_links(
         )
     upcoming.sort(key=lambda item: (item.display_date, item.display_time, item.fixture_id))
     return upcoming[:limit]
+
+
+def _next_fixture_date(
+    rows: list[sqlite3.Row],
+    *,
+    display_tz: ZoneInfo,
+    now_utc: datetime,
+    default: str,
+) -> str:
+    upcoming = []
+    for row in rows:
+        kickoff_utc = parse_kickoff_utc(
+            kickoff_utc=row["kickoff_utc"],
+            kickoff_local=row["kickoff_local"],
+        )
+        if kickoff_utc is not None and kickoff_utc > now_utc:
+            upcoming.append(kickoff_utc)
+    if not upcoming:
+        return default
+    return min(upcoming).astimezone(display_tz).date().isoformat()
 
 
 def _fixture_rows_for_local_date(
@@ -3703,6 +3766,8 @@ def _settled_result_text(snapshot: ForecastSnapshotView) -> str:
         return "over" if snapshot.result_label == 1 else "under"
     if snapshot.market == "BTTS":
         return "yes" if snapshot.result_label == 1 else "no"
+    if snapshot.market == "1X2" and snapshot.result_label in (0, 1, 2):
+        return ("local", "empate", "visitante")[snapshot.result_label]
     return str(snapshot.result_label)
 
 
@@ -3719,8 +3784,9 @@ def _empty_forecast_state(label: str) -> str:
     return f"""
     <section class="empty-forecast">
       <h1>{_e(label)}</h1>
-      <p>No hay fixtures pronosticables para esta vista. Revisa fixture-summary,
-      refresh de liga y predict-fixtures antes de interpretar la pantalla.</p>
+      <p>No hay partidos con pronóstico para esta fecha o liga. Prueba con otra
+      fecha en la barra superior, o revisa <a href="/health">Estado</a> si esperabas ver
+      partidos aquí.</p>
     </section>
     """
 
@@ -3734,6 +3800,9 @@ def _forecast_label(market: ForecastMarket | None) -> str:
         return f"{direction} {line} goles"
     if market.market == "BTTS":
         return "Ambos anotan: si" if market.selection == "yes" else "Ambos anotan: no"
+    if market.market == "1X2":
+        labels = {"home": "Gana local", "draw": "Empate", "away": "Gana visitante"}
+        return labels.get(market.selection, market.selection)
     return f"{market.market} {market.selection}"
 
 

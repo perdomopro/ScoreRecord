@@ -1,8 +1,8 @@
 [Unit]
-Description=Run ScoreRecord odds fetch hourly
+Description=Run ScoreRecord odds fetch every three hours
 
 [Timer]
-OnCalendar=hourly
+OnCalendar=*-*-* 00/3:10:00
 Persistent=true
 RandomizedDelaySec=10m
 

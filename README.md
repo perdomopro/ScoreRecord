@@ -5,18 +5,18 @@ football/soccer forecasts. It combines league-scoped historical data, Elo,
 Dixon-Coles goal models, calibration, fixture provenance, health checks, and a
 lightweight GUI for match forecasts.
 
-Repository: https://github.com/Perdomazo/ScoreRecord
+Repository: https://github.com/perdomopro/ScoreRecord
 
 The public GUI is deliberately not a betting app: it does not show EV, Kelly,
 stake sizing, or "best bet" language in the forecast view.
 
 ## Status (2026-11-13)
 
-The daily pipeline runs on the homeserver, but a full audit found that the
-feedback loop is broken: club results are not ingested, the training cutoff is
-frozen at 2026-06-11, hourly odds capture targets the World Cup slug, and
-forecast snapshots are not frozen. Forecasts are published every day from a
-stale model and are never settled.
+A full audit found the production feedback loop open: no club results, a
+training cutoff frozen at 2026-06-11, odds capture pointed at the World Cup, and
+no frozen forecasts. The code in this branch closes that loop (improvement plan
+phases 1 and 2) and was rehearsed end to end on a copy of the production
+database. It is **not deployed yet**; the homeserver still runs the old code.
 
 - What is wrong and the evidence: [docs/critical-review.md](docs/critical-review.md)
 - What to do about it, in order: [docs/improvement-plan.md](docs/improvement-plan.md)
@@ -24,9 +24,11 @@ stale model and are never settled.
 ## How Production Runs
 
 ```text
-05:35 daily   club-refresh   fixtures (odds-api.io) -> Elo -> Dixon-Coles + Platt -> prediction
-hourly        odds           fetch-odds -> odds_snapshots
-23:30 daily   postmatch      settle-fixtures -> settle-forecast-snapshots -> compute-clv
+05:35 daily   club-refresh   backup -> results (Football-Data) -> Elo -> fixtures (odds-api.io)
+                             -> Dixon-Coles + Platt -> predictions (next 21 days)
+                             -> freeze next 36 h -> settle -> prune -> db-health
+every 3 h     odds           fetch-odds for fixtures in the next 48 h -> odds_snapshots
+23:30 daily   postmatch      results -> settle-fixtures -> settle-forecast-snapshots
 Sun 09:00     weekly         performance report, goal-market gates, calibrator drift
 always on     gui            read-only dashboard on port 8765
 ```
@@ -60,14 +62,12 @@ homeserver:
 
 ## Quick Start
 
-Python 3.11 or newer. On Windows also install `tzdata`; the standard library has
-no timezone database there and 36 tests fail without it.
+Python 3.11 or newer.
 
 ```powershell
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
-pip install tzdata
 scorerecord init-db
 scorerecord migrate-db
 scorerecord db-health

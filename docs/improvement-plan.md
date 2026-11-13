@@ -5,6 +5,35 @@ Está ordenado por dependencia: cada fase deja el sistema en un estado útil y
 habilita la siguiente. Las fases 1 y 2 son correcciones; las fases 3 a 5 son
 lo que lleva el proyecto "al siguiente nivel".
 
+## Estado al 2026-11-13 (tarde)
+
+Decisiones tomadas: GUI solo dentro del tailnet; stack ligero recomendado
+(Starlette + Jinja2); mostrar mercado y consenso junto al modelo; archivar el
+pipeline de apuestas en papel.
+
+| Fase | Estado |
+| --- | --- |
+| 0 Contención | Pendiente: son acciones en el servidor (ver [deployment.md](deployment.md)) |
+| 1.1 Resultados | Hecho. La fuente es Football-Data, no odds-api.io, que borra los eventos terminados |
+| 1.2 Corte móvil | Hecho. Elo una vez por corrida; el artefacto solo cambia cuando llegan resultados |
+| 1.3 Snapshots | Hecho, con 1X2 y una sola congelación por partido. La liquidación usa una predicción por partido |
+| 1.4 Cuotas | Hecho. Usa el id de evento del fixture y los bookmakers que la cuenta permite |
+| 1.5 Almacenamiento | Hecho: horizonte de 21 días, poda y respaldo rotativo. La base queda en ~320 MB, no en 150 |
+| 1.6 Ligas | Parcial: slugs extra verificados (Clausura, playoffs). Falta el estado de fuera de temporada en la GUI |
+| 1.7 Health | Hecho: siete checks nuevos en `db-health` y `/health`. Falta `OnFailure=` con notificación |
+| 2 Higiene | Hecho salvo los 256 avisos de `ruff` y la división de `cli.py` |
+| 3 GUI | Solo dos arreglos: abre la próxima jornada si hoy no hay partidos y mensaje vacío claro |
+| 4-5 | Sin empezar |
+
+Nada de esto está desplegado. Se ensayó completo en el homeserver sobre una
+copia de la base: 839 de 855 partidos jugados recibieron marcador, las cinco
+ligas quedaron con partidos futuros y el modelo entrenado hasta el último
+partido disponible.
+
+Primera medición real hacia adelante (913 partidos de agosto a noviembre,
+pronosticados por el modelo congelado en junio): Más/Menos 2.5 acierta 55.9%
+con log-loss 0.686; ambos anotan 55.3% y 0.685; 1X2 45.4% y 1.038.
+
 ## Principios
 
 - **Primero el circuito, luego el modelo.** Sin resultados frescos y sin

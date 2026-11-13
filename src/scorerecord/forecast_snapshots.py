@@ -5,11 +5,15 @@ from __future__ import annotations
 import math
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from scorerecord.forecast_policy import FORECAST_MARKETS, select_primary_forecasts
+from scorerecord.forecast_policy import (
+    FORECAST_MARKETS,
+    result_signal_strength,
+    select_primary_forecasts,
+)
 from scorerecord.forecast_policy import signal_strength as forecast_signal_strength
 from scorerecord.forecast_quality import forecast_quality_status_json
 from scorerecord.runs import ingest_run
@@ -17,6 +21,8 @@ from scorerecord.time_utils import parse_kickoff_utc
 
 DEFAULT_DISPLAY_TZ = "America/Mexico_City"
 EPS = 1e-6
+RESULT_MARKET = "1X2"
+RESULT_LABELS = ("home", "draw", "away")
 
 
 @dataclass(frozen=True)
@@ -92,6 +98,7 @@ class SnapshotMarket:
     fair_odds: float
     model_version: str
     market_validation_status: str
+    prediction_run_id: int = 0
 
 
 def freeze_forecast_snapshot(
@@ -101,27 +108,50 @@ def freeze_forecast_snapshot(
     today: bool = False,
     as_of_utc: datetime | None = None,
     cwd: Path | None = None,
+    window_hours: float | None = None,
+    include_result: bool = False,
 ) -> ForecastSnapshotFreezeSummary:
+    """Freeze the pre-kickoff principal forecasts of upcoming fixtures.
+
+    Each fixture uses its own latest prediction run, so leagues published by
+    different runs are all covered. A fixture/market is frozen only once.
+    ``window_hours`` selects fixtures kicking off within that many hours instead
+    of by display date. ``include_result`` also freezes the most likely 1X2
+    outcome.
+    """
     as_of = as_of_utc or datetime.now(UTC)
     selected_date = _target_date(target_date=target_date, today=today, as_of=as_of)
-    prediction_run_id = _latest_prediction_run_id(conn)
-    if prediction_run_id is None:
+    if window_hours is not None:
+        selected_date = f"next_{window_hours:g}h"
+    latest_run_id = _latest_prediction_run_id(conn)
+    if latest_run_id is None:
         return ForecastSnapshotFreezeSummary(selected_date, None, 0, 0)
 
     candidates = _snapshot_candidates(
         conn,
-        prediction_run_id=prediction_run_id,
-        target_date=selected_date,
+        target_date=None if window_hours is not None else selected_date,
         as_of=as_of,
+        window_hours=window_hours,
+        include_result=include_result,
+    )
+    prediction_run_id = max(
+        (market.prediction_run_id for market in candidates),
+        default=latest_run_id,
     )
     inserted = 0
     as_of_text = as_of.isoformat(timespec="seconds")
     with ingest_run(conn, "freeze-forecast-snapshot", source="forecast_gui", cwd=cwd):
         for market in candidates:
-            signal = forecast_signal_strength(market.prob)
+            if _already_frozen(conn, market.fixture_id, market.market):
+                continue
+            signal = (
+                result_signal_strength(market.prob)
+                if market.market == RESULT_MARKET
+                else forecast_signal_strength(market.prob)
+            )
             quality_status_json = forecast_quality_status_json(
                 conn,
-                prediction_run_id,
+                market.prediction_run_id,
                 market.market_validation_status,
             )
             cursor = conn.execute(
@@ -136,7 +166,7 @@ def freeze_forecast_snapshot(
                 """,
                 (
                     market.fixture_id,
-                    prediction_run_id,
+                    market.prediction_run_id,
                     market.artifact_id,
                     as_of_text,
                     market.market,
@@ -187,14 +217,25 @@ def _latest_prediction_run_id(conn: sqlite3.Connection) -> int | None:
     return int(fallback["run_id"]) if fallback and fallback["run_id"] is not None else None
 
 
+def _already_frozen(conn: sqlite3.Connection, fixture_id: str, market: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM forecast_snapshot WHERE fixture_id = ? AND market = ? LIMIT 1",
+        (fixture_id, market),
+    ).fetchone()
+    return row is not None
+
+
 def _snapshot_candidates(
     conn: sqlite3.Connection,
     *,
-    prediction_run_id: int,
-    target_date: str,
+    target_date: str | None,
     as_of: datetime,
+    window_hours: float | None = None,
+    include_result: bool = False,
 ) -> list[SnapshotMarket]:
-    rows = _snapshot_prediction_rows(conn, prediction_run_id)
+    rows = _snapshot_prediction_rows(conn, include_result=include_result)
+    window_end = as_of + timedelta(hours=window_hours) if window_hours is not None else None
+    fixture_kickoff: dict[str, datetime | None] = {}
     grouped: dict[str, list[SnapshotMarket]] = {}
     fixture_dates: dict[str, str | None] = {}
     fixture_started: dict[str, bool] = {}
@@ -211,6 +252,7 @@ def _snapshot_candidates(
         fixture_id = str(row["fixture_id"])
         fixture_dates[fixture_id] = display_date
         fixture_started[fixture_id] = bool(kickoff and as_of >= kickoff)
+        fixture_kickoff[fixture_id] = kickoff
         grouped.setdefault(fixture_id, []).append(
             SnapshotMarket(
                 fixture_id=fixture_id,
@@ -221,26 +263,38 @@ def _snapshot_candidates(
                 fair_odds=float(row["fair_odds"]),
                 model_version=str(row["model_version"]),
                 market_validation_status=str(row["market_validation_status"] or "NOT_TESTED"),
+                prediction_run_id=int(row["run_id"]),
             )
         )
     candidates: list[SnapshotMarket] = []
     for fixture_id, markets in grouped.items():
-        if fixture_dates.get(fixture_id) != target_date:
-            continue
         if fixture_started.get(fixture_id):
             continue
+        if window_end is not None:
+            kickoff = fixture_kickoff.get(fixture_id)
+            if kickoff is None or kickoff > window_end:
+                continue
+        elif fixture_dates.get(fixture_id) != target_date:
+            continue
         candidates.extend(select_primary_forecasts(markets))
+        if include_result:
+            result_markets = [market for market in markets if market.market == RESULT_MARKET]
+            if len(result_markets) == len(RESULT_LABELS):
+                candidates.append(max(result_markets, key=lambda market: market.prob))
     return candidates
 
 
 def _snapshot_prediction_rows(
     conn: sqlite3.Connection,
-    prediction_run_id: int,
+    *,
+    include_result: bool = False,
 ) -> list[sqlite3.Row]:
-    placeholders = ",".join("?" for _ in FORECAST_MARKETS)
+    markets = (*FORECAST_MARKETS, RESULT_MARKET) if include_result else FORECAST_MARKETS
+    placeholders = ",".join("?" for _ in markets)
     return conn.execute(
         f"""
         SELECT f.fixture_id,
+               p.run_id,
                f.kickoff_utc,
                f.kickoff_local,
                p.artifact_id,
@@ -253,7 +307,9 @@ def _snapshot_prediction_rows(
         FROM fixture f
         JOIN prediction p ON p.fixture_id = f.fixture_id
         LEFT JOIN model_artifact ma ON ma.artifact_id = p.artifact_id
-        WHERE p.run_id = ?
+        WHERE p.run_id = (
+                SELECT MAX(p2.run_id) FROM prediction p2 WHERE p2.fixture_id = f.fixture_id
+              )
           AND p.market IN ({placeholders})
           AND f.home_id IS NOT NULL
           AND f.away_id IS NOT NULL
@@ -261,7 +317,7 @@ def _snapshot_prediction_rows(
           AND f.away_score IS NULL
         ORDER BY f.fixture_id, p.market, p.selection
         """,
-        (prediction_run_id, *FORECAST_MARKETS),
+        markets,
     ).fetchall()
 
 
@@ -382,6 +438,10 @@ def _result_label(market: str, home_score: int, away_score: int) -> int:
         return int(home_score + away_score > 2.5)
     if market == "BTTS":
         return int(home_score > 0 and away_score > 0)
+    if market == RESULT_MARKET:
+        if home_score > away_score:
+            return 0
+        return 1 if home_score == away_score else 2
     raise ValueError(f"Unsupported forecast snapshot market: {market}")
 
 
@@ -396,6 +456,8 @@ def _is_correct(market: str, selection: str, label: int) -> bool | None:
             return label == 1
         if selection == "no":
             return label == 0
+    if market == RESULT_MARKET and selection in RESULT_LABELS:
+        return RESULT_LABELS.index(selection) == label
     return None
 
 

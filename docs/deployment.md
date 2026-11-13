@@ -6,6 +6,50 @@ Verified against the live server on 2026-11-13. Known production defects are
 listed in [critical-review.md](critical-review.md); this document describes how
 the deployment is wired, including the parts that currently misbehave.
 
+## After the next deploy
+
+The table under "What Runs" describes the server as audited on 2026-11-13,
+before the loop fixes. Deploying this branch changes it to:
+
+| Unit | Schedule | Does |
+| --- | --- | --- |
+| `scorerecord-club-refresh.timer` | daily 05:35 | `scripts/run_daily_club_forecast.sh`: `backup-db`, `ingest-results` per league, `build-elo` once, `run-club-pilot-refresh --skip-elo --horizon-days 21` per league, `freeze-forecast-snapshot --window-hours 36 --include-result`, `settle-fixtures`, `settle-forecast-snapshots`, `prune-predictions`, `db-health` |
+| `scorerecord-odds.timer` | every 3 h | `fetch-odds --horizon-hours 48 --max-requests 40`; uses each fixture's provider event id |
+| `scorerecord-postmatch.timer` | daily 23:30 | `ingest-results`, `settle-fixtures`, `settle-forecast-snapshots` |
+| `scorerecord-weekly.timer` | Sunday 09:00 | unchanged |
+| `scorerecord-gui.service` | always on | unchanged; `/audit` answers 404 unless `SCORERECORD_ENABLE_AUDIT=1` |
+
+Deploy steps, in order:
+
+1. Commit, then `.\deploy\Deploy-ScoreRecord.ps1 -HostName 100.104.72.97`. The
+   bootstrap removes the retired `daily`, `epl-pilot`, and `preplay-odds` units
+   and the deploy writes the commit SHA to `VERSION`.
+2. `systemctl --user restart scorerecord-gui.service`.
+3. Run the loop once by hand and read its log:
+   `systemctl --user start scorerecord-club-refresh.service`. The first run
+   settles about 900 backlog fixtures and prunes about 330,000 prediction rows;
+   it took 9 minutes in rehearsal. Later runs are short.
+4. Optional, once: `.venv/bin/scorerecord prune-predictions --vacuum` while the
+   GUI is stopped, to return the freed pages to the filesystem.
+5. To stop publishing to the internet: `tailscale funnel reset`.
+
+Facts established during the rehearsal:
+
+- **Results come from Football-Data.** odds-api.io returns no events once they
+  finish (`/events?status=settled` is empty and `/events/<id>` is 404), so it
+  cannot settle anything. `ingest-results` downloads the current Football-Data
+  file per league, bridges it, and copies scores onto fixtures by league, teams,
+  and date within two days.
+- **The provider account allows one bookmaker.** `/odds` answers 403 when
+  `ODDS_API_IO_BOOKMAKERS` names a bookmaker outside the plan (the server `.env`
+  lists Bet365). `fetch-odds` now intersects the request with
+  `/bookmakers/selected`, so it works unchanged. On the free plan that means
+  Unibet only; the sampled responses produced 1X2 and BTTS rows but no totals.
+- **Database size stays near 320 MB.** Pruning frees the `prediction` table, but
+  `historical_odds`, `historical_match`, and `data_quality` hold most of the file.
+- `db-health` now exits 1 on `FAIL` and, with `--strict`, on `WARNING`.
+- The bootstrap no longer enables `scorerecord-odds.timer`; start it by hand.
+
 ## What Runs
 
 | Unit | Schedule | Command | State on 2026-11-13 |

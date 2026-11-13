@@ -527,7 +527,7 @@ def test_home_page_is_landing_without_top_nav() -> None:
     assert 'class="home-hero landing-hero"' in html
     assert "ScoreRecord" in html
     assert "pronosticos deportivos" in html
-    assert "github.com/Perdomazo/ScoreRecord" in html
+    assert "github.com/perdomopro/ScoreRecord" in html
     assert "Ver partidos" in html
     assert "Liga MX" in html
     assert "MLS" in html

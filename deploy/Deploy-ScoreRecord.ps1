@@ -34,6 +34,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "git archive failed with exit code $LASTEXITCODE"
     }
+    $gitSha = (git rev-parse HEAD).Trim()
 }
 finally {
     Pop-Location
@@ -43,7 +44,7 @@ Invoke-NativeChecked ssh @("-i", $KeyPath, "$User@$HostName", "mkdir -p '$Remote
 Invoke-NativeChecked scp @("-i", $KeyPath, $archive, "$User@$HostName`:/tmp/scorerecord-deploy.tar.gz")
 Invoke-NativeChecked ssh @(
     "-i", $KeyPath, "$User@$HostName",
-    "cd '$RemoteDir' && tar -xzf /tmp/scorerecord-deploy.tar.gz && rm /tmp/scorerecord-deploy.tar.gz"
+    "cd '$RemoteDir' && tar -xzf /tmp/scorerecord-deploy.tar.gz && rm /tmp/scorerecord-deploy.tar.gz && echo '$gitSha' > VERSION"
 )
 
 if (-not $SkipBootstrap) {

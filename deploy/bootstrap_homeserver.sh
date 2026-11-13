@@ -25,11 +25,16 @@ fi
 SCORERECORD_DB_PATH=data/scorerecord.db .venv/bin/scorerecord migrate-db
 
 mkdir -p "$HOME/.config/systemd/user"
+# Units retired from the repo: stop them and remove the installed copies.
+for legacy in scorerecord-daily scorerecord-epl-pilot scorerecord-preplay-odds; do
+  systemctl --user disable --now "$legacy.timer" >/dev/null 2>&1 || true
+  rm -f "$HOME/.config/systemd/user/$legacy.service" "$HOME/.config/systemd/user/$legacy.timer"
+done
 cp deploy/systemd/*.service deploy/systemd/*.timer "$HOME/.config/systemd/user/"
 
 systemctl --user daemon-reload
 systemctl --user enable scorerecord-gui.service
-systemctl --user enable scorerecord-odds.timer
+# scorerecord-odds.timer is enabled by hand once the provider account allows odds (see docs/deployment.md).
 systemctl --user enable scorerecord-club-refresh.timer
 systemctl --user enable scorerecord-postmatch.timer
 systemctl --user enable scorerecord-weekly.timer
@@ -41,13 +46,12 @@ ScoreRecord installed.
 Next server-side steps:
 1. Edit /home/adrian/scorerecord/.env and set ODDS_API_IO_KEY.
 2. Run: .venv/bin/scorerecord db-health
-3. Inspect dry-runs: .venv/bin/scorerecord compute-edge --dry-run && .venv/bin/scorerecord recommend --dry-run
-4. Start the dashboard when ready:
-   systemctl --user start scorerecord-gui.service
-5. Start conservative timers when ready:
-   systemctl --user start scorerecord-odds.timer scorerecord-postmatch.timer scorerecord-weekly.timer
+3. Restart the dashboard to load the new code:
+   systemctl --user restart scorerecord-gui.service
+4. Start the timers:
    systemctl --user start scorerecord-club-refresh.timer
-6. Start preplay raw snapshots or daily recommendations only after reviewing db-health and dry-runs:
-   systemctl --user start scorerecord-preplay-odds.timer
-   systemctl --user start scorerecord-daily.timer
+   systemctl --user start scorerecord-postmatch.timer scorerecord-weekly.timer
+5. Run the daily loop once by hand to check it end to end:
+   systemctl --user start scorerecord-club-refresh.service
+   journalctl --user -u scorerecord-club-refresh.service -n 80 --no-pager
 MSG
