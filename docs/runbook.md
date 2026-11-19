@@ -261,34 +261,25 @@ considered closed.
 
 ## Homeserver Deploy
 
-Deploy current working tree to the homeserver:
+Commit first; only `HEAD` is deployed. Then:
 
 ```powershell
-& .\deploy\Deploy-ScoreRecord.ps1 -HostName 100.104.72.97 -KeyPath "$env:USERPROFILE\.ssh\scorerecord_homeserver" -SkipBootstrap
+.\deploy\Deploy-ScoreRecord.ps1
 ```
 
-Remote validation:
+The script, the cleanup of files dropped between releases, alerts, backups and
+restore are described in [deployment.md](deployment.md).
+
+Remote checks:
 
 ```powershell
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "cd /home/adrian/scorerecord && .venv/bin/scorerecord db-health"
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "cd /home/adrian/scorerecord && .venv/bin/python -m pytest -q"
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "cd /home/adrian/scorerecord && .venv/bin/python -m ruff check <touched-python-files>"
-```
-
-GUI service:
-
-```powershell
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "systemctl --user restart scorerecord-gui.service"
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "systemctl --user status scorerecord-gui.service --no-pager"
+ssh adrian@100.104.72.97 "cd ~/scorerecord && .venv/bin/scorerecord db-health"
+ssh adrian@100.104.72.97 "systemctl --user list-timers 'scorerecord*' --no-pager"
 curl http://100.104.72.97:8765/healthz
 ```
 
-Timers:
-
-```powershell
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "systemctl --user list-timers 'scorerecord-*' --all --no-pager"
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "systemctl --user status scorerecord-epl-pilot.timer --no-pager"
-```
+The dashboard answers only on the tailnet address, so `curl` must run from a
+machine on the tailnet.
 
 ## Git Workflow
 

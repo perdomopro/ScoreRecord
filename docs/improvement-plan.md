@@ -5,6 +5,25 @@ Está ordenado por dependencia: cada fase deja el sistema en un estado útil y
 habilita la siguiente. Las fases 1 y 2 son correcciones; las fases 3 a 5 son
 lo que lleva el proyecto "al siguiente nivel".
 
+## Correcciones tras la verificación (2026-11-19)
+
+| Hueco | Corrección |
+| --- | --- |
+| GUI visible en la red de casa | Escucha solo en la IP del tailnet (`SCORERECORD_GUI_HOST`); desde `192.168.100.195` se rechaza la conexión |
+| Deploy no borraba archivos | `deploy/apply_release.sh` con manifiesto; el primer deploy borró el código viejo y los units retirados |
+| Basura en el servidor | Movida a `~/scorerecord_attic_20261119` (no se borró nada que no estuviera en git) |
+| Sin alertas | `OnFailure=` en todos los units → `data/alerts.log`, check `service_failures` y envío opcional a `SCORERECORD_NOTIFY_URL`; probado con un unit que falla a propósito |
+| Respaldos de 2.8 GB | Comprimidos con gzip, 7 diarios + 4 semanales |
+| Base sin `VACUUM` | 357 MB → 257 MB |
+| `/estado` lento | Ya no corre el `integrity_check` (lo hace la corrida diaria) |
+| Fuera de temporada | `/partidos` marca las ligas sin partidos en 3 semanas y lo explica |
+| CI y lint | Hallazgos de `ruff` (salvo longitud de línea) corregidos; CI corre `ruff` y `pytest` en cada push |
+
+Sigue pendiente a propósito: dividir `cli.py`, renombrar `epl_pilot_refresh.py`,
+la deuda de longitud de línea, saltar el reentrenamiento sin datos nuevos y
+la cadencia de cuotas por cercanía al partido. Elegir dónde llegan las alertas
+(`SCORERECORD_NOTIFY_URL`) es decisión del dueño.
+
 ## Verificación al 2026-11-19
 
 Revisión de lo ejecutado contra el servidor, la base de producción (solo
