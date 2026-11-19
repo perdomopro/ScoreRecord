@@ -334,7 +334,7 @@ def test_landing_page_presents_the_project(app: WebApp) -> None:
     assert "github.com/perdomopro/ScoreRecord" in html
     for href in ('href="/partidos"', 'href="/resultados"', 'href="/desempeno"'):
         assert href in html
-    assert 'class="topbar"' not in html
+    assert 'class="topbar"' not in html and "data-notice" not in html
     _, inner = _get(app, "/resultados")
     assert 'class="topbar"' in inner and 'href="/partidos"' in inner
     no_db = WebApp(Path("missing.db"), clock=lambda: NOW)

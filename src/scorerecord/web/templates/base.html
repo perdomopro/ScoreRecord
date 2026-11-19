@@ -27,10 +27,12 @@
     </div>
   </header>
   {% endblock %}
+  {% block notice %}
   <div class="notice" data-notice hidden>
     <p>Pronósticos con fines recreativos y de análisis. No son asesoría ni una recomendación de apuesta.</p>
     <button type="button" data-notice-close>Entendido</button>
   </div>
+  {% endblock %}
   <main id="contenido" class="wrap">
     {% block content %}{% endblock %}
   </main>
