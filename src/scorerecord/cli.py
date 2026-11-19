@@ -48,7 +48,6 @@ from scorerecord.forecast_snapshots import (
     freeze_forecast_snapshot,
     settle_forecast_snapshots,
 )
-from scorerecord.gui import serve_dashboard
 from scorerecord.health import db_health_checks, fixture_ops_summary, recent_failed_runs
 from scorerecord.ingest.football_data import (
     football_data_coverage_report,
@@ -594,12 +593,6 @@ def main(argv: list[str] | None = None) -> int:
     gui = subparsers.add_parser("gui", help="Serve the forecast and health dashboard.")
     gui.add_argument("--host", default="127.0.0.1")
     gui.add_argument("--port", type=int, default=8765)
-    gui.add_argument(
-        "--refresh-seconds",
-        type=int,
-        default=0,
-        help="Auto-refresh interval in seconds. Disabled by default.",
-    )
     subparsers.add_parser("db-summary", help="Print useful database counts.")
 
     api_probe = subparsers.add_parser(
@@ -721,13 +714,9 @@ def main(argv: list[str] | None = None) -> int:
         settings = replace(settings, raw_dir=Path(args.raw_dir))
 
     if args.command == "gui":
-        serve_dashboard(
-            settings.db_path,
-            host=args.host,
-            port=args.port,
-            refresh_seconds=args.refresh_seconds,
-            settings=settings,
-        )
+        from scorerecord.web.app import serve
+
+        serve(settings.db_path, host=args.host, port=args.port)
         return 0
 
     with connect(settings.db_path) as conn:

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% from "macros.html" import league_tabs, match_row %}
+{% block title %}Partidos · {{ selected_day|long_day }} · ScoreRecord{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Partidos <span class="h1-sub">{{ selected_day|long_day }}</span></h1>
+  <p class="lede">
+    {% if count %}{{ count }} partido{{ 's' if count != 1 }}{% if with_market %} · {{ with_market }} con cuotas del mercado{% endif %}.{% endif %}
+    Las barras muestran la probabilidad de victoria local, empate y visitante.
+  </p>
+</section>
+
+{{ league_tabs(tabs, '/', {'fecha': selected_day.isoformat() if selected_day != today else None}) }}
+
+<nav class="days" aria-label="Fechas">
+  <a class="day-step" href="{{ qs('/', fecha=previous_day.isoformat(), liga=league) }}" aria-label="Día anterior">‹</a>
+  <div class="day-strip">
+    {% for item in strip %}
+    <a class="day{% if item.active %} is-active{% endif %}{% if item.past %} is-past{% endif %}" href="{{ qs('/', fecha=item.day.isoformat(), liga=league) }}" {% if item.active %}aria-current="date"{% endif %}>
+      <span class="day-name">{{ item.day|day_label(today) }}</span>
+      <span class="day-count">{{ item.count }} partido{{ 's' if item.count != 1 }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  <a class="day-step" href="{{ qs('/', fecha=next_day.isoformat(), liga=league) }}" aria-label="Día siguiente">›</a>
+</nav>
+
+{% if not groups %}
+<section class="empty">
+  <h2>No hay partidos este día</h2>
+  <p>Elige otra fecha arriba. Las fechas listadas son las que tienen partidos cargados.</p>
+</section>
+{% endif %}
+
+{% for name, rows in groups %}
+<section class="league-block">
+  <h2 class="league-title">{{ name }}</h2>
+  <div class="match-list">
+    {% for m in rows %}{{ match_row(m) }}{% endfor %}
+  </div>
+</section>
+{% endfor %}
+
+<aside class="howto">
+  <h2>Cómo leer cada partido</h2>
+  <dl>
+    <dt>Barra</dt><dd>Probabilidad de que gane el local (azul), empaten (gris) o gane el visitante (naranja).</dd>
+    <dt>Lectura</dt><dd>El resultado más probable. Si hay cuotas, combina el modelo con el mercado.</dd>
+    <dt>xG</dt><dd>Goles esperados de cada equipo según el modelo.</dd>
+    <dt>Etiquetas resaltadas</dt><dd>Goles o «ambos anotan» que se apartan del promedio de esa liga.</dd>
+  </dl>
+</aside>
+{% endblock %}

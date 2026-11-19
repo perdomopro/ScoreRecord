@@ -123,11 +123,17 @@ scorerecord gui --host 127.0.0.1 --port 8765
 Open:
 
 ```text
-http://127.0.0.1:8765/today
-http://127.0.0.1:8765/today?league=EPL
-http://127.0.0.1:8765/today?league=WORLD_CUP_2026
-http://127.0.0.1:8765/audit
+http://127.0.0.1:8765/
+http://127.0.0.1:8765/?fecha=2026-11-21&liga=EPL
+http://127.0.0.1:8765/partido/<fixture_id>
+http://127.0.0.1:8765/resultados?dias=30
+http://127.0.0.1:8765/desempeno
+http://127.0.0.1:8765/estado
 ```
+
+Routes and the model+market blend are described in the README "Dashboard"
+section. The dashboard needs an existing database file; it opens it read-only
+and does not create or migrate it.
 
 ## Football-Data Historical Market Research
 
@@ -208,17 +214,11 @@ scorerecord bridge-club-history --league MLS --source football-data --from-seaso
 scorerecord run-club-pilot-refresh --league MLS --json
 ```
 
-The dashboard is date-scoped, but it shows `Proximos partidos cargados` with
-date links:
+The dashboard opens on the next day with fixtures; check one league with:
 
 ```powershell
-curl "http://100.104.72.97:8765/today?league=ALL&view=forecast"
-curl "http://100.104.72.97:8765/today?league=LIGA_MX&view=forecast"
-curl "http://100.104.72.97:8765/today?league=MLS&view=forecast"
+curl "http://100.104.72.97:8765/api/partidos?liga=LIGA_MX&fecha=2026-11-22"
 ```
-
-The main forecast navbar should show forecast navigation and `/audit`; it should
-not surface `view=paper` or `view=research` as primary product tabs.
 
 SportMonks is available as a read-only probe/enrichment source:
 
@@ -361,16 +361,13 @@ scorerecord db-health
 If `future_resolved=0`, the GUI is not broken; there are no future resolved
 fixtures for that scope in the DB.
 
-For the multi-league forecast view, remember that the page is date-scoped. If
-today has no fixtures, open the next fixture date explicitly:
+The dashboard reads, per fixture, the latest prediction run published before
+kickoff. A fixture without such a run shows "Sin pronóstico publicado". Expected
+goals and the score heatmap come from `prediction_score_grid`, which only exists
+for runs published after schema version 8; older runs show the rest of the page.
 
-```powershell
-curl "http://100.104.72.97:8765/today?date=2026-08-21&league=ALL&view=forecast"
-curl "http://100.104.72.97:8765/today?date=2026-08-21&league=EPL&view=forecast"
-```
-
-The GUI intentionally reads the latest prediction run per fixture. A new EPL
-publish should not hide older World Cup forecasts on `league=ALL`.
+If the dashboard answers "No pudimos generar esta página", the cause is in the
+service log: `journalctl --user -u scorerecord-gui.service -n 50 --no-pager`.
 
 Prediction run inserts zero rows:
 

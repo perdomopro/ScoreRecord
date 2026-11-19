@@ -16,7 +16,7 @@ Provider fixtures/history
   -> league-scoped Dixon-Coles artifact
   -> fixture predictions
   -> forecast quality and explanations
-  -> GUI /today and /match
+  -> dashboard / and /partido/<id>
   -> optional forecast snapshots
   -> settlement and reports after results
 ```
@@ -62,7 +62,8 @@ Not wired:         fixture scores, forecast snapshot freeze, club odds capture
 | `PlattCalibrator` | `src/scorerecord/models/calibration.py` | Calibrates binary goal markets where enough historical rows exist. | Calibrator scope stored in artifact JSON. |
 | `select_primary_forecasts` | `src/scorerecord/forecast_policy.py` | Chooses OU2.5 GOALS principal and BTTS principal. | Excludes 1X2, exact score, double chance, OU1.5, OU3.5 from principal selection. |
 | `signal_strength` | `src/scorerecord/forecast_policy.py` | Labels `NO_SIGNAL`, `LEAN`, `MODERATE`, `STRONG`/display bands. | Magnitude label only; not betting confidence. |
-| `Resultado estimado` | `src/scorerecord/gui.py` | Shows secondary 1X2 and double-chance diagnostics from the same score matrix. | Not a primary forecast; league 1X2 calibration remains diagnostic. |
+| `prediction_score_grid` | `src/scorerecord/predict/fixtures.py` | Stores expected goals and the 0-6 score matrix behind each published prediction. | Pruned together with its prediction rows. |
+| Model + market blend | `src/scorerecord/web/data.py` | Logarithmic pooling of model and de-vigged pre-kickoff odds for 1X2 and both-teams-score. | Provisional market weight 0.7; only odds taken before kickoff count. |
 
 ## Quality, evidence, and GUI
 
@@ -73,8 +74,9 @@ Not wired:         fixture scores, forecast snapshot freeze, club odds capture
 | `src/scorerecord/forecast_performance.py` | Aggregates settled `prediction_result` rows into top-pick accuracy, Brier, and log-loss by market and league. |
 | `src/scorerecord/odds_coverage.py` | Summarizes current odds coverage per fixture for match detail pages. |
 | `src/scorerecord/odds_horizons.py` | Summarizes pre-kickoff odds capture horizons. |
-| `src/scorerecord/health.py` | Database health checks used by deployment and `/health`. |
-| `src/scorerecord/gui.py` | Renders landing `/`, forecast list `/today`, top signals `/signals`, match modal `/match/<id>`, loaded fixtures `/history`, performance `/performance`, market context `/market`, and health `/health`. |
+| `src/scorerecord/health.py` | Database health checks used by deployment and `/estado`. |
+| `src/scorerecord/web/data.py` | Read-only queries: latest pre-kickoff forecast per fixture, market de-vig, blend, league base rates, form, Elo, performance metrics. |
+| `src/scorerecord/web/pages.py`, `web/app.py`, `web/charts.py` | Page contexts, routes and JSON API, inline SVG/HTML charts. Templates in `web/templates`, CSS/JS in `web/static`. |
 
 ## Evaluation and reports
 

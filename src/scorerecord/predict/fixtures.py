@@ -31,6 +31,7 @@ from scorerecord.runs import ingest_run, record_quality
 from scorerecord.time_utils import parse_kickoff_utc
 
 DEFAULT_OU_LINES = (1.5, 2.5, 3.5)
+GRID_MAX_GOALS = 6
 CLUB_TRAINING_POLICY_ID = "club-rolling-v1"
 CLUB_TOURNAMENTS = set(CLUB_FORECAST_LEAGUES)
 
@@ -195,6 +196,7 @@ def publish_fixture_predictions(
             predicted_fixtures += 1
             match = _fixture_as_match_feature(conn, fixture)
             score_grid = model.score_matrix(match)
+            _insert_score_grid(conn, run_id, fixture["fixture_id"], score_grid)
             rows = _prediction_rows(
                 fixture_id=fixture["fixture_id"],
                 score_grid=score_grid,
@@ -293,7 +295,7 @@ def _fixture_as_match_feature(conn: sqlite3.Connection, fixture: sqlite3.Row) ->
     away_id = int(fixture["away_id"])
     elo_home = _latest_elo(conn, home_id)
     elo_away = _latest_elo(conn, away_id)
-    
+
     league_code = fixture["league_code"]
     if league_code == "WORLD_CUP_2026":
         neutral = 1
@@ -316,6 +318,44 @@ def _fixture_as_match_feature(conn: sqlite3.Connection, fixture: sqlite3.Row) ->
         tournament=tournament,
         elo_home_pre=elo_home if elo_home is not None else 1500.0,
         elo_away_pre=elo_away if elo_away is not None else 1500.0,
+    )
+
+
+def score_grid_summary(score_grid: object, *, max_goals: int = GRID_MAX_GOALS) -> dict:
+    """Expected goals from the full grid plus a truncated, rounded grid for display."""
+    import numpy as np
+
+    grid = np.asarray(score_grid, dtype=float)
+    grid = grid / grid.sum()
+    goals = np.arange(grid.shape[0])
+    size = min(max_goals + 1, grid.shape[0])
+    return {
+        "xg_home": float((grid.sum(axis=1) * goals).sum()),
+        "xg_away": float((grid.sum(axis=0) * goals).sum()),
+        "max_goals": size - 1,
+        "grid": [[round(float(value), 5) for value in row[:size]] for row in grid[:size]],
+    }
+
+
+def _insert_score_grid(
+    conn: sqlite3.Connection, run_id: int, fixture_id: str, score_grid: object
+) -> None:
+    summary = score_grid_summary(score_grid)
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO prediction_score_grid (
+          run_id, fixture_id, xg_home, xg_away, max_goals, grid_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id,
+            fixture_id,
+            summary["xg_home"],
+            summary["xg_away"],
+            summary["max_goals"],
+            json.dumps(summary["grid"], separators=(",", ":")),
+        ),
     )
 
 

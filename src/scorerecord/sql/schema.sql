@@ -208,6 +208,18 @@ CREATE TABLE IF NOT EXISTS prediction (
   PRIMARY KEY (fixture_id, model, market, selection, generated_utc)
 );
 
+-- Score matrix behind each published prediction, so the dashboard can show
+-- expected goals and likely scores without re-running the model.
+CREATE TABLE IF NOT EXISTS prediction_score_grid (
+  run_id INTEGER NOT NULL REFERENCES ingest_run(run_id),
+  fixture_id TEXT NOT NULL REFERENCES fixture(fixture_id),
+  xg_home REAL NOT NULL,
+  xg_away REAL NOT NULL,
+  max_goals INTEGER NOT NULL,
+  grid_json TEXT NOT NULL,
+  PRIMARY KEY (run_id, fixture_id)
+);
+
 CREATE TABLE IF NOT EXISTS forecast_snapshot (
   snapshot_id INTEGER PRIMARY KEY,
   fixture_id TEXT NOT NULL REFERENCES fixture(fixture_id),

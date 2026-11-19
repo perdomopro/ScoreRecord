@@ -48,6 +48,17 @@ def prune_predictions(conn: sqlite3.Connection, *, dry_run: bool = False) -> Pru
         deleted = int(conn.execute(f"SELECT COUNT(*) {stale_filter}").fetchone()[0])
     else:
         deleted = conn.execute(f"DELETE {stale_filter}").rowcount
+        # Score grids follow their prediction rows.
+        conn.execute(
+            """
+            DELETE FROM prediction_score_grid
+            WHERE NOT EXISTS (
+              SELECT 1 FROM prediction p
+              WHERE p.run_id = prediction_score_grid.run_id
+                AND p.fixture_id = prediction_score_grid.fixture_id
+            )
+            """
+        )
         conn.commit()
     return PruneSummary(rows_before=rows_before, rows_deleted=int(deleted), dry_run=dry_run)
 

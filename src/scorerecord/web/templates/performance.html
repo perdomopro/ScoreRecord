@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% from "macros.html" import league_tabs %}
+{% block title %}Desempeño · ScoreRecord{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Desempeño</h1>
+  <p class="lede">
+    {% if perf.matches %}{{ perf.matches }} partidos jugados con pronóstico previo, del {{ perf.first_day|long_day }} al {{ perf.last_day|long_day }}.{% else %}Aún no hay partidos liquidados.{% endif %}
+    Medimos con <b>log-loss</b> (menor es mejor) y lo comparamos contra el promedio de cada liga en los {{ (base_days / 365)|round|int }} años previos a cada partido.
+  </p>
+</section>
+
+{{ league_tabs(tabs, '/desempeno') }}
+
+{% if perf.matches %}
+{% if perf.matches < 100 %}<p class="warn"><span aria-hidden="true">⚠</span> Muestra pequeña ({{ perf.matches }} partidos): las diferencias todavía pueden ser ruido.</p>{% endif %}
+
+<section class="card">
+  <h2>Modelo contra el promedio de la liga</h2>
+  <table class="plain metrics">
+    <thead><tr><th scope="col">Mercado</th><th scope="col">Partidos</th><th scope="col">Acierto</th><th scope="col">Log-loss modelo</th><th scope="col">Log-loss promedio</th><th scope="col">Ventaja</th></tr></thead>
+    <tbody>
+      {% for key, label in (('1X2', 'Resultado'), ('OU2.5', 'Más/Menos 2.5'), ('BTTS', 'Ambos anotan')) %}
+      {% set s = perf.by_market[key] %}
+      <tr>
+        <th scope="row">{{ label }}</th><td class="num">{{ s.n }}</td><td class="num">{{ s.accuracy|pct }}</td>
+        <td class="num">{{ s.model_logloss|num }}</td><td class="num">{{ s.base_logloss|num }}</td>
+        {% set tone = 'none' if s.skill is none or (s.skill|abs) < 0.0005 else ('good' if s.skill > 0 else 'bad') %}
+        <td class="num {{ {'good': 'is-good', 'bad': 'is-bad', 'none': 'muted'}[tone] }}">{{ s.skill|signed }} <span class="sr-only">{{ {'good': 'mejor que', 'bad': 'peor que', 'none': 'igual que'}[tone] }} el promedio</span><span aria-hidden="true">{{ {'good': '▲', 'bad': '▼', 'none': '='}[tone] }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small">«Ventaja» es cuánto menor fue el log-loss del modelo que el del promedio de la liga, por partido. Positivo significa que el modelo aportó información.</p>
+</section>
+
+<section class="card">
+  <h2>Modelo, mercado y combinado</h2>
+  <p class="muted small">Solo partidos con cuotas capturadas antes del inicio. El combinado pondera mercado {{ (market_weight * 100)|round|int }}% y modelo {{ ((1 - market_weight) * 100)|round|int }}% (ponderación provisional).</p>
+  <table class="plain metrics">
+    <thead><tr><th scope="col">Mercado</th><th scope="col">Partidos</th><th scope="col">Modelo</th><th scope="col">Mercado</th><th scope="col">Combinado</th></tr></thead>
+    <tbody>
+      {% for key, label in (('1X2', 'Resultado'), ('BTTS', 'Ambos anotan')) %}
+      {% set s = perf.by_market[key] %}
+      <tr><th scope="row">{{ label }}</th><td class="num">{{ s.n_market }}</td><td class="num">{{ s.model_logloss_on_market|num }}</td><td class="num">{{ s.market_logloss|num }}</td><td class="num">{{ s.blend_logloss|num }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small">Log-loss; menor es mejor. Más/Menos 2.5 no aparece porque el plan actual del proveedor no entrega esas cuotas.</p>
+</section>
+
+<section class="card">
+  <h2>Calibración</h2>
+  <p class="muted small">Cada punto agrupa pronósticos de probabilidad parecida: sobre la diagonal, lo pronosticado ocurrió con esa frecuencia. El tamaño indica cuántos casos hay.</p>
+  <div class="charts-3">
+    {{ charts.calibration_chart(perf.calibration['1X2'], 'Resultado (local, empate y visitante)') }}
+    {{ charts.calibration_chart(perf.calibration['OU2.5'], 'Más de 2.5 goles') }}
+    {{ charts.calibration_chart(perf.calibration['BTTS'], 'Ambos anotan') }}
+  </div>
+</section>
+
+<section class="card">
+  <h2>Ventaja mes a mes</h2>
+  {{ charts.skill_chart(perf.monthly) }}
+  <details>
+    <summary>Ver como tabla</summary>
+    <table class="plain metrics">
+      <thead><tr><th scope="col">Mes</th><th scope="col">Partidos</th><th scope="col">Resultado</th><th scope="col">Más/Menos 2.5</th><th scope="col">Ambos anotan</th></tr></thead>
+      <tbody>{% for row in perf.monthly %}<tr><th scope="row">{{ row.month }}</th><td class="num">{{ row['1X2'].n }}</td><td class="num">{{ row['1X2'].skill|signed }}</td><td class="num">{{ row['OU2.5'].skill|signed }}</td><td class="num">{{ row['BTTS'].skill|signed }}</td></tr>{% endfor %}</tbody>
+    </table>
+  </details>
+</section>
+
+{% if leagues|length > 1 %}
+<section class="card">
+  <h2>Por liga</h2>
+  <table class="plain metrics">
+    <thead><tr><th scope="col">Liga</th><th scope="col">Partidos</th><th scope="col">Resultado</th><th scope="col">Más/Menos 2.5</th><th scope="col">Ambos anotan</th></tr></thead>
+    <tbody>{% for name, s in leagues %}<tr><th scope="row">{{ name }}</th><td class="num">{{ s['1X2'].n }}</td><td class="num">{{ s['1X2'].skill|signed }}</td><td class="num">{{ s['OU2.5'].skill|signed }}</td><td class="num">{{ s['BTTS'].skill|signed }}</td></tr>{% endfor %}</tbody>
+  </table>
+  <p class="muted small">Ventaja sobre el promedio de cada liga.</p>
+</section>
+{% endif %}
+{% endif %}
+<p class="muted small">Datos en JSON: <a href="/api/desempeno">/api/desempeno</a></p>
+{% endblock %}

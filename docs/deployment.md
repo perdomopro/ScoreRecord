@@ -17,7 +17,7 @@ before the loop fixes. Deploying this branch changes it to:
 | `scorerecord-odds.timer` | every 3 h | `fetch-odds --horizon-hours 48 --max-requests 40`; uses each fixture's provider event id |
 | `scorerecord-postmatch.timer` | daily 23:30 | `ingest-results`, `settle-fixtures`, `settle-forecast-snapshots` |
 | `scorerecord-weekly.timer` | Sunday 09:00 | unchanged |
-| `scorerecord-gui.service` | always on | unchanged; `/audit` answers 404 unless `SCORERECORD_ENABLE_AUDIT=1` |
+| `scorerecord-gui.service` | always on | new dashboard (`src/scorerecord/web`); needs `pip install -e .` for Jinja2, which the bootstrap does |
 
 Deploy steps, in order:
 

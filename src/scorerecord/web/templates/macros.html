@@ -1,0 +1,61 @@
+{% macro league_tabs(tabs, path, extra={}) %}
+<nav class="chips" aria-label="Liga">
+  {% for tab in tabs %}
+  <a class="chip{% if tab.active %} is-active{% endif %}" href="{{ qs(path, liga=tab.code, **extra) }}" {% if tab.active %}aria-current="true"{% endif %}>{{ tab.label }}</a>
+  {% endfor %}
+</nav>
+{% endmacro %}
+
+{% macro status_badge(m) %}
+{% if m.status == 'finished' %}<span class="badge badge-final">Final</span>
+{% elif m.status == 'live' %}<span class="badge badge-live">En juego</span>
+{% elif m.status == 'pending_result' %}<span class="badge">Sin resultado aún</span>
+{% endif %}
+{% endmacro %}
+
+{% macro lean_chip(lean) %}
+{% if lean %}
+<span class="chip-lean{% if lean.highlight %} is-strong{% endif %}" data-tip="{{ lean.yes }}: {{ lean.prob|pct(1) }} · promedio de la liga: {{ lean.base|pct(1) }} ({{ lean.note }})">
+  {{ lean.side }} <b>{{ lean.side_prob|pct }}</b>
+</span>
+{% endif %}
+{% endmacro %}
+
+{% macro verdict_chip(v) %}
+<span class="verdict {{ 'is-hit' if v.correct else 'is-miss' }}">
+  <span aria-hidden="true">{{ '✓' if v.correct else '✕' }}</span>
+  {{ v.label }}<span class="sr-only">{{ ': acierto' if v.correct else ': fallo' }}</span>
+</span>
+{% endmacro %}
+
+{% macro match_row(m) %}
+<article class="match-row">
+  <a class="match-link" href="/partido/{{ m.fixture_id }}">
+    <div class="match-time">
+      <span class="time">{{ m.kickoff_local|hhmm }}</span>
+      {{ status_badge(m) }}
+    </div>
+    <div class="match-teams">
+      <span class="team">{{ m.home }}</span>
+      {% if m.finished %}<span class="score">{{ m.home_score }} – {{ m.away_score }}</span>{% else %}<span class="vs">vs</span>{% endif %}
+      <span class="team">{{ m.away }}</span>
+    </div>
+    {% if m.result_probs %}
+    <div class="match-bar">{{ charts.result_bar(m.result_probs, m.home, m.away, compact=True) }}</div>
+    <div class="match-facts">
+      {% set p = m.pick %}
+      <span class="pick">{{ p.label }} <b>{{ p.prob|pct }}</b> <span class="muted">· {{ p.strength|lower }}</span></span>
+      {% if m.xg %}<span class="xg" data-tip="Goles esperados por el modelo">xG {{ '%.1f'|format(m.xg[0]) }} – {{ '%.1f'|format(m.xg[1]) }}</span>{% endif %}
+      {{ lean_chip(m.goals_lean) }}
+      {{ lean_chip(m.btts_lean) }}
+      {% if m.uses_market %}<span class="src" data-tip="Combina el modelo con las cuotas del mercado">modelo + mercado</span>{% else %}<span class="src muted" data-tip="Aún no hay cuotas capturadas para este partido">solo modelo</span>{% endif %}
+    </div>
+    {% if m.finished %}
+    <div class="match-verdicts">{% for v in m.verdicts %}{{ verdict_chip(v) }}{% endfor %}</div>
+    {% endif %}
+    {% else %}
+    <div class="match-facts muted">Sin pronóstico publicado para este partido.</div>
+    {% endif %}
+  </a>
+</article>
+{% endmacro %}

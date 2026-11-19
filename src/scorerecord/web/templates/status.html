@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Estado · ScoreRecord{% endblock %}
+{% block content %}
+{% set icons = {'OK': '✓', 'WARNING': '⚠', 'FAIL': '✕'} %}
+{% set words = {'OK': 'Bien', 'WARNING': 'Revisar', 'FAIL': 'Falla'} %}
+<section class="page-head">
+  <h1>Estado del sistema</h1>
+  <p class="status-overall status-{{ overall|lower }}"><span aria-hidden="true">{{ icons[overall] }}</span> {{ words[overall] }}</p>
+</section>
+
+<section class="card">
+  <h2>Comprobaciones</h2>
+  <table class="plain">
+    <thead><tr><th scope="col">Comprobación</th><th scope="col">Estado</th><th scope="col">Valor</th></tr></thead>
+    <tbody>
+      {% for c in checks %}
+      <tr><th scope="row">{{ c.name }}</th><td class="status-{{ c.status|lower }}"><span aria-hidden="true">{{ icons.get(c.status, '?') }}</span> {{ words.get(c.status, c.status) }}</td><td class="mono">{{ c.value }}{% if c.details %} <span class="muted">{{ c.details }}</span>{% endif %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Últimas corridas</h2>
+  <table class="plain">
+    <thead><tr><th scope="col">Tarea</th><th scope="col">Estado</th><th scope="col">Inicio (UTC)</th><th scope="col">Mensaje</th></tr></thead>
+    <tbody>
+      {% for r in runs %}
+      <tr><th scope="row">{{ r.label }}</th><td>{{ r.status or 'nunca' }}</td><td class="mono">{{ r.started_utc or '—' }}</td><td class="muted">{{ r.message or '' }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

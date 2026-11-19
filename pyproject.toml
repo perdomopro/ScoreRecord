@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.26",
+  "jinja2>=3.1",
   "tzdata; sys_platform == 'win32'",
 ]
 
@@ -26,7 +27,7 @@ scorerecord = "scorerecord.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-scorerecord = ["sql/*.sql"]
+scorerecord = ["sql/*.sql", "web/templates/*.html", "web/static/*"]
 
 [tool.ruff]
 line-length = 100
@@ -34,3 +35,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Inline SVG markup reads better on one line per element.
+"src/scorerecord/web/charts.py" = ["E501"]

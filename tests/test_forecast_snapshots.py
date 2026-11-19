@@ -2,7 +2,6 @@ import json
 import math
 import sqlite3
 from datetime import UTC, datetime
-from pathlib import Path
 
 from scorerecord.db import init_db
 from scorerecord.forecast_snapshots import (
@@ -10,8 +9,6 @@ from scorerecord.forecast_snapshots import (
     freeze_forecast_snapshot,
     settle_forecast_snapshots,
 )
-from scorerecord.gui import load_forecast_data, render_match_forecast
-from scorerecord.settings import Settings
 
 MODEL_VERSION = "test-forecast-v1"
 
@@ -247,29 +244,3 @@ def test_forecast_report_groups_by_market_and_signal_code() -> None:
     assert set(signal_rows) == {"MODERATE", "NO_SIGNAL"}
     assert any(row.startswith("market=OU2.5") for row in report.as_rows())
     assert any(row.startswith("signal_code=MODERATE") for row in report.as_rows())
-
-
-def test_match_view_renders_frozen_and_settled_forecast() -> None:
-    conn = _conn()
-    _insert_fixture(conn)
-    freeze_forecast_snapshot(
-        conn,
-        target_date="2026-07-04",
-        as_of_utc=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
-    )
-    conn.execute(
-        "UPDATE fixture SET home_score = 2, away_score = 1 WHERE fixture_id = 'm1'"
-    )
-    settle_forecast_snapshots(conn, as_of_utc=datetime(2026, 7, 5, 0, 0, tzinfo=UTC))
-
-    data = load_forecast_data(
-        conn,
-        fixture_id="m1",
-        now_utc=datetime(2026, 7, 5, 1, 0, tzinfo=UTC),
-    )
-    html = render_match_forecast(data, "m1", settings=Settings(db_path=Path(""), raw_dir=Path("")))
-
-    assert "Forecast congelado" in html
-    assert "OU2.5" in html
-    assert "MODERATE" in html
-    assert "Correcto" in html

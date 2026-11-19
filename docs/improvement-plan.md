@@ -22,10 +22,19 @@ pipeline de apuestas en papel.
 | 1.6 Ligas | Parcial: slugs extra verificados (Clausura, playoffs). Falta el estado de fuera de temporada en la GUI |
 | 1.7 Health | Hecho: siete checks nuevos en `db-health` y `/health`. Falta `OnFailure=` con notificación |
 | 2 Higiene | Hecho salvo los 256 avisos de `ruff` y la división de `cli.py` |
-| 3 GUI | Solo dos arreglos: abre la próxima jornada si hoy no hay partidos y mensaje vacío claro |
+| 3 GUI | Hecho en código (ver abajo); sin desplegar |
 | 4-5 | Sin empezar |
 
-Nada de esto está desplegado. Se ensayó completo en el homeserver sobre una
+Fase 3, implementada el 2026-11-19 en `src/scorerecord/web` (reemplaza a
+`gui.py`): Jinja2 sobre el servidor de la librería estándar (una sola dependencia
+nueva; Starlette y uvicorn no aportaban nada a un panel de solo lectura), rutas
+`/`, `/partido/<id>`, `/resultados`, `/desempeno`, `/estado` y API JSON, caché por
+ETag, gzip, modo oscuro, tooltips, matriz de marcadores (nueva tabla
+`prediction_score_grid`), lectura combinada modelo + mercado, comparación contra
+el promedio de cada liga y calibración. Ensayada en el homelab con una copia de la
+base en el puerto 8766.
+
+Las fases 1 y 2 están desplegadas desde el 2026-11-13. Se ensayaron completas en el homeserver sobre una
 copia de la base: 839 de 855 partidos jugados recibieron marcador, las cinco
 ligas quedaron con partidos futuros y el modelo entrenado hasta el último
 partido disponible.

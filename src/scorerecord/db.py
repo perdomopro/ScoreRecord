@@ -8,7 +8,7 @@ from pathlib import Path
 from scorerecord.aliases import normalize_key
 from scorerecord.time_utils import format_utc, parse_kickoff_utc
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 _MIGRATION_NAMES = {
     1: "initial_schema",
     2: "compatibility_columns_and_alias_keys",
@@ -17,6 +17,7 @@ _MIGRATION_NAMES = {
     5: "forecast_snapshot",
     6: "forecast_snapshot_quality_status",
     7: "multi_league_fixture_schema",
+    8: "prediction_score_grid",
 }
 
 
