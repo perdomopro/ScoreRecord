@@ -3,7 +3,7 @@
 {% block title %}{{ m.home }} vs {{ m.away }} · ScoreRecord{% endblock %}
 {% block content %}
 {% set p = m.pick %}
-<p class="crumb"><a href="{{ qs('/', fecha=m.kickoff_local.date().isoformat()) }}">‹ {{ m.kickoff_local.date()|long_day }}</a></p>
+<p class="crumb"><a href="{{ qs('/partidos', fecha=m.kickoff_local.date().isoformat()) }}">‹ {{ m.kickoff_local.date()|long_day }}</a></p>
 
 <section class="match-head">
   <p class="eyebrow">{{ m.league_name }} · {{ m.kickoff_local.date()|day_label(today) }} {{ m.kickoff_local|hhmm }} {{ status_badge(m) }}</p>

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}ScoreRecord · Pronósticos deportivos{% endblock %}
+{% block topbar %}
+<button class="theme-toggle theme-toggle-floating" type="button" data-theme-toggle aria-label="Cambiar entre tema claro y oscuro">
+  <span aria-hidden="true">◐</span>
+</button>
+{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="hero-eyebrow">Pronósticos deportivos</p>
+  <h1 class="hero-title">Score<span>Record</span></h1>
+  <p class="hero-lede">
+    Pronósticos de fútbol con modelos estadísticos, comparados contra el mercado y
+    el promedio de cada liga, con cada predicción trazable y auditable.
+    No es una recomendación de apuesta.
+  </p>
+  <a class="hero-repo" href="https://github.com/perdomopro/ScoreRecord" rel="noreferrer">github.com/perdomopro/ScoreRecord</a>
+  <nav class="hero-actions" aria-label="Secciones">
+    <a class="hero-btn is-primary" href="/partidos">Ver partidos</a>
+    <a class="hero-btn" href="/resultados">Resultados</a>
+    <a class="hero-btn" href="/desempeno">Desempeño</a>
+  </nav>
+</section>
+{% endblock %}

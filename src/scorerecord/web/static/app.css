@@ -290,3 +290,24 @@ details > summary { cursor: pointer; color: var(--text-2); margin-top: 10px; }
   .seg, .meter-fill, .heatmap td { forced-color-adjust: none; border: 1px solid CanvasText; }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+
+/* ------------------------------------------------------------ landing */
+.page-landing { background:
+  radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 42%),
+  radial-gradient(circle at 85% 80%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 45%),
+  var(--bg); }
+.page-landing main { min-height: calc(100vh - 150px); display: grid; place-items: center; padding-top: 32px; padding-bottom: 32px; }
+.theme-toggle-floating { position: fixed; top: 14px; right: 16px; z-index: 30; }
+.hero { width: 100%; max-width: 860px; text-align: center; padding: 48px 24px 40px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 10px 40px rgb(16 40 24 / 10%); }
+.hero-eyebrow { margin: 0 0 10px; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.hero-title { font-size: clamp(2.8rem, 9vw, 5rem); font-weight: 800; letter-spacing: -0.03em; line-height: 1; color: var(--brand); margin: 0 0 18px; }
+.hero-title span { color: var(--accent); }
+.hero-lede { max-width: 58ch; margin: 0 auto 14px; color: var(--text-2); font-size: 1.05rem; }
+.hero-repo { display: inline-block; font-weight: 600; font-size: 0.92rem; color: var(--text); text-decoration-color: var(--accent); text-underline-offset: 3px; margin-bottom: 26px; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.hero-btn { text-decoration: none; padding: 10px 20px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-weight: 600; min-width: 132px; }
+.hero-btn:hover { border-color: var(--accent); }
+.hero-btn.is-primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+:root[data-theme="dark"] .hero-btn.is-primary { color: #0d1f14; }
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .hero-btn.is-primary { color: #0d1f14; } }
+@media (max-width: 520px) { .hero { padding: 36px 16px 28px; } .hero-btn { flex: 1 1 100%; } }

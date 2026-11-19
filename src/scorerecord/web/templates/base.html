@@ -12,11 +12,12 @@
 </head>
 <body class="page-{{ page|default('other') }}">
   <a class="skip" href="#contenido">Saltar al contenido</a>
+  {% block topbar %}
   <header class="topbar">
     <div class="topbar-inner">
       <a class="brand" href="/" aria-label="ScoreRecord, inicio">Score<span>Record</span></a>
       <nav class="mainnav" aria-label="Principal">
-        <a href="/" {% if page in ('home', 'match') %}aria-current="page"{% endif %}>Partidos</a>
+        <a href="/partidos" {% if page in ('home', 'match') %}aria-current="page"{% endif %}>Partidos</a>
         <a href="/resultados" {% if page == 'results' %}aria-current="page"{% endif %}>Resultados</a>
         <a href="/desempeno" {% if page == 'performance' %}aria-current="page"{% endif %}>Desempeño</a>
       </nav>
@@ -25,6 +26,7 @@
       </button>
     </div>
   </header>
+  {% endblock %}
   <div class="notice" data-notice hidden>
     <p>Pronósticos con fines recreativos y de análisis. No son asesoría ni una recomendación de apuesta.</p>
     <button type="button" data-notice-close>Entendido</button>

@@ -10,19 +10,19 @@
   </p>
 </section>
 
-{{ league_tabs(tabs, '/', {'fecha': selected_day.isoformat() if selected_day != today else None}) }}
+{{ league_tabs(tabs, '/partidos', {'fecha': selected_day.isoformat() if selected_day != today else None}) }}
 
 <nav class="days" aria-label="Fechas">
-  <a class="day-step" href="{{ qs('/', fecha=previous_day.isoformat(), liga=league) }}" aria-label="Día anterior">‹</a>
+  <a class="day-step" href="{{ qs('/partidos', fecha=previous_day.isoformat(), liga=league) }}" aria-label="Día anterior">‹</a>
   <div class="day-strip">
     {% for item in strip %}
-    <a class="day{% if item.active %} is-active{% endif %}{% if item.past %} is-past{% endif %}" href="{{ qs('/', fecha=item.day.isoformat(), liga=league) }}" {% if item.active %}aria-current="date"{% endif %}>
+    <a class="day{% if item.active %} is-active{% endif %}{% if item.past %} is-past{% endif %}" href="{{ qs('/partidos', fecha=item.day.isoformat(), liga=league) }}" {% if item.active %}aria-current="date"{% endif %}>
       <span class="day-name">{{ item.day|day_label(today) }}</span>
       <span class="day-count">{{ item.count }} partido{{ 's' if item.count != 1 }}</span>
     </a>
     {% endfor %}
   </div>
-  <a class="day-step" href="{{ qs('/', fecha=next_day.isoformat(), liga=league) }}" aria-label="Día siguiente">›</a>
+  <a class="day-step" href="{{ qs('/partidos', fecha=next_day.isoformat(), liga=league) }}" aria-label="Día siguiente">›</a>
 </nav>
 
 {% if not groups %}

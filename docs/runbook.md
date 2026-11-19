@@ -124,7 +124,7 @@ Open:
 
 ```text
 http://127.0.0.1:8765/
-http://127.0.0.1:8765/?fecha=2026-11-21&liga=EPL
+http://127.0.0.1:8765/partidos?fecha=2026-11-21&liga=EPL
 http://127.0.0.1:8765/partido/<fixture_id>
 http://127.0.0.1:8765/resultados?dias=30
 http://127.0.0.1:8765/desempeno

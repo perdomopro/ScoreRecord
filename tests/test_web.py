@@ -190,7 +190,7 @@ def test_score_grid_summary_expected_goals() -> None:
 
 
 def test_home_opens_next_day_with_matches_and_blends_market(app: WebApp) -> None:
-    response, html = _get(app, "/")
+    response, html = _get(app, "/partidos")
     assert response.status == 200
     assert "<h1>" in html and "Sábado 21 de noviembre" in html
     assert "Arsenal" in html and "Fulham" in html
@@ -200,7 +200,7 @@ def test_home_opens_next_day_with_matches_and_blends_market(app: WebApp) -> None
 
 
 def test_home_for_a_day_without_matches_is_friendly(app: WebApp) -> None:
-    _, html = _get(app, "/?fecha=2026-11-25")
+    _, html = _get(app, "/partidos?fecha=2026-11-25")
     assert "No hay partidos este día" in html
     assert "fixture-summary" not in html
 
@@ -266,7 +266,7 @@ def test_api_match_blend_is_between_model_and_market(app: WebApp) -> None:
 
 
 def test_pages_avoid_betting_vocabulary(app: WebApp) -> None:
-    for path in ("/", "/partido/up-1", "/resultados", "/desempeno"):
+    for path in ("/", "/partidos", "/partido/up-1", "/resultados", "/desempeno"):
         _, html = _get(app, path)
         lowered = html.lower()
         for word in FORBIDDEN:
@@ -278,7 +278,7 @@ def test_pages_avoid_betting_vocabulary(app: WebApp) -> None:
 
 def test_legacy_urls_redirect(app: WebApp) -> None:
     for old, new in (
-        ("/today", "/"),
+        ("/today", "/partidos"),
         ("/health", "/estado"),
         ("/performance", "/desempeno"),
         ("/history", "/resultados"),
@@ -290,10 +290,10 @@ def test_legacy_urls_redirect(app: WebApp) -> None:
 
 
 def test_etag_and_gzip(app: WebApp) -> None:
-    first = app.handle("GET", "/", {"Accept-Encoding": "gzip"})
+    first = app.handle("GET", "/partidos", {"Accept-Encoding": "gzip"})
     assert first.headers["Content-Encoding"] == "gzip"
     assert b"Arsenal" in gzip.decompress(first.body)
-    again = app.handle("GET", "/", {"If-None-Match": first.headers["ETag"]})
+    again = app.handle("GET", "/partidos", {"If-None-Match": first.headers["ETag"]})
     assert again.status == 304 and again.body == b""
 
 
@@ -309,11 +309,11 @@ def test_dashboard_never_writes_and_hides_errors(tmp_path: Path) -> None:
     _seed(db_path)
     before = db_path.read_bytes()
     app = WebApp(db_path, clock=lambda: NOW)
-    for path in ("/", "/partido/up-1", "/resultados", "/desempeno", "/estado"):
+    for path in ("/", "/partidos", "/partido/up-1", "/resultados", "/desempeno", "/estado"):
         assert app.handle("GET", path, {}).status == 200, path
     assert db_path.read_bytes() == before
     broken = WebApp(tmp_path / "missing.db", clock=lambda: NOW)
-    response, html = _get(broken, "/")
+    response, html = _get(broken, "/partidos")
     assert response.status == 500
     assert "missing.db" not in html and "No pudimos generar" in html
 
@@ -325,3 +325,17 @@ def test_lean_shows_the_probability_of_the_side_it_names() -> None:
     assert lean["highlight"] and lean["note"] == "algo menos que en la liga"
     neutral = data._lean(0.55, 0.54, yes="Ambos anotan", no="No anotan ambos")
     assert neutral["side"] == "Ambos anotan" and not neutral["highlight"]
+
+
+def test_landing_page_presents_the_project(app: WebApp) -> None:
+    response, html = _get(app, "/")
+    assert response.status == 200
+    assert "Pronósticos deportivos" in html and "hero-title" in html
+    assert "github.com/perdomopro/ScoreRecord" in html
+    for href in ('href="/partidos"', 'href="/resultados"', 'href="/desempeno"'):
+        assert href in html
+    assert 'class="topbar"' not in html
+    _, inner = _get(app, "/resultados")
+    assert 'class="topbar"' in inner and 'href="/partidos"' in inner
+    no_db = WebApp(Path("missing.db"), clock=lambda: NOW)
+    assert no_db.handle("GET", "/", {}).status == 200

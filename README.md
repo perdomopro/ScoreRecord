@@ -121,7 +121,8 @@ never fits a model at request time.
 
 | Route | Shows |
 | --- | --- |
-| `/` | Next matchday with fixtures, grouped by league: 1X2 bar, the most likely outcome, expected goals, and goals / both-teams-score labels highlighted when they differ from the league average. `?fecha=YYYY-MM-DD&liga=EPL` |
+| `/` | Landing page: project title, description, repository link, and buttons to the sections |
+| `/partidos` | Next matchday with fixtures, grouped by league: 1X2 bar, the most likely outcome, expected goals, and goals / both-teams-score labels highlighted when they differ from the league average. `?fecha=YYYY-MM-DD&liga=EPL` |
 | `/partido/<fixture_id>` | Model, market, and blended probabilities; league averages; expected goals; score heatmap; recent form; Elo; head-to-head; provenance |
 | `/resultados` | Pre-kickoff forecast against the final score, with hits per market. `?dias=7`, `14`, `30` or `90` |
 | `/desempeno` | Log-loss against the league base rate and against the market, calibration, and monthly trend |
@@ -132,7 +133,7 @@ When pre-kickoff odds exist, the headline 1X2 and both-teams-score numbers blend
 model and market by logarithmic pooling with a provisional market weight of 0.7
 (`MARKET_WEIGHT` in `web/data.py`); otherwise they are the model alone. League
 averages are the frequencies in that league over the 730 days before each match.
-Old URLs (`/today`, `/match/<id>`, `/health`, `/performance`, `/history`) redirect;
+Old URLs (`/today` and `/signals` to `/partidos`, `/match/<id>`, `/health`, `/performance`, `/history`) redirect;
 the paper-betting `/audit` view is retired.
 
 `odds-coverage-summary` still grades odds capture per fixture and market

@@ -28,8 +28,8 @@ from scorerecord.web import charts, data, pages
 STATIC_DIR = Path(__file__).parent / "static"
 LEGACY_REDIRECTS = {
     "/index.html": "/",
-    "/today": "/",
-    "/signals": "/",
+    "/today": "/partidos",
+    "/signals": "/partidos",
     "/history": "/resultados",
     "/performance": "/desempeno",
     "/market": "/desempeno",
@@ -192,11 +192,14 @@ class WebApp:
             values = query.get(name)
             return values[0].strip() if values and values[0].strip() else None
 
+        if path == "/":
+            # The landing page needs no data and must load even if the database is down.
+            return self._render("landing.html", {"page": "landing"})
         league = self._league(arg("liga"))
         now = self.clock()
         try:
             with closing(data.open_readonly(self.db_path)) as conn:
-                if path == "/":
+                if path == "/partidos":
                     day = self._date(arg("fecha"))
                     return self._render(
                         "home.html", pages.home(conn, now=now, requested_day=day, league=league)
