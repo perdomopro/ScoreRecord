@@ -5,6 +5,47 @@ Está ordenado por dependencia: cada fase deja el sistema en un estado útil y
 habilita la siguiente. Las fases 1 y 2 son correcciones; las fases 3 a 5 son
 lo que lleva el proyecto "al siguiente nivel".
 
+## Verificación al 2026-11-19
+
+Revisión de lo ejecutado contra el servidor, la base de producción (solo
+lectura), el repositorio y GitHub. ✓ hecho y verificado · ◐ parcial · ✗ pendiente.
+
+| Punto | Estado | Evidencia o hueco |
+| --- | --- | --- |
+| 0.1 Respaldo | ✓ | `backup-db` diario con 7 copias rotativas y respaldos previos a cada deploy (2.8 GB en total) |
+| 0.2 Cuotas vacías | ✓ | Se corrigió en vez de detenerlo: cada corrida captura 15-17 partidos (Unibet, 1X2 y ambos anotan) |
+| 0.3 Exposición | ✓ | Funnel apagado (`No serve config`) |
+| 0.4 GUI y `/audit` | ◐ | `/audit` responde 404, pero la GUI escucha en `0.0.0.0:8765`: además del tailnet, la ve cualquier equipo de la red de casa |
+| 0.5 Limpieza del servidor | ✗ | Siguen `debug_test.py`, `fix.py`, `query_db.py`, `ingest.sh`, `scratch/`, `run*.sh`, `write*.sh`, `diagnostics_output.json`, `gui.log` |
+| 1.1 Resultados | ✓ | 839 de 855 partidos atrasados recibieron marcador. Football-Data publica algunas ligas con días de retraso (Brasileirao); 3 partidos siguen sin marcador (MLS 1, Argentina 2), probablemente reprogramados |
+| 1.2 Corte móvil | ◐ | Los artefactos ya entrenan hasta el último partido. El modelo se reajusta cada día aunque no haya datos nuevos (~2 min de CPU) |
+| 1.3 Snapshots | ✓ | Los 9 partidos jugados desde el deploy tienen pronóstico congelado; se liquidan cuando llega el marcador |
+| 1.4 Cuotas por liga | ◐ | Funciona por id de evento. Cada 3 horas en lugar de T-24h/T-6h/T-1h; el plan gratuito no da Más/Menos |
+| 1.5 Almacenamiento | ◐ | Poda y horizonte activos (22 mil filas de predicción). Nunca se ejecutó `VACUUM` (la base sigue en 341 MB) y los respaldos son copias completas sin nivel semanal |
+| 1.6 Ligas | ◐ | Slugs de Clausura y playoffs verificados. Falta mostrar "fuera de temporada" en la GUI |
+| 1.7 Health | ◐ | Siete checks nuevos en `db-health` y `/estado`. Falta `OnFailure=` con notificación |
+| 2 Higiene | ◐ | 281 tests en verde y archivos muertos fuera del repo. El CI nunca corrió: los 4 commits de las fases 1-3 no están en GitHub. `ruff` marca 212 hallazgos; `cli.py` creció a 1,759 líneas |
+| 3 GUI | ◐ | Todas las páginas en producción. Faltan el desglose por fuerza de señal y el estado de fuera de temporada; `/estado` tarda ~4 s por el `integrity_check` |
+| Deploy | ✗ | El deploy descomprime sobre la carpeta existente y nunca borra archivos: los units retirados (`daily`, `epl-pilot`, `preplay-odds`) se reinstalaron (deshabilitados) y `gui.py` hubo que borrarlo a mano |
+
+Primera lectura del modelo con 836 partidos reales (pronósticos del modelo
+congelado en junio, antes de la fase 1):
+
+| Mercado | Acierto | Log-loss modelo | Log-loss promedio de liga |
+| --- | --- | --- | --- |
+| Resultado | 45.7% | 1.050 | 1.084 |
+| Más/Menos 2.5 | 57.1% | 0.680 | 0.686 |
+| Ambos anotan | 56.3% | 0.681 | 0.681 |
+
+- El modelo elige al local en 78% de los partidos; el local ganó 42%. Casi
+  nunca elige empate (13 de 836) y hubo 28% de empates.
+- Subestima los goles de esta temporada: Más de 2.5 pronosticado 49.8%, real
+  53.8%; ambos anotan 53.2% contra 58.5%. Cuando dice ~35% de Más de 2.5, ocurre
+  48% de las veces.
+- Contra el mercado (26 partidos con cuotas): correlación 0.82, pero el modelo es
+  menos decidido (desviación 0.115 contra 0.155) y difiere 7 puntos en promedio;
+  las brechas mayores están en Brasileirao.
+
 ## Estado al 2026-11-13 (tarde)
 
 Decisiones tomadas: GUI solo dentro del tailnet; stack ligero recomendado
