@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -118,11 +119,13 @@ def fetch_live_odds(
     closing_window_minutes: int | None = 60,
     min_interval_seconds: float = DEFAULT_MIN_INTERVAL_SECONDS,
     cwd: Path | None = None,
+    horizon_hours: float | None = None,
 ) -> OddsFetchSummary:
     fixtures = _candidate_fixtures(
         conn,
         fixture_id=fixture_id,
         closing_window_minutes=closing_window_minutes if is_closing else None,
+        horizon_hours=horizon_hours,
     )
     if dry_run:
         planned_odds_requests = min(len(fixtures), max_requests)
@@ -143,23 +146,31 @@ def fetch_live_odds(
 
     requested_markets = _requested_markets(markets)
     with ingest_run(conn, "fetch-odds", source="odds-api.io", cwd=cwd) as run_id:
+        bookmakers, bookmaker_requests = (
+            _allowed_bookmakers(api_key=api_key, base_url=base_url, requested=bookmakers)
+            if fixtures
+            else (bookmakers, 0)
+        )
+        # Fixtures ingested from odds-api.io already carry the provider event
+        # id; only fixtures from other sources need the name/date lookup.
+        unmapped = [row for row in fixtures[:max_requests] if _direct_event_id(row) is None]
         event_index, event_requests = _fetch_event_index(
             api_key=api_key,
             base_url=base_url,
             sport=sport,
             league=league,
-            fixtures=fixtures,
+            fixtures=unmapped,
         )
         rows_inserted = 0
         snapshot_rows_inserted = 0
-        api_requests_used = event_requests
+        api_requests_used = event_requests + bookmaker_requests
         missing_fixture = 0
         matched_events = 0
         bookmakers_seen: set[str] = set()
         markets_seen: set[str] = set()
 
         for fixture in fixtures[:max_requests]:
-            event_id = _match_event_id(fixture, event_index)
+            event_id = _direct_event_id(fixture) or _match_event_id(fixture, event_index)
             if event_id is None:
                 missing_fixture += 1
                 continue
@@ -485,6 +496,7 @@ def _candidate_fixtures(
     *,
     fixture_id: str | None,
     closing_window_minutes: int | None,
+    horizon_hours: float | None = None,
 ) -> list[sqlite3.Row]:
     filter_sql = ""
     params: tuple[object, ...] = ()
@@ -495,6 +507,7 @@ def _candidate_fixtures(
         f"""
         SELECT
           f.fixture_id, f.kickoff_local, f.kickoff_utc,
+          f.source, f.source_event_id,
           ht.canonical AS home_name, at.canonical AS away_name
         FROM fixture f
         JOIN team ht ON ht.team_id = f.home_id
@@ -503,12 +516,18 @@ def _candidate_fixtures(
           AND f.away_id IS NOT NULL
           AND f.home_score IS NULL
           AND f.away_score IS NULL
+          AND f.status != 'cancelled'
           {filter_sql}
-        ORDER BY f.kickoff_local, f.fixture_id
+        ORDER BY COALESCE(f.kickoff_utc, f.kickoff_local), f.fixture_id
         """,
         params,
     ).fetchall()
     now_utc = datetime.now(UTC)
+    horizon_deadline = (
+        now_utc + timedelta(hours=horizon_hours)
+        if horizon_hours is not None and fixture_id is None
+        else None
+    )
     closing_deadline = (
         now_utc + timedelta(minutes=closing_window_minutes)
         if closing_window_minutes is not None and fixture_id is None
@@ -522,8 +541,17 @@ def _candidate_fixtures(
         if closing_deadline is not None:
             if kickoff_utc is None or kickoff_utc > closing_deadline:
                 continue
+        if horizon_deadline is not None:
+            if kickoff_utc is None or kickoff_utc > horizon_deadline:
+                continue
         candidates.append(row)
     return candidates
+
+
+def _direct_event_id(fixture: sqlite3.Row) -> str | None:
+    if fixture["source"] == "odds_api_io" and fixture["source_event_id"]:
+        return str(fixture["source_event_id"])
+    return None
 
 
 def _fetch_event_index(
@@ -604,6 +632,27 @@ def _fetch_odds_payload(
     return _get_json(f"{base_url.rstrip('/')}/odds", params)
 
 
+def _allowed_bookmakers(*, api_key: str, base_url: str, requested: str) -> tuple[str, int]:
+    """Limit the requested bookmakers to those the account has selected.
+
+    The provider rejects the whole request with 403 when any requested
+    bookmaker is outside the account plan, so one paid-only name would
+    otherwise block every odds fetch.
+    """
+    try:
+        payload = _get_json(f"{base_url.rstrip('/')}/bookmakers/selected", {"apiKey": api_key})
+    except RuntimeError:
+        return requested, 1
+    selected = payload.get("bookmakers") if isinstance(payload, dict) else payload
+    names = [str(name) for name in _as_list(selected) if isinstance(name, str)]
+    if not names:
+        return requested, 1
+    wanted = [name.strip() for name in requested.split(",") if name.strip()]
+    by_key = {name.lower(): name for name in names}
+    allowed = [by_key[name.lower()] for name in wanted if name.lower() in by_key]
+    return ",".join(allowed or names), 1
+
+
 def _get_json(url: str, params: dict[str, str]) -> Any:
     full_url = f"{url}?{urllib.parse.urlencode(params)}"
     request = urllib.request.Request(full_url, headers={"User-Agent": "ScoreRecord/0.1"})
@@ -612,6 +661,15 @@ def _get_json(url: str, params: dict[str, str]) -> Any:
         try:
             with urllib.request.urlopen(request, timeout=20) as response:  # pragma: no cover
                 return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:  # pragma: no cover - network dependent
+            last_error = exc
+            if 400 <= exc.code < 500 and exc.code != 429:
+                # Client errors do not improve on retry; surface the reason.
+                detail = exc.read()[:200].decode("utf-8", "replace")
+                raise RuntimeError(
+                    f"Odds-API.io rejected {url}: HTTP {exc.code} {detail}"
+                ) from exc
+            time.sleep(2**attempt)
         except Exception as exc:  # pragma: no cover - network dependent
             last_error = exc
             time.sleep(2**attempt)

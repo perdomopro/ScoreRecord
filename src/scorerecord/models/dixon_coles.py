@@ -244,7 +244,7 @@ class _Adam:
 
         self.t += 1
         output: list[object] = []
-        for index, (param, grad) in enumerate(zip(params, grads)):
+        for index, (param, grad) in enumerate(zip(params, grads, strict=True)):
             param_array = np.asarray(param, dtype=float)
             grad_array = np.asarray(grad, dtype=float)
             self._m[index] = self.b1 * self._m[index] + (1.0 - self.b1) * grad_array

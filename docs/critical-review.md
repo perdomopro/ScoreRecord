@@ -9,6 +9,13 @@ Toda la evidencia se obtuvo en modo solo lectura: `journalctl`, consultas
 `mode=ro` sobre `data/scorerecord.db`, navegación de la GUI y la suite de tests
 en local. No se modificó nada en el servidor.
 
+> Los hallazgos P0-1 a P0-5 y varios de operación ya tienen corrección en el
+> código, sin desplegar. El estado por fase está en
+> [improvement-plan.md](improvement-plan.md). Dos datos de esta revisión
+> resultaron incompletos: el proveedor de fixtures no conserva marcadores de
+> partidos terminados, y las cuotas fallaban además porque la cuenta no permite
+> Bet365.
+
 ## Resumen
 
 El proyecto tiene una base seria (procedencia de cada predicción, walk-forward

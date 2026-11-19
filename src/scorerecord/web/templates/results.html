@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% from "macros.html" import league_tabs, verdict_chip %}
+{% block title %}Resultados · ScoreRecord{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Resultados <span class="h1-sub">últimos {{ days }} días</span></h1>
+  <p class="lede">Lo que pronosticamos antes de cada partido, contra lo que pasó.</p>
+</section>
+
+{{ league_tabs(tabs, '/resultados', {'dias': days}) }}
+<nav class="chips chips-small" aria-label="Periodo">
+  {% for w in windows %}<a class="chip{% if w == days %} is-active{% endif %}" href="{{ qs('/resultados', dias=w, liga=league) }}">{{ w }} días</a>{% endfor %}
+</nav>
+
+<section class="tiles">
+  {% for s in summary %}
+  <div class="tile">
+    <p class="tile-label">{{ s.label }}</p>
+    <p class="tile-value">{{ s.rate|pct }}</p>
+    <p class="tile-note">{{ s.hits }} de {{ s.n }} aciertos</p>
+  </div>
+  {% endfor %}
+</section>
+<p class="muted small">
+  {{ count }} partidos con pronóstico.
+  {% if pending %}{{ pending }} jugados aún sin resultado cargado.{% endif %}
+  {% if without_forecast %}{{ without_forecast }} sin pronóstico previo (no cuentan).{% endif %}
+  Acertar más de la mitad no significa ganarle al azar: compara contra el promedio de la liga en <a href="/desempeno">Desempeño</a>.
+</p>
+
+{% if not by_day %}
+<section class="empty"><h2>Sin resultados en este periodo</h2><p>Prueba con un periodo más largo.</p></section>
+{% endif %}
+
+{% for day, rows in by_day %}
+<section class="league-block">
+  <h2 class="league-title">{{ day|long_day }}</h2>
+  <div class="result-list">
+    {% for m in rows %}
+    <a class="result-row" href="/partido/{{ m.fixture_id }}">
+      <span class="result-league muted">{{ m.league_name }}</span>
+      <span class="result-teams"><span>{{ m.home }}</span><b class="score">{{ m.home_score }} – {{ m.away_score }}</b><span>{{ m.away }}</span></span>
+      <span class="result-verdicts">{% for v in m.verdicts %}{{ verdict_chip(v) }}{% endfor %}</span>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+{% endblock %}

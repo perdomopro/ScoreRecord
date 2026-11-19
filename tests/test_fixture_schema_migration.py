@@ -1,5 +1,7 @@
 import sqlite3
-from scorerecord.db import _run_lightweight_migrations, schema_version, init_db
+
+from scorerecord.db import _run_lightweight_migrations, init_db
+
 
 def test_migration_adds_columns_and_is_idempotent():
     conn = sqlite3.connect(":memory:")

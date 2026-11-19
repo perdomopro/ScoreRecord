@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, UTC
+from datetime import UTC, datetime
+
 
 @dataclass
 class SchemaReadiness:
@@ -101,18 +101,11 @@ def audit_leagues(conn: sqlite3.Connection, leagues: list[str]) -> dict:
         # fixtures
         future_fixture_count = 0
         unresolved_fixture_count = 0
-        prediction_rows_existing = 0
         if not fixture_schema_blocker:
             col = "league_code" if schema_readiness.fixture_has_league_code else "competition_id"
             future_fixture_count = conn.execute(f"SELECT count(*) FROM fixture WHERE {col} = ?", (league,)).fetchone()[0]
             unresolved_fixture_count = conn.execute(f"SELECT count(*) FROM fixture WHERE {col} = ? AND (home_id IS NULL OR away_id IS NULL)", (league,)).fetchone()[0]
             
-            if schema_readiness.prediction_has_fixture_id:
-                prediction_rows_existing = conn.execute(f"""
-                    SELECT count(*) FROM prediction p
-                    JOIN fixture f ON p.fixture_id = f.fixture_id
-                    WHERE f.{col} = ?
-                """, (league,)).fetchone()[0]
 
         # Calculate alias count and rating coverage based on future fixtures OR match history
         if unique_team_count > 0 or future_fixture_count > 0:

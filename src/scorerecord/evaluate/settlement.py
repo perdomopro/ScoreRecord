@@ -166,6 +166,11 @@ def _settlement_candidates(
         JOIN fixture f ON f.fixture_id = p.fixture_id
         WHERE f.home_score IS NOT NULL
           AND f.away_score IS NOT NULL
+          -- One forecast per fixture: the last run published for it. Daily
+          -- refreshes re-publish the same fixture many times before kickoff.
+          AND p.run_id = (
+            SELECT MAX(p2.run_id) FROM prediction p2 WHERE p2.fixture_id = p.fixture_id
+          )
           {already_settled_filter}
         ORDER BY p.fixture_id, p.run_id, p.market, p.selection
         """

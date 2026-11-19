@@ -89,6 +89,15 @@ def _git_sha(cwd: Path | None) -> str | None:
             timeout=5,
         )
     except Exception:
-        return None
+        return _version_file_sha(cwd)
     sha = result.stdout.strip()
-    return sha or None
+    return sha or _version_file_sha(cwd)
+
+
+def _version_file_sha(cwd: Path | None) -> str | None:
+    """Deploys copy a ``git archive``; the deploy script records the SHA in VERSION."""
+    try:
+        text = ((cwd or Path.cwd()) / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return text or None

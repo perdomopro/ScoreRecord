@@ -1,10 +1,19 @@
 import json
 import sqlite3
+from datetime import UTC, datetime
 
 import pytest
 
 from scorerecord.db import init_db
 from scorerecord.predict.fixtures import publish_fixture_predictions
+
+# Fixed clock: the seeded fixture kicks off on 2026-08-15, so the suite must not
+# depend on the real date.
+AS_OF = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+
+
+def _publish(conn: sqlite3.Connection, **kwargs: object):
+    return publish_fixture_predictions(conn, as_of_utc=AS_OF, **kwargs)
 
 
 @pytest.fixture
@@ -98,7 +107,7 @@ def test_league_aware_artifacts_epl(mem_db):
     _seed_history(mem_db, "FIFA World Cup", 30)
     _seed_fixture(mem_db, "f1", "EPL")
 
-    summary = publish_fixture_predictions(mem_db, league="EPL")
+    summary = _publish(mem_db, league="EPL")
     assert summary.predicted_fixtures == 1
 
     payload = _latest_artifact_payload(mem_db)
@@ -121,7 +130,7 @@ def test_league_aware_artifacts_world_cup(mem_db):
     _seed_history(mem_db, "FIFA World Cup", 30)
     _seed_fixture(mem_db, "f1", "WORLD_CUP_2026")
 
-    summary = publish_fixture_predictions(mem_db, league="WORLD_CUP_2026")
+    summary = _publish(mem_db, league="WORLD_CUP_2026")
     assert summary.predicted_fixtures == 1
 
     payload = _latest_artifact_payload(mem_db)
@@ -137,7 +146,7 @@ def test_default_prediction_scope_ignores_epl_fixtures(mem_db):
     _seed_fixture(mem_db, "epl_fixture", "EPL")
     _seed_fixture(mem_db, "wc_fixture", "WORLD_CUP_2026")
 
-    summary = publish_fixture_predictions(mem_db)
+    summary = _publish(mem_db)
 
     assert summary.predicted_fixtures == 1
     predicted = mem_db.execute("SELECT DISTINCT fixture_id FROM prediction").fetchall()
@@ -150,8 +159,8 @@ def test_different_artifact_ids(mem_db):
     _seed_history(mem_db, "FIFA World Cup", 30)
     _seed_fixture(mem_db, "f1", "EPL")
     _seed_fixture(mem_db, "f2", "WORLD_CUP_2026")
-    publish_fixture_predictions(mem_db, league="EPL")
-    publish_fixture_predictions(mem_db, league="WORLD_CUP_2026")
+    _publish(mem_db, league="EPL")
+    _publish(mem_db, league="WORLD_CUP_2026")
 
     rows = mem_db.execute("SELECT artifact_id FROM model_artifact").fetchall()
     assert len(rows) == 2

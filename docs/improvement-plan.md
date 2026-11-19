@@ -5,6 +5,104 @@ Está ordenado por dependencia: cada fase deja el sistema en un estado útil y
 habilita la siguiente. Las fases 1 y 2 son correcciones; las fases 3 a 5 son
 lo que lleva el proyecto "al siguiente nivel".
 
+## Correcciones tras la verificación (2026-11-19)
+
+| Hueco | Corrección |
+| --- | --- |
+| GUI visible en la red de casa | Escucha solo en la IP del tailnet (`SCORERECORD_GUI_HOST`); desde `192.168.100.195` se rechaza la conexión |
+| Deploy no borraba archivos | `deploy/apply_release.sh` con manifiesto; el primer deploy borró el código viejo y los units retirados |
+| Basura en el servidor | Movida a `~/scorerecord_attic_20261119` (no se borró nada que no estuviera en git) |
+| Sin alertas | `OnFailure=` en todos los units → `data/alerts.log`, check `service_failures` y envío opcional a `SCORERECORD_NOTIFY_URL`; probado con un unit que falla a propósito |
+| Respaldos de 2.8 GB | Comprimidos con gzip, 7 diarios + 4 semanales |
+| Base sin `VACUUM` | 357 MB → 257 MB |
+| `/estado` lento | Ya no corre el `integrity_check` (lo hace la corrida diaria) |
+| Fuera de temporada | `/partidos` marca las ligas sin partidos en 3 semanas y lo explica |
+| CI y lint | Hallazgos de `ruff` (salvo longitud de línea) corregidos; CI corre `ruff` y `pytest` en cada push |
+
+Sigue pendiente a propósito: dividir `cli.py`, renombrar `epl_pilot_refresh.py`,
+la deuda de longitud de línea, saltar el reentrenamiento sin datos nuevos y
+la cadencia de cuotas por cercanía al partido. Elegir dónde llegan las alertas
+(`SCORERECORD_NOTIFY_URL`) es decisión del dueño.
+
+## Verificación al 2026-11-19
+
+Revisión de lo ejecutado contra el servidor, la base de producción (solo
+lectura), el repositorio y GitHub. ✓ hecho y verificado · ◐ parcial · ✗ pendiente.
+
+| Punto | Estado | Evidencia o hueco |
+| --- | --- | --- |
+| 0.1 Respaldo | ✓ | `backup-db` diario con 7 copias rotativas y respaldos previos a cada deploy (2.8 GB en total) |
+| 0.2 Cuotas vacías | ✓ | Se corrigió en vez de detenerlo: cada corrida captura 15-17 partidos (Unibet, 1X2 y ambos anotan) |
+| 0.3 Exposición | ✓ | Funnel apagado (`No serve config`) |
+| 0.4 GUI y `/audit` | ◐ | `/audit` responde 404, pero la GUI escucha en `0.0.0.0:8765`: además del tailnet, la ve cualquier equipo de la red de casa |
+| 0.5 Limpieza del servidor | ✗ | Siguen `debug_test.py`, `fix.py`, `query_db.py`, `ingest.sh`, `scratch/`, `run*.sh`, `write*.sh`, `diagnostics_output.json`, `gui.log` |
+| 1.1 Resultados | ✓ | 839 de 855 partidos atrasados recibieron marcador. Football-Data publica algunas ligas con días de retraso (Brasileirao); 3 partidos siguen sin marcador (MLS 1, Argentina 2), probablemente reprogramados |
+| 1.2 Corte móvil | ◐ | Los artefactos ya entrenan hasta el último partido. El modelo se reajusta cada día aunque no haya datos nuevos (~2 min de CPU) |
+| 1.3 Snapshots | ✓ | Los 9 partidos jugados desde el deploy tienen pronóstico congelado; se liquidan cuando llega el marcador |
+| 1.4 Cuotas por liga | ◐ | Funciona por id de evento. Cada 3 horas en lugar de T-24h/T-6h/T-1h; el plan gratuito no da Más/Menos |
+| 1.5 Almacenamiento | ◐ | Poda y horizonte activos (22 mil filas de predicción). Nunca se ejecutó `VACUUM` (la base sigue en 341 MB) y los respaldos son copias completas sin nivel semanal |
+| 1.6 Ligas | ◐ | Slugs de Clausura y playoffs verificados. Falta mostrar "fuera de temporada" en la GUI |
+| 1.7 Health | ◐ | Siete checks nuevos en `db-health` y `/estado`. Falta `OnFailure=` con notificación |
+| 2 Higiene | ◐ | 281 tests en verde y archivos muertos fuera del repo. El CI nunca corrió: los 4 commits de las fases 1-3 no están en GitHub. `ruff` marca 212 hallazgos; `cli.py` creció a 1,759 líneas |
+| 3 GUI | ◐ | Todas las páginas en producción. Faltan el desglose por fuerza de señal y el estado de fuera de temporada; `/estado` tarda ~4 s por el `integrity_check` |
+| Deploy | ✗ | El deploy descomprime sobre la carpeta existente y nunca borra archivos: los units retirados (`daily`, `epl-pilot`, `preplay-odds`) se reinstalaron (deshabilitados) y `gui.py` hubo que borrarlo a mano |
+
+Primera lectura del modelo con 836 partidos reales (pronósticos del modelo
+congelado en junio, antes de la fase 1):
+
+| Mercado | Acierto | Log-loss modelo | Log-loss promedio de liga |
+| --- | --- | --- | --- |
+| Resultado | 45.7% | 1.050 | 1.084 |
+| Más/Menos 2.5 | 57.1% | 0.680 | 0.686 |
+| Ambos anotan | 56.3% | 0.681 | 0.681 |
+
+- El modelo elige al local en 78% de los partidos; el local ganó 42%. Casi
+  nunca elige empate (13 de 836) y hubo 28% de empates.
+- Subestima los goles de esta temporada: Más de 2.5 pronosticado 49.8%, real
+  53.8%; ambos anotan 53.2% contra 58.5%. Cuando dice ~35% de Más de 2.5, ocurre
+  48% de las veces.
+- Contra el mercado (26 partidos con cuotas): correlación 0.82, pero el modelo es
+  menos decidido (desviación 0.115 contra 0.155) y difiere 7 puntos en promedio;
+  las brechas mayores están en Brasileirao.
+
+## Estado al 2026-11-13 (tarde)
+
+Decisiones tomadas: GUI solo dentro del tailnet; stack ligero recomendado
+(Starlette + Jinja2); mostrar mercado y consenso junto al modelo; archivar el
+pipeline de apuestas en papel.
+
+| Fase | Estado |
+| --- | --- |
+| 0 Contención | Pendiente: son acciones en el servidor (ver [deployment.md](deployment.md)) |
+| 1.1 Resultados | Hecho. La fuente es Football-Data, no odds-api.io, que borra los eventos terminados |
+| 1.2 Corte móvil | Hecho. Elo una vez por corrida; el artefacto solo cambia cuando llegan resultados |
+| 1.3 Snapshots | Hecho, con 1X2 y una sola congelación por partido. La liquidación usa una predicción por partido |
+| 1.4 Cuotas | Hecho. Usa el id de evento del fixture y los bookmakers que la cuenta permite |
+| 1.5 Almacenamiento | Hecho: horizonte de 21 días, poda y respaldo rotativo. La base queda en ~320 MB, no en 150 |
+| 1.6 Ligas | Parcial: slugs extra verificados (Clausura, playoffs). Falta el estado de fuera de temporada en la GUI |
+| 1.7 Health | Hecho: siete checks nuevos en `db-health` y `/health`. Falta `OnFailure=` con notificación |
+| 2 Higiene | Hecho salvo los 256 avisos de `ruff` y la división de `cli.py` |
+| 3 GUI | Hecho en código (ver abajo); sin desplegar |
+| 4-5 | Sin empezar |
+
+Fase 3, implementada el 2026-11-19 en `src/scorerecord/web` (reemplaza a
+`gui.py`): Jinja2 sobre el servidor de la librería estándar (una sola dependencia
+nueva; Starlette y uvicorn no aportaban nada a un panel de solo lectura), rutas
+`/`, `/partido/<id>`, `/resultados`, `/desempeno`, `/estado` y API JSON, caché por
+ETag, gzip, modo oscuro, tooltips, matriz de marcadores (nueva tabla
+`prediction_score_grid`), lectura combinada modelo + mercado, comparación contra
+el promedio de cada liga y calibración. Ensayada en el homelab con una copia de la
+base en el puerto 8766.
+
+Las fases 1 y 2 están desplegadas desde el 2026-11-13. Se ensayaron completas en el homeserver sobre una
+copia de la base: 839 de 855 partidos jugados recibieron marcador, las cinco
+ligas quedaron con partidos futuros y el modelo entrenado hasta el último
+partido disponible.
+
+Primera medición real hacia adelante (913 partidos de agosto a noviembre,
+pronosticados por el modelo congelado en junio): Más/Menos 2.5 acierta 55.9%
+con log-loss 0.686; ambos anotan 55.3% y 0.685; 1X2 45.4% y 1.038.
+
 ## Principios
 
 - **Primero el circuito, luego el modelo.** Sin resultados frescos y sin

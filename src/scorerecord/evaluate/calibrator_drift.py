@@ -37,14 +37,21 @@ def monitor_calibrator_drift(
     threshold: float = 0.10,
     cwd: Path | None = None,
 ) -> CalibratorDriftSummary:
-    run_ids = _latest_prediction_runs_with_calibrators(conn, limit=2)
-    previous_run_id = run_ids[1] if len(run_ids) > 1 else None
-    current_run_id = run_ids[0] if run_ids else None
-
+    # Compare the two latest runs of the same calibrator scope (league). Runs
+    # of different leagues have unrelated coefficients and must not be compared.
+    previous_run_id: int | None = None
+    current_run_id: int | None = None
     comparisons = []
-    if previous_run_id is not None and current_run_id is not None:
-        previous = _calibrator_artifacts(conn, previous_run_id)
-        current = _calibrator_artifacts(conn, current_run_id)
+    for scope, run_ids in _latest_runs_by_scope(conn, limit=2).items():
+        if len(run_ids) < 2:
+            if current_run_id is None and run_ids:
+                current_run_id = run_ids[0]
+            continue
+        scope_current, scope_previous = run_ids[0], run_ids[1]
+        if current_run_id is None or scope_current > current_run_id or previous_run_id is None:
+            current_run_id, previous_run_id = scope_current, scope_previous
+        previous = _calibrator_artifacts(conn, scope_previous)
+        current = _calibrator_artifacts(conn, scope_current)
         for market in sorted(set(previous) & set(current)):
             prev = previous[market]
             curr = current[market]
@@ -53,8 +60,9 @@ def monitor_calibrator_drift(
             comparisons.append(
                 {
                     "market": market,
-                    "previous_run_id": previous_run_id,
-                    "current_run_id": current_run_id,
+                    "scope": scope,
+                    "previous_run_id": scope_previous,
+                    "current_run_id": scope_current,
                     "a_previous": prev["a"],
                     "a_current": curr["a"],
                     "b_previous": prev["b"],
@@ -100,25 +108,41 @@ def monitor_calibrator_drift(
     return summary
 
 
-def _latest_prediction_runs_with_calibrators(
+def _latest_runs_by_scope(
     conn: sqlite3.Connection,
     *,
     limit: int,
-) -> list[int]:
+    scan_runs: int = 400,
+) -> dict[str, list[int]]:
     rows = conn.execute(
         """
-        SELECT DISTINCT ir.run_id
+        SELECT ir.run_id, dq.details_json
         FROM ingest_run ir
         JOIN data_quality dq ON dq.run_id = ir.run_id
         WHERE ir.job_name = 'predict-fixtures'
           AND ir.status = 'succeeded'
           AND dq.check_name = 'calibrator_artifact'
+          AND ir.run_id IN (
+            SELECT run_id FROM ingest_run
+            WHERE job_name = 'predict-fixtures' AND status = 'succeeded'
+            ORDER BY run_id DESC
+            LIMIT ?
+          )
         ORDER BY ir.run_id DESC
-        LIMIT ?
         """,
-        (limit,),
+        (scan_runs,),
     ).fetchall()
-    return [int(row["run_id"]) for row in rows]
+    by_scope: dict[str, list[int]] = {}
+    for row in rows:
+        scope = "unscoped"
+        if row["details_json"]:
+            details = json.loads(str(row["details_json"]))
+            scope = str(details.get("calibrator_scope") or "unscoped")
+        runs = by_scope.setdefault(scope, [])
+        run_id = int(row["run_id"])
+        if run_id not in runs and len(runs) < limit:
+            runs.append(run_id)
+    return by_scope
 
 
 def _calibrator_artifacts(conn: sqlite3.Connection, run_id: int) -> dict[str, dict[str, float]]:

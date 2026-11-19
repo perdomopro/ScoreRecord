@@ -1,5 +1,6 @@
 [Unit]
 Description=ScoreRecord daily club forecast refresh
+OnFailure=scorerecord-notify@%n.service
 After=network-online.target
 
 [Service]
@@ -10,7 +11,7 @@ Environment=OMP_NUM_THREADS=1
 Environment=OPENBLAS_NUM_THREADS=1
 Environment="SCORERECORD_DAILY_CLUB_LEAGUES=LIGA_MX MLS EPL ARGENTINA BRASILEIRAO"
 Environment=SCORERECORD_DAILY_CLUB_MAX_REQUESTS=1
-MemoryMax=450M
+MemoryMax=600M
 Nice=10
 IOSchedulingClass=idle
 ExecStart=/bin/bash /home/adrian/scorerecord/scripts/run_daily_club_forecast.sh

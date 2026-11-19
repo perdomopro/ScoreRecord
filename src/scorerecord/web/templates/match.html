@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% from "macros.html" import status_badge, verdict_chip %}
+{% block title %}{{ m.home }} vs {{ m.away }} · ScoreRecord{% endblock %}
+{% block content %}
+{% set p = m.pick %}
+<p class="crumb"><a href="{{ qs('/partidos', fecha=m.kickoff_local.date().isoformat()) }}">‹ {{ m.kickoff_local.date()|long_day }}</a></p>
+
+<section class="match-head">
+  <p class="eyebrow">{{ m.league_name }} · {{ m.kickoff_local.date()|day_label(today) }} {{ m.kickoff_local|hhmm }} {{ status_badge(m) }}</p>
+  <h1 class="fixture">
+    <span>{{ m.home }}</span>
+    {% if m.finished %}<span class="fixture-score">{{ m.home_score }} – {{ m.away_score }}</span>{% else %}<span class="vs">vs</span>{% endif %}
+    <span>{{ m.away }}</span>
+  </h1>
+</section>
+
+{% if not m.result_probs %}
+<section class="card"><p>Este partido no tiene un pronóstico publicado antes de su inicio.</p></section>
+{% else %}
+
+<section class="card lectura">
+  <div>
+    <p class="eyebrow">Lectura</p>
+    <p class="lectura-pick">{{ p.label }} <b>{{ p.prob|pct }}</b></p>
+    <p class="muted">{{ p.strength }} ·
+      {% if m.uses_market %}combina el modelo ({{ ((1 - market_weight) * 100)|round|int }}%) con las cuotas de {{ m.market_meta.bookmaker }} ({{ (market_weight * 100)|round|int }}%).
+      {% else %}solo modelo: aún no hay cuotas para este partido.{% endif %}
+    </p>
+  </div>
+  {% if m.finished %}
+  <div class="lectura-verdicts">{% for v in m.verdicts %}{{ verdict_chip(v) }}{% endfor %}</div>
+  {% endif %}
+</section>
+
+<div class="grid-2">
+<section class="card">
+  <h2>Resultado</h2>
+  {{ charts.result_bar(m.result_probs, m.home, m.away) }}
+  <table class="compare">
+    <caption class="sr-only">Probabilidades del resultado por fuente</caption>
+    <thead><tr><th scope="col"></th><th scope="col">{{ m.home }}</th><th scope="col">Empate</th><th scope="col">{{ m.away }}</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Modelo</th><td>{{ m.model.home|pct(1) }}</td><td>{{ m.model.draw|pct(1) }}</td><td>{{ m.model.away|pct(1) }}</td></tr>
+      {% if m.uses_market %}
+      <tr><th scope="row">Mercado</th><td>{{ m.market.home|pct(1) }}</td><td>{{ m.market.draw|pct(1) }}</td><td>{{ m.market.away|pct(1) }}</td></tr>
+      <tr class="is-strong"><th scope="row">Combinado</th><td>{{ m.result_probs.home|pct(1) }}</td><td>{{ m.result_probs.draw|pct(1) }}</td><td>{{ m.result_probs.away|pct(1) }}</td></tr>
+      {% endif %}
+      {% if m.base %}<tr class="muted"><th scope="row">Promedio liga</th><td>{{ m.base.home|pct(1) }}</td><td>{{ m.base.draw|pct(1) }}</td><td>{{ m.base.away|pct(1) }}</td></tr>{% endif %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Goles</h2>
+  {% if m.xg %}
+  <p class="xg-line"><span>{{ m.home }} <b>{{ '%.2f'|format(m.xg[0]) }}</b></span><span class="muted">goles esperados</span><span><b>{{ '%.2f'|format(m.xg[1]) }}</b> {{ m.away }}</span></p>
+  {% endif %}
+  <ul class="meters">
+    {% if m.model.over15 is defined %}<li><span>Más de 1.5 goles</span>{{ charts.meter(m.model.over15, None, 'Más de 1.5 goles') }}<b>{{ m.model.over15|pct }}</b></li>{% endif %}
+    <li><span>Más de 2.5 goles</span>{{ charts.meter(m.model.over25, m.base.over25 if m.base else None, 'Más de 2.5 goles') }}<b>{{ m.model.over25|pct }}</b></li>
+    {% if m.model.over35 is defined %}<li><span>Más de 3.5 goles</span>{{ charts.meter(m.model.over35, None, 'Más de 3.5 goles') }}<b>{{ m.model.over35|pct }}</b></li>{% endif %}
+    <li><span>Ambos anotan</span>{{ charts.meter(m.btts_prob, m.base.btts if m.base else None, 'Ambos anotan') }}<b>{{ m.btts_prob|pct }}</b></li>
+  </ul>
+  <p class="muted small">La marca vertical es el promedio de la liga en los últimos dos años.
+    {% if m.market and m.market.btts is defined %}«Ambos anotan» combina modelo ({{ m.model.btts|pct }}) y mercado ({{ m.market.btts|pct }}).{% endif %}</p>
+</section>
+</div>
+
+{% if m.grid %}
+<section class="card">
+  <h2>Marcadores</h2>
+  <div class="scores">
+    <div class="heat-wrap">{{ charts.score_heatmap(m.grid, m.home, m.away) }}</div>
+    <ol class="top-scores">
+      {% for score, prob in m.top_scores %}<li><span>{{ m.home }} {{ score }} {{ m.away }}</span><b>{{ prob|pct(1) }}</b></li>{% endfor %}
+    </ol>
+  </div>
+</section>
+{% endif %}
+{% endif %}
+
+<div class="grid-2">
+{% for name, form, elo in ((m.home, form_home, elo_home), (m.away, form_away, elo_away)) %}
+<section class="card">
+  <h2>{{ name }}</h2>
+  <p class="eyebrow">Últimos partidos de liga</p>
+  {% if form %}
+  <ol class="form">
+    {% for f in form %}<li class="form-{{ f.result }}" data-tip="{{ f.day }} · {{ 'vs' if f.home else 'en' }} {{ f.opponent }} · {{ f.score }}"><span aria-hidden="true">{{ f.result }}</span><span class="sr-only">{{ {'G': 'Ganó', 'E': 'Empató', 'P': 'Perdió'}[f.result] }} {{ 'contra' if f.home else 'en casa de' }} {{ f.opponent }} {{ f.score }}</span></li>{% endfor %}
+  </ol>
+  <p class="muted small">G gana · E empata · P pierde · el más reciente a la izquierda</p>
+  {% else %}<p class="muted">Sin partidos de liga registrados.</p>{% endif %}
+  {% if elo %}
+  <p class="eyebrow">Elo</p>
+  <p class="elo"><b>{{ elo[-1]|round|int }}</b> {{ charts.sparkline(elo) }}</p>
+  {% endif %}
+</section>
+{% endfor %}
+</div>
+
+{% if h2h %}
+<section class="card">
+  <h2>Enfrentamientos recientes</h2>
+  <table class="plain">
+    <thead><tr><th scope="col">Fecha</th><th scope="col">Local</th><th scope="col">Marcador</th><th scope="col">Visitante</th></tr></thead>
+    <tbody>{% for g in h2h %}<tr><td>{{ g.day }}</td><td>{{ g.home }}</td><td class="num">{{ g.home_score }} – {{ g.away_score }}</td><td>{{ g.away }}</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if m.result_probs %}
+<details class="card about">
+  <summary>Acerca de este pronóstico</summary>
+  <dl class="kv">
+    <dt>Modelo</dt><dd>{{ m.model_version }}</dd>
+    {% if provenance %}
+    <dt>Entrenado con partidos hasta</dt><dd>{{ provenance.trained_until }}</dd>
+    <dt>Partidos de entrenamiento</dt><dd>{{ provenance.training_rows }}</dd>
+    {% endif %}
+    <dt>Publicado</dt><dd>{{ m.generated_utc }} (corrida {{ m.run_id }})</dd>
+    {% if m.market_meta %}<dt>Cuotas</dt><dd>{{ m.market_meta.bookmaker }}, {{ m.market_meta.snapshot_utc }} UTC, sin margen de la casa</dd>{% endif %}
+    {% if m.snapshots %}<dt>Congelado antes del partido</dt><dd>{% for s in m.snapshots %}{{ s.market }} {{ s.selection }} {{ s.prob|pct(1) }}{% if s.settled %} → {{ 'acierto' if s.correct else 'fallo' }}{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</dd>{% endif %}
+  </dl>
+  <p class="muted small">Datos en JSON: <a href="/api/partido/{{ m.fixture_id }}">/api/partido/{{ m.fixture_id }}</a></p>
+</details>
+{% endif %}
+{% endblock %}

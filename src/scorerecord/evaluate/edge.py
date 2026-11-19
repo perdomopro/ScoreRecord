@@ -443,19 +443,19 @@ def _devig_market(selections: dict[str, sqlite3.Row]) -> dict[str, float] | None
             float(selections["draw"]["decimal_odds"]),
             float(selections["away"]["decimal_odds"]),
         )
-        return dict(zip(("home", "draw", "away"), probs))
+        return dict(zip(("home", "draw", "away"), probs, strict=True))
     if {"over", "under"}.issubset(keys):
         probs = devig_binary(
             float(selections["over"]["decimal_odds"]),
             float(selections["under"]["decimal_odds"]),
         )
-        return dict(zip(("over", "under"), probs))
+        return dict(zip(("over", "under"), probs, strict=True))
     if {"yes", "no"}.issubset(keys):
         probs = devig_binary(
             float(selections["yes"]["decimal_odds"]),
             float(selections["no"]["decimal_odds"]),
         )
-        return dict(zip(("yes", "no"), probs))
+        return dict(zip(("yes", "no"), probs, strict=True))
     return None
 
 

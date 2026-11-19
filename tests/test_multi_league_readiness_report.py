@@ -1,5 +1,7 @@
 import sqlite3
+
 from scorerecord.ingest.readiness import audit_leagues
+
 
 def test_no_data_returns_not_supported():
     conn = sqlite3.connect(":memory:")

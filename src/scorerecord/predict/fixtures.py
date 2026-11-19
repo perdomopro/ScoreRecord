@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from scorerecord.evaluate.goal_markets import _walk_forward_predictions, build_goal_markets
@@ -31,6 +31,8 @@ from scorerecord.runs import ingest_run, record_quality
 from scorerecord.time_utils import parse_kickoff_utc
 
 DEFAULT_OU_LINES = (1.5, 2.5, 3.5)
+GRID_MAX_GOALS = 6
+CLUB_TRAINING_POLICY_ID = "club-rolling-v1"
 CLUB_TOURNAMENTS = set(CLUB_FORECAST_LEAGUES)
 
 
@@ -77,21 +79,37 @@ def publish_fixture_predictions(
     exact_top_n: int = 5,
     cwd: Path | None = None,
     league: str | None = None,
+    as_of_utc: datetime | None = None,
+    horizon_days: int | None = None,
 ) -> FixturePublishSummary:
+    """Fit the league-scoped model and publish predictions for unstarted fixtures.
+
+    Club leagues train on every match played before the run date (rolling
+    cutoff). The World Cup scope keeps its frozen pre-tournament cutoff.
+    ``horizon_days`` limits publishing to fixtures kicking off soon, so far-off
+    fixtures are not re-inserted on every daily run.
+    """
+    as_of = as_of_utc or datetime.now(UTC)
     artifact_league = league or "WORLD_CUP_2026"
     features = load_match_features(conn)
     if artifact_league != "WORLD_CUP_2026":
         training_scope = "club"
         training_tournament = artifact_league
+        policy_id = CLUB_TRAINING_POLICY_ID
+        cutoff = as_of.date().isoformat()
         training_matches = [
             match
             for match in features
-            if match.tournament == artifact_league
-            and match.match_date < TRAINING_POLICY.trained_until
+            if match.tournament == artifact_league and match.match_date[:10] < cutoff
         ]
+        # Recorded cutoff is the day after the last training match, so the
+        # artifact id only changes when new results actually arrive.
+        trained_until = _day_after_last_match(training_matches, fallback=cutoff)
     else:
         training_scope = "international"
         training_tournament = "international_all"
+        policy_id = TRAINING_POLICY.policy_id
+        trained_until = TRAINING_POLICY.trained_until
         training_matches = [
             match
             for match in features
@@ -101,24 +119,26 @@ def publish_fixture_predictions(
 
     training_policy_dict = {
         "league_code": artifact_league,
+        "policy_id": policy_id,
         "training_scope": training_scope,
         "training_tournament": training_tournament,
         "training_rows": len(training_matches),
-        "trained_until": TRAINING_POLICY.trained_until,
+        "trained_until": trained_until,
         "calibrator_scope": training_tournament,
     }
 
     model = DixonColes().fit(training_matches)
     calibrators = _fit_goal_market_calibrators(training_matches, ou_lines=ou_lines)
     expected_markets = [f"OU{line}" for line in ou_lines] + ["BTTS"]
-    generated_utc = datetime.now(UTC).isoformat(timespec="seconds")
+    generated_utc = as_of.isoformat(timespec="seconds")
+    horizon_end = as_of + timedelta(days=horizon_days) if horizon_days is not None else None
 
     with ingest_run(conn, "predict-fixtures", source="fixture", cwd=cwd) as run_id:
         model_artifact = build_model_artifact(
             conn,
             prediction_run_id=run_id,
             calibration_coefficients=_calibration_coefficients(
-                calibrators, expected_markets, training_tournament, TRAINING_POLICY.trained_until
+                calibrators, expected_markets, training_tournament, trained_until
             ),
             training_policy=training_policy_dict,
             training_rows=len(training_matches),
@@ -146,7 +166,7 @@ def publish_fixture_predictions(
         else:
             query += " WHERE league_code = ? "
         params.append(artifact_league)
-        query += " ORDER BY kickoff_local, fixture_id"
+        query += " ORDER BY COALESCE(kickoff_utc, kickoff_local), fixture_id"
         fixtures = conn.execute(query, params).fetchall()
         predicted_fixtures = 0
         skipped_fixtures = 0
@@ -170,9 +190,13 @@ def publish_fixture_predictions(
             if _fixture_started(fixture, generated_utc):
                 skipped_fixtures += 1
                 continue
+            if horizon_end is not None and _fixture_beyond(fixture, horizon_end):
+                skipped_fixtures += 1
+                continue
             predicted_fixtures += 1
             match = _fixture_as_match_feature(conn, fixture)
             score_grid = model.score_matrix(match)
+            _insert_score_grid(conn, run_id, fixture["fixture_id"], score_grid)
             rows = _prediction_rows(
                 fixture_id=fixture["fixture_id"],
                 score_grid=score_grid,
@@ -222,6 +246,7 @@ def publish_fixture_predictions(
                     "training_policy": training_policy_dict,
                     "training_rows": len(training_matches),
                     "publish_policy": "forward_only_unstarted_fixtures",
+                    "horizon_days": horizon_days,
                 },
                 sort_keys=True,
             ),
@@ -265,12 +290,12 @@ def _calibration_coefficients(
 
 
 def _fixture_as_match_feature(conn: sqlite3.Connection, fixture: sqlite3.Row) -> MatchFeature:
-    kickoff = fixture["kickoff_local"] or "2026-01-01"
+    kickoff = fixture["kickoff_utc"] or fixture["kickoff_local"] or "2026-01-01"
     home_id = int(fixture["home_id"])
     away_id = int(fixture["away_id"])
     elo_home = _latest_elo(conn, home_id)
     elo_away = _latest_elo(conn, away_id)
-    
+
     league_code = fixture["league_code"]
     if league_code == "WORLD_CUP_2026":
         neutral = 1
@@ -294,6 +319,59 @@ def _fixture_as_match_feature(conn: sqlite3.Connection, fixture: sqlite3.Row) ->
         elo_home_pre=elo_home if elo_home is not None else 1500.0,
         elo_away_pre=elo_away if elo_away is not None else 1500.0,
     )
+
+
+def score_grid_summary(score_grid: object, *, max_goals: int = GRID_MAX_GOALS) -> dict:
+    """Expected goals from the full grid plus a truncated, rounded grid for display."""
+    import numpy as np
+
+    grid = np.asarray(score_grid, dtype=float)
+    grid = grid / grid.sum()
+    goals = np.arange(grid.shape[0])
+    size = min(max_goals + 1, grid.shape[0])
+    return {
+        "xg_home": float((grid.sum(axis=1) * goals).sum()),
+        "xg_away": float((grid.sum(axis=0) * goals).sum()),
+        "max_goals": size - 1,
+        "grid": [[round(float(value), 5) for value in row[:size]] for row in grid[:size]],
+    }
+
+
+def _insert_score_grid(
+    conn: sqlite3.Connection, run_id: int, fixture_id: str, score_grid: object
+) -> None:
+    summary = score_grid_summary(score_grid)
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO prediction_score_grid (
+          run_id, fixture_id, xg_home, xg_away, max_goals, grid_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id,
+            fixture_id,
+            summary["xg_home"],
+            summary["xg_away"],
+            summary["max_goals"],
+            json.dumps(summary["grid"], separators=(",", ":")),
+        ),
+    )
+
+
+def _day_after_last_match(matches: list[MatchFeature], *, fallback: str) -> str:
+    if not matches:
+        return fallback
+    last = max(match.match_date[:10] for match in matches)
+    return (date.fromisoformat(last) + timedelta(days=1)).isoformat()
+
+
+def _fixture_beyond(fixture: sqlite3.Row, horizon_end: datetime) -> bool:
+    kickoff_utc = parse_kickoff_utc(
+        kickoff_utc=fixture["kickoff_utc"],
+        kickoff_local=fixture["kickoff_local"],
+    )
+    return kickoff_utc is not None and kickoff_utc > horizon_end
 
 
 def _fixture_started(fixture: sqlite3.Row, generated_utc: str) -> bool:

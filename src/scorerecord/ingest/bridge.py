@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from scorerecord.aliases import get_or_create_team, normalize_key, normalize_name
 from scorerecord.ingest.football_data import football_data_season_range
+from scorerecord.ingest.results import drop_promoted_duplicates
 
 
 @dataclass(frozen=True)
@@ -324,6 +325,13 @@ def bridge_club_history(
             matches_updated += 1
         else:
             if not dry_run:
+                drop_promoted_duplicates(
+                    conn,
+                    tournament=league,
+                    home_id=home_id,
+                    away_id=away_id,
+                    match_date=match_date,
+                )
                 conn.execute(
                     """
                     INSERT INTO match_history (

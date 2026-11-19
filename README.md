@@ -5,18 +5,18 @@ football/soccer forecasts. It combines league-scoped historical data, Elo,
 Dixon-Coles goal models, calibration, fixture provenance, health checks, and a
 lightweight GUI for match forecasts.
 
-Repository: https://github.com/Perdomazo/ScoreRecord
+Repository: https://github.com/perdomopro/ScoreRecord
 
 The public GUI is deliberately not a betting app: it does not show EV, Kelly,
 stake sizing, or "best bet" language in the forecast view.
 
 ## Status (2026-11-13)
 
-The daily pipeline runs on the homeserver, but a full audit found that the
-feedback loop is broken: club results are not ingested, the training cutoff is
-frozen at 2026-06-11, hourly odds capture targets the World Cup slug, and
-forecast snapshots are not frozen. Forecasts are published every day from a
-stale model and are never settled.
+A full audit found the production feedback loop open: no club results, a
+training cutoff frozen at 2026-06-11, odds capture pointed at the World Cup, and
+no frozen forecasts. The code in this branch closes that loop (improvement plan
+phases 1 and 2) and was rehearsed end to end on a copy of the production
+database. It is **not deployed yet**; the homeserver still runs the old code.
 
 - What is wrong and the evidence: [docs/critical-review.md](docs/critical-review.md)
 - What to do about it, in order: [docs/improvement-plan.md](docs/improvement-plan.md)
@@ -24,9 +24,11 @@ stale model and are never settled.
 ## How Production Runs
 
 ```text
-05:35 daily   club-refresh   fixtures (odds-api.io) -> Elo -> Dixon-Coles + Platt -> prediction
-hourly        odds           fetch-odds -> odds_snapshots
-23:30 daily   postmatch      settle-fixtures -> settle-forecast-snapshots -> compute-clv
+05:35 daily   club-refresh   backup -> results (Football-Data) -> Elo -> fixtures (odds-api.io)
+                             -> Dixon-Coles + Platt -> predictions (next 21 days)
+                             -> freeze next 36 h -> settle -> prune -> db-health
+every 3 h     odds           fetch-odds for fixtures in the next 48 h -> odds_snapshots
+23:30 daily   postmatch      results -> settle-fixtures -> settle-forecast-snapshots
 Sun 09:00     weekly         performance report, goal-market gates, calibrator drift
 always on     gui            read-only dashboard on port 8765
 ```
@@ -53,21 +55,20 @@ homeserver:
 - Pre/post-match Elo history for leakage-free walk-forward features.
 - Basic run tracking and data quality logging.
 - League-scoped model artifacts for club forecast pilots.
-- Forecast-only GUI at `/` and `/today`, with operational checks in `/health`.
+- Read-only dashboard (`src/scorerecord/web`): matchday, match detail, results,
+  performance against league averages and the market, status, and a JSON API.
 - Secondary result diagnostics for 1X2 and double chance, kept out of the
   principal OU2.5/BTTS forecast selector.
 - CLI entry points that can run locally or on the homeserver.
 
 ## Quick Start
 
-Python 3.11 or newer. On Windows also install `tzdata`; the standard library has
-no timezone database there and 36 tests fail without it.
+Python 3.11 or newer.
 
 ```powershell
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
-pip install tzdata
 scorerecord init-db
 scorerecord migrate-db
 scorerecord db-health
@@ -112,32 +113,33 @@ scorerecord gui --host 127.0.0.1 --port 8765
 scorerecord db-summary
 ```
 
-The read-only GUI opens on a forecast-only landing page. It reads from `fixture`,
-`prediction`, `team`, and `model_artifact`, not from paper recommendations:
+## Dashboard
 
-```text
-http://127.0.0.1:8765/
-http://127.0.0.1:8765/today
-http://127.0.0.1:8765/health
-http://127.0.0.1:8765/match/<fixture_id>
-```
+`scorerecord gui` serves a read-only dashboard (package `src/scorerecord/web`,
+Jinja2 templates, no build step). It opens the database in read-only mode and
+never fits a model at request time.
 
-The forecast view is deliberately `FORECAST_ONLY`: it shows calibrated goal-market
-probabilities, principal forecasts by market family, model-implied prices, and
-informational odds coverage for OU2.5/BTTS on match pages. Match pages also show
-pre-kickoff horizon coverage (`T24H`, `T6H`, `T1H`, `T15M`, and
-`LAST_PRE_KICKOFF`) derived read-only from `odds_snapshots`; `LAST_PRE_KICKOFF`
-is not official closing odds. Use `odds-coverage-summary` to aggregate those
-horizon observations into operational data-quality grades (`READY_FOR_ANALYSIS`,
-`PARTIAL_COVERAGE`, `WEAK_COVERAGE`, `NO_ODDS`) by fixture and market. A ready
-grade means the captured rows are sufficient for later analysis only; it does
-not change the forecast-only status of the product. The confidence label is model
-magnitude only and is not validated against World Cup results or market prices.
-The forecast dashboard is served from `/today`; operational model and server checks live in `/health`.
-Match cards may show secondary result/double-chance diagnostics from the same
-score matrix, but those are labeled as calibration-in-review and are not
-forecast principals. Corners are not shown until provider stats coverage and a
-separate benchmark pass.
+| Route | Shows |
+| --- | --- |
+| `/` | Landing page: project title, description, repository link, and buttons to the sections |
+| `/partidos` | Next matchday with fixtures, grouped by league: 1X2 bar, the most likely outcome, expected goals, and goals / both-teams-score labels highlighted when they differ from the league average. `?fecha=YYYY-MM-DD&liga=EPL` |
+| `/partido/<fixture_id>` | Model, market, and blended probabilities; league averages; expected goals; score heatmap; recent form; Elo; head-to-head; provenance |
+| `/resultados` | Pre-kickoff forecast against the final score, with hits per market. `?dias=7`, `14`, `30` or `90` |
+| `/desempeno` | Log-loss against the league base rate and against the market, calibration, and monthly trend |
+| `/estado` | Health checks and latest job runs |
+| `/api/partidos`, `/api/partido/<id>`, `/api/desempeno` | The same data as JSON |
+
+When pre-kickoff odds exist, the headline 1X2 and both-teams-score numbers blend
+model and market by logarithmic pooling with a provisional market weight of 0.7
+(`MARKET_WEIGHT` in `web/data.py`); otherwise they are the model alone. League
+averages are the frequencies in that league over the 730 days before each match.
+Old URLs (`/today` and `/signals` to `/partidos`, `/match/<id>`, `/health`, `/performance`, `/history`) redirect;
+the paper-betting `/audit` view is retired.
+
+`odds-coverage-summary` still grades odds capture per fixture and market
+(`READY_FOR_ANALYSIS`, `PARTIAL_COVERAGE`, `WEAK_COVERAGE`, `NO_ODDS`) from the
+CLI. Corners are not shown until provider stats coverage and a separate
+benchmark pass.
 The older audit route is kept hidden for legacy review only.
 Use `SCORERECORD_DISPLAY_TZ` to change the display timezone; it defaults to
 `America/Mexico_City`.
@@ -189,7 +191,7 @@ The strongest early path is:
 4. Frozen model manifests and settlement metrics for finished fixtures.
 5. Raw odds ingestion, de-vig, and edge analysis.
 6. Paper-only recommendations with small capped Kelly.
-7. Forecast-only GUI for World Cup probabilities; paper/edge rows stay in `/audit`.
+7. Forecast-only dashboard; the paper/edge audit view has been retired.
 8. CLV tracking before any real-money staking.
 9. Props, corners, cards, and player shots only after confidence badges and coverage checks exist.
 

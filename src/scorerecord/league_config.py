@@ -12,6 +12,13 @@ class LeagueConfig:
     odds_api_io_sport: str
     odds_api_io_slug: str
     football_data_alias: str | None = None
+    # Extra provider slugs for other phases of the same competition (second
+    # half-season, playoffs). Verified against odds-api.io /leagues.
+    odds_api_io_extra_slugs: tuple[str, ...] = ()
+
+    @property
+    def odds_api_io_slugs(self) -> tuple[str, ...]:
+        return (self.odds_api_io_slug, *self.odds_api_io_extra_slugs)
 
 
 CLUB_FORECAST_LEAGUES = (
@@ -60,6 +67,7 @@ LEAGUE_CONFIGS: dict[str, LeagueConfig] = {
         odds_api_io_sport="football",
         odds_api_io_slug="mexico-liga-mx-apertura",
         football_data_alias="LIGA_MX",
+        odds_api_io_extra_slugs=("mexico-liga-mx-clausura",),
     ),
     "MLS": LeagueConfig(
         code="MLS",
@@ -69,6 +77,7 @@ LEAGUE_CONFIGS: dict[str, LeagueConfig] = {
         odds_api_io_sport="football",
         odds_api_io_slug="usa-mls",
         football_data_alias="MLS",
+        odds_api_io_extra_slugs=("usa-mls-playoffs",),
     ),
     "ARGENTINA": LeagueConfig(
         code="ARGENTINA",
@@ -78,6 +87,7 @@ LEAGUE_CONFIGS: dict[str, LeagueConfig] = {
         odds_api_io_sport="football",
         odds_api_io_slug="argentina-primera-lpf-clausura",
         football_data_alias="ARG",
+        odds_api_io_extra_slugs=("argentina-primera-lpf-clausura-playoffs",),
     ),
     "BRASILEIRAO": LeagueConfig(
         code="BRASILEIRAO",

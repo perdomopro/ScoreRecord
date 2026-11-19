@@ -87,7 +87,7 @@ class OneXTwoBaseline:
         for _ in range(self.epochs):
             grad_w = [[0.0] * n_features for _ in range(N_CLASSES)]
             grad_b = [0.0] * N_CLASSES
-            for row, label in zip(features, outcomes):
+            for row, label in zip(features, outcomes, strict=True):
                 scores = [
                     bias[class_index]
                     + sum(weights[class_index][feature_index] * row[feature_index]

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ScoreRecord{% endblock %}</title>
+  <meta name="description" content="Pronósticos de fútbol con modelos estadísticos, comparados contra el mercado y el promedio de cada liga.">
+  <script>
+    try { var t = localStorage.getItem("sr-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+</head>
+<body class="page-{{ page|default('other') }}">
+  <a class="skip" href="#contenido">Saltar al contenido</a>
+  {% block topbar %}
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/" aria-label="ScoreRecord, inicio">Score<span>Record</span></a>
+      <nav class="mainnav" aria-label="Principal">
+        <a href="/partidos" {% if page in ('home', 'match') %}aria-current="page"{% endif %}>Partidos</a>
+        <a href="/resultados" {% if page == 'results' %}aria-current="page"{% endif %}>Resultados</a>
+        <a href="/desempeno" {% if page == 'performance' %}aria-current="page"{% endif %}>Desempeño</a>
+      </nav>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Cambiar entre tema claro y oscuro">
+        <span aria-hidden="true">◐</span>
+      </button>
+    </div>
+  </header>
+  {% endblock %}
+  {% block notice %}
+  <div class="notice" data-notice hidden>
+    <p>Pronósticos con fines recreativos y de análisis. No son asesoría ni una recomendación de apuesta.</p>
+    <button type="button" data-notice-close>Entendido</button>
+  </div>
+  {% endblock %}
+  <main id="contenido" class="wrap">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="footer">
+    <div class="wrap">
+      <p>ScoreRecord estima probabilidades a partir de resultados históricos y, cuando hay cuotas, las combina con las del mercado. Los pronósticos tienen incertidumbre: úsalos como análisis y entretenimiento, no como una forma de ganar dinero.</p>
+      <p class="footer-links">
+        <a href="/estado">Estado del sistema</a>
+        <a href="/api/partidos">API JSON</a>
+        <a href="https://github.com/perdomopro/ScoreRecord" rel="noreferrer">Código</a>
+      </p>
+    </div>
+  </footer>
+  <div class="tip" role="tooltip" data-tip-box hidden></div>
+  <script src="/static/app.js?v={{ static_version }}" defer></script>
+</body>
+</html>

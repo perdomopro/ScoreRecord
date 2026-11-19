@@ -6,7 +6,6 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_FIXTURE_INCLUDES = "participants;league;venue;state;scores"
 
 

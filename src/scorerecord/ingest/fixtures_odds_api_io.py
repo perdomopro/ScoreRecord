@@ -19,12 +19,18 @@ def _get_event_id(event: dict) -> str | None:
     return None
 
 def _get_home_name(event: dict) -> str | None:
-    if "home" in event and isinstance(event["home"], str): return event["home"]
-    if "homeTeam" in event and isinstance(event["homeTeam"], str): return event["homeTeam"]
-    if "home_team" in event and isinstance(event["home_team"], str): return event["home_team"]
+    if "home" in event and isinstance(event["home"], str):
+        return event["home"]
+    if "homeTeam" in event and isinstance(event["homeTeam"], str):
+        return event["homeTeam"]
+    if "home_team" in event and isinstance(event["home_team"], str):
+        return event["home_team"]
     
-    if isinstance(event.get("home"), dict) and "name" in event["home"]: return event["home"]["name"]
-    if isinstance(event.get("homeTeam"), dict) and "name" in event["homeTeam"]: return event["homeTeam"]["name"]
+    if isinstance(event.get("home"), dict) and "name" in event["home"]:
+    
+        return event["home"]["name"]
+    if isinstance(event.get("homeTeam"), dict) and "name" in event["homeTeam"]:
+        return event["homeTeam"]["name"]
     
     if isinstance(event.get("teams"), dict):
         if isinstance(event["teams"].get("home"), dict) and "name" in event["teams"]["home"]:
@@ -35,12 +41,18 @@ def _get_home_name(event: dict) -> str | None:
     return None
 
 def _get_away_name(event: dict) -> str | None:
-    if "away" in event and isinstance(event["away"], str): return event["away"]
-    if "awayTeam" in event and isinstance(event["awayTeam"], str): return event["awayTeam"]
-    if "away_team" in event and isinstance(event["away_team"], str): return event["away_team"]
+    if "away" in event and isinstance(event["away"], str):
+        return event["away"]
+    if "awayTeam" in event and isinstance(event["awayTeam"], str):
+        return event["awayTeam"]
+    if "away_team" in event and isinstance(event["away_team"], str):
+        return event["away_team"]
     
-    if isinstance(event.get("away"), dict) and "name" in event["away"]: return event["away"]["name"]
-    if isinstance(event.get("awayTeam"), dict) and "name" in event["awayTeam"]: return event["awayTeam"]["name"]
+    if isinstance(event.get("away"), dict) and "name" in event["away"]:
+    
+        return event["away"]["name"]
+    if isinstance(event.get("awayTeam"), dict) and "name" in event["awayTeam"]:
+        return event["awayTeam"]["name"]
     
     if isinstance(event.get("teams"), dict):
         if isinstance(event["teams"].get("away"), dict) and "name" in event["teams"]["away"]:
@@ -96,6 +108,7 @@ def ingest_fixtures_odds_api_io(
     }
 
     if not input_json and not api_key:
+
         return {**empty_result, "status": "AUTH_MISSING"}
 
     required_requests = 2 if verify_league_slug else 1
@@ -153,15 +166,17 @@ def ingest_fixtures_odds_api_io(
             save_raw("leagues", leagues_data)
             
             if not isinstance(leagues_data, list):
+            
                 return {**empty_result, "status": "INVALID_RESPONSE", "api_requests_used": api_requests_used, "raw_files_written": raw_files_written}
             
             found = False
-            for l in leagues_data:
-                if isinstance(l, dict) and l.get("slug") == league_slug:
+            for league_item in leagues_data:
+                if isinstance(league_item, dict) and league_item.get("slug") == league_slug:
                     found = True
                     break
             
             if not found:
+            
                 return {**empty_result, "status": "LEAGUE_SLUG_NOT_FOUND", "api_requests_used": api_requests_used, "raw_files_written": raw_files_written}
 
         events_data = fetch(f"/events?apiKey={api_key}&sport={sport}&league={league_slug}")
@@ -177,6 +192,7 @@ def ingest_fixtures_odds_api_io(
             return {**empty_result, "status": "INVALID_RESPONSE", "api_requests_used": api_requests_used, "raw_files_written": raw_files_written}
 
     if not isinstance(events, list):
+
         return {**empty_result, "status": "INVALID_RESPONSE", "api_requests_used": api_requests_used, "raw_files_written": raw_files_written}
 
     events_seen = len(events)
@@ -202,6 +218,7 @@ def ingest_fixtures_odds_api_io(
         dt = _get_kickoff_utc(event)
         
         if not all([e_id, h_name, a_name, dt]):
+        
             invalid_events += 1
             continue
             
@@ -237,6 +254,7 @@ def ingest_fixtures_odds_api_io(
         away_ph = None if away_id is not None else a_name
         
         if home_id is None or away_id is None:
+        
             unresolved_fixtures += 1
             
         if not dry_run:

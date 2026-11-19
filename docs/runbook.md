@@ -22,9 +22,10 @@ As of 2026-11-13:
   [improvement-plan.md](improvement-plan.md).
 - The working copy has no `.venv` and no local database. Create both with the
   setup below; a local DB is only needed to run the CLI or GUI locally.
-- Full `pytest` is not green: 3 tests in `test_league_aware_artifacts.py` seed a
-  fixture on 2026-08-15, which is now in the past, so the fixture is skipped as
-  already started.
+- Full `pytest` is green again (292 passed); the date-dependent tests now use a
+  fixed clock and `tzdata` is a declared Windows dependency.
+- The loop fixes are in the working tree, not on the server. See "After the
+  next deploy" in [deployment.md](deployment.md).
 
 ## Environment Variables
 
@@ -60,12 +61,10 @@ homeserver):
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
-pip install tzdata
 ```
 
-`tzdata` is required on Windows because `zoneinfo` has no system timezone
-database there. Without it 36 tests fail with `ZoneInfoNotFoundError`. It is
-not yet declared in `pyproject.toml`.
+`tzdata` is installed automatically on Windows, where `zoneinfo` has no system
+timezone database.
 
 Full-repo `ruff` has legacy findings. For commits, run targeted ruff over
 touched files and keep the full-repo debt visible instead of pretending it is
@@ -86,8 +85,7 @@ git status --short
 Verified local result on 2026-11-13 (Windows, Python 3.14, numpy, `tzdata`):
 
 ```text
-pytest -q: 270 passed, 3 failed (test_league_aware_artifacts.py, hardcoded past date)
-pytest -q without tzdata: 237 passed, 36 failed
+pytest -q: 292 passed
 ruff check src tests: 256 findings (208 E501)
 ```
 
@@ -125,11 +123,17 @@ scorerecord gui --host 127.0.0.1 --port 8765
 Open:
 
 ```text
-http://127.0.0.1:8765/today
-http://127.0.0.1:8765/today?league=EPL
-http://127.0.0.1:8765/today?league=WORLD_CUP_2026
-http://127.0.0.1:8765/audit
+http://127.0.0.1:8765/
+http://127.0.0.1:8765/partidos?fecha=2026-11-21&liga=EPL
+http://127.0.0.1:8765/partido/<fixture_id>
+http://127.0.0.1:8765/resultados?dias=30
+http://127.0.0.1:8765/desempeno
+http://127.0.0.1:8765/estado
 ```
+
+Routes and the model+market blend are described in the README "Dashboard"
+section. The dashboard needs an existing database file; it opens it read-only
+and does not create or migrate it.
 
 ## Football-Data Historical Market Research
 
@@ -178,18 +182,24 @@ Supported GUI club presets (`src/scorerecord/league_config.py`):
   events as of 2026-11-13)
 - `BRASILEIRAO`: odds-api.io slug `brazil-brasileiro-serie-a`
 
-The daily production loop is `scripts/run_daily_club_forecast.sh`, which calls
-`run-club-pilot-refresh` once per league. That command does not ingest results.
-To bring match history up to date by hand, per league:
+The daily production loop is `scripts/run_daily_club_forecast.sh`. Its steps can
+be run by hand:
 
 ```powershell
-scorerecord ingest-football-data --league EPL --season 2026-2027 --refresh
-scorerecord bridge-club-history --league EPL --source football-data --from-season 2026-2027 --to-season 2026-2027 --allow-create-teams
+scorerecord backup-db --keep 7
+scorerecord ingest-results --league EPL        # Football-Data -> match_history -> fixture scores
 scorerecord build-elo
+scorerecord run-club-pilot-refresh --league EPL --skip-elo --horizon-days 21 --json
+scorerecord freeze-forecast-snapshot --window-hours 36 --include-result
+scorerecord settle-fixtures
+scorerecord settle-forecast-snapshots
+scorerecord prune-predictions --dry-run
+scorerecord db-health --strict
 ```
 
-New rows only reach the model once the fixed `trained_until = 2026-06-11`
-cutoff in `models/manifest.py` is replaced (improvement plan, phase 1.2).
+`ingest-results` never creates teams. If Football-Data uses a club name with no
+alias, the bridge reports it under `missing_teams` and that league stays stale
+until the alias is added.
 
 First-time setup for Liga MX or MLS requires historical rows, bridge, ratings,
 fixtures, and predictions:
@@ -204,17 +214,11 @@ scorerecord bridge-club-history --league MLS --source football-data --from-seaso
 scorerecord run-club-pilot-refresh --league MLS --json
 ```
 
-The dashboard is date-scoped, but it shows `Proximos partidos cargados` with
-date links:
+The dashboard opens on the next day with fixtures; check one league with:
 
 ```powershell
-curl "http://100.104.72.97:8765/today?league=ALL&view=forecast"
-curl "http://100.104.72.97:8765/today?league=LIGA_MX&view=forecast"
-curl "http://100.104.72.97:8765/today?league=MLS&view=forecast"
+curl "http://100.104.72.97:8765/api/partidos?liga=LIGA_MX&fecha=2026-11-22"
 ```
-
-The main forecast navbar should show forecast navigation and `/audit`; it should
-not surface `view=paper` or `view=research` as primary product tabs.
 
 SportMonks is available as a read-only probe/enrichment source:
 
@@ -257,34 +261,25 @@ considered closed.
 
 ## Homeserver Deploy
 
-Deploy current working tree to the homeserver:
+Commit first; only `HEAD` is deployed. Then:
 
 ```powershell
-& .\deploy\Deploy-ScoreRecord.ps1 -HostName 100.104.72.97 -KeyPath "$env:USERPROFILE\.ssh\scorerecord_homeserver" -SkipBootstrap
+.\deploy\Deploy-ScoreRecord.ps1
 ```
 
-Remote validation:
+The script, the cleanup of files dropped between releases, alerts, backups and
+restore are described in [deployment.md](deployment.md).
+
+Remote checks:
 
 ```powershell
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "cd /home/adrian/scorerecord && .venv/bin/scorerecord db-health"
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "cd /home/adrian/scorerecord && .venv/bin/python -m pytest -q"
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "cd /home/adrian/scorerecord && .venv/bin/python -m ruff check <touched-python-files>"
-```
-
-GUI service:
-
-```powershell
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "systemctl --user restart scorerecord-gui.service"
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "systemctl --user status scorerecord-gui.service --no-pager"
+ssh adrian@100.104.72.97 "cd ~/scorerecord && .venv/bin/scorerecord db-health"
+ssh adrian@100.104.72.97 "systemctl --user list-timers 'scorerecord*' --no-pager"
 curl http://100.104.72.97:8765/healthz
 ```
 
-Timers:
-
-```powershell
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "systemctl --user list-timers 'scorerecord-*' --all --no-pager"
-ssh -i "$env:USERPROFILE\.ssh\scorerecord_homeserver" adrian@100.104.72.97 "systemctl --user status scorerecord-epl-pilot.timer --no-pager"
-```
+The dashboard answers only on the tailnet address, so `curl` must run from a
+machine on the tailnet.
 
 ## Git Workflow
 
@@ -357,16 +352,13 @@ scorerecord db-health
 If `future_resolved=0`, the GUI is not broken; there are no future resolved
 fixtures for that scope in the DB.
 
-For the multi-league forecast view, remember that the page is date-scoped. If
-today has no fixtures, open the next fixture date explicitly:
+The dashboard reads, per fixture, the latest prediction run published before
+kickoff. A fixture without such a run shows "Sin pronóstico publicado". Expected
+goals and the score heatmap come from `prediction_score_grid`, which only exists
+for runs published after schema version 8; older runs show the rest of the page.
 
-```powershell
-curl "http://100.104.72.97:8765/today?date=2026-08-21&league=ALL&view=forecast"
-curl "http://100.104.72.97:8765/today?date=2026-08-21&league=EPL&view=forecast"
-```
-
-The GUI intentionally reads the latest prediction run per fixture. A new EPL
-publish should not hide older World Cup forecasts on `league=ALL`.
+If the dashboard answers "No pudimos generar esta página", the cause is in the
+service log: `journalctl --user -u scorerecord-gui.service -n 50 --no-pager`.
 
 Prediction run inserts zero rows:
 
