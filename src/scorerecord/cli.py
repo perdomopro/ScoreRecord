@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -591,7 +592,11 @@ def main(argv: list[str] | None = None) -> int:
     one_x_two_calibration.add_argument("--out-dir", default="outputs/diagnostics")
     one_x_two_calibration.add_argument("--json", action="store_true")
     gui = subparsers.add_parser("gui", help="Serve the forecast and health dashboard.")
-    gui.add_argument("--host", default="127.0.0.1")
+    gui.add_argument(
+        "--host",
+        default=None,
+        help="Address to bind. Defaults to SCORERECORD_GUI_HOST, then 127.0.0.1.",
+    )
     gui.add_argument("--port", type=int, default=8765)
     subparsers.add_parser("db-summary", help="Print useful database counts.")
 
@@ -716,7 +721,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "gui":
         from scorerecord.web.app import serve
 
-        serve(settings.db_path, host=args.host, port=args.port)
+        host = args.host or os.getenv("SCORERECORD_GUI_HOST") or "127.0.0.1"
+        serve(settings.db_path, host=host, port=args.port)
         return 0
 
     with connect(settings.db_path) as conn:

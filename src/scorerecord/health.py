@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from scorerecord.db import schema_version
@@ -70,10 +71,14 @@ class FixtureOpsSummary:
         )
 
 
-def db_health_checks(conn: sqlite3.Connection) -> list[HealthCheck]:
+def db_health_checks(
+    conn: sqlite3.Connection, *, include_integrity: bool = True
+) -> list[HealthCheck]:
+    """All checks. ``include_integrity=False`` skips the full-file SQLite scans
+    (a few seconds on the production database); the daily job runs them."""
+    slow = [_integrity_check(conn), _foreign_key_check(conn)] if include_integrity else []
     checks = [
-        _integrity_check(conn),
-        _foreign_key_check(conn),
+        *slow,
         HealthCheck("schema_version", "OK", str(schema_version(conn))),
         _fixture_kickoff_check(conn),
         _prediction_artifact_check(conn),
@@ -100,6 +105,7 @@ def pipeline_health_checks(conn: sqlite3.Connection) -> list[HealthCheck]:
         _forecast_snapshot_check(conn),
         _club_odds_check(conn),
         _backup_check(conn),
+        _service_failure_check(conn),
     ]
 
 
@@ -285,6 +291,40 @@ def _club_odds_check(conn: sqlite3.Connection) -> HealthCheck:
         "OK" if upcoming == 0 or with_odds > 0 else "WARNING",
         f"with_odds={with_odds}/{upcoming}",
         f"window_hours={ODDS_WINDOW_HOURS}",
+    )
+
+
+ALERT_LOG = "alerts.log"
+ALERT_WINDOW_DAYS = 7
+
+
+def _db_file(conn: sqlite3.Connection) -> str:
+    return next(
+        (str(row[2]) for row in conn.execute("PRAGMA database_list") if row[1] == "main"),
+        "",
+    )
+
+
+def _service_failure_check(conn: sqlite3.Connection) -> HealthCheck:
+    """systemd units that failed recently, as recorded by scripts/notify_failure.sh."""
+    db_file = _db_file(conn)
+    if not db_file:
+        return HealthCheck("service_failures", "OK", "in_memory_database")
+    log = Path(db_file).parent / ALERT_LOG
+    if not log.exists():
+        return HealthCheck("service_failures", "OK", "0")
+    cutoff = (datetime.now(UTC) - timedelta(days=ALERT_WINDOW_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    recent = [
+        line.split()
+        for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.split() and line.split()[0] >= cutoff
+    ]
+    units = sorted({parts[1] for parts in recent if len(parts) > 1})
+    return HealthCheck(
+        "service_failures",
+        "OK" if not recent else "WARNING",
+        str(len(recent)),
+        " ".join(units) + (f" last={recent[-1][0]}" if recent else ""),
     )
 
 

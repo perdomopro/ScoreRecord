@@ -1,12 +1,13 @@
 import json
 import sqlite3
 import urllib.error
-from pathlib import Path
 from unittest import mock
 
 import pytest
+
 from scorerecord.db import init_db
 from scorerecord.ingest.api_football_probe import probe_api_football_fixtures
+
 
 @pytest.fixture
 def mem_db():

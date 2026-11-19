@@ -2,15 +2,15 @@
 
 import json
 import os
+import sqlite3
 import time
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-import sqlite3
-from datetime import datetime, UTC
-from pathlib import Path
 from scorerecord.aliases import normalize_key
 
 

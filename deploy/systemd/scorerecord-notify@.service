@@ -1,0 +1,7 @@
+[Unit]
+Description=ScoreRecord failure notice for %i
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/adrian/scorerecord/.env
+ExecStart=/bin/bash /home/adrian/scorerecord/scripts/notify_failure.sh %i

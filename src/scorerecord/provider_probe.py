@@ -60,7 +60,7 @@ def probe_bigballs_api(
                 return json.loads(response.read())
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
-                raise PermissionError(f"HTTP {e.code} on {path}")
+                raise PermissionError(f"HTTP {e.code} on {path}") from e
             return {"error": f"HTTP {e.code}"}
         except Exception as e:
             return {"error": str(e)}
@@ -86,6 +86,7 @@ def probe_bigballs_api(
         )
         
     if isinstance(leagues_resp, dict) and "error" in leagues_resp:
+        
         return ProviderProbeReport(
             provider="bigballs",
             leagues_requested=leagues,
@@ -123,23 +124,22 @@ def probe_bigballs_api(
         )
 
     provider_league_keys = []
-    for l in provider_leagues:
-        if isinstance(l, dict) and "key" in l:
-            provider_league_keys.append(l["key"])
-        elif isinstance(l, str):
-            provider_league_keys.append(l)
+    for league_item in provider_leagues:
+        if isinstance(league_item, dict) and "key" in league_item:
+            provider_league_keys.append(league_item["key"])
+        elif isinstance(league_item, str):
+            provider_league_keys.append(league_item)
 
     target_league_keys = []
     for req_league in leagues:
         req_norm = req_league.lower()
-        matched = False
         for pl in provider_league_keys:
             if req_norm in pl.lower() or pl.lower() in req_norm:
                 target_league_keys.append(pl)
-                matched = True
                 break
 
     if not target_league_keys:
+
         return ProviderProbeReport(
             provider="bigballs",
             leagues_requested=leagues,
@@ -174,6 +174,7 @@ def probe_bigballs_api(
             break
 
     if not sampled_match_ids:
+
         return ProviderProbeReport(
             provider="bigballs",
             leagues_requested=leagues,
@@ -230,11 +231,17 @@ def probe_bigballs_api(
                 else:
                     xg_shape = "unknown shape"
 
-        if has_shots: shots_count += 1
-        if has_sot: sot_count += 1
-        if has_poss: poss_count += 1
-        if has_passes: passes_count += 1
-        if has_xg: xg_count += 1
+        if has_shots:
+
+            shots_count += 1
+        if has_sot:
+            sot_count += 1
+        if has_poss:
+            poss_count += 1
+        if has_passes:
+            passes_count += 1
+        if has_xg:
+            xg_count += 1
 
     if match_dates:
         earliest = min(match_dates)
@@ -273,5 +280,5 @@ def probe_bigballs_api(
         matches_with_possession=poss_count,
         matches_with_passes=passes_count,
         matches_with_native_xg=xg_count,
-        league_states={l: "sampled" for l in target_league_keys},
+        league_states={key: "sampled" for key in target_league_keys},
     )

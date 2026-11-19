@@ -468,12 +468,12 @@ def _fetch_json(url: str, *, headers: dict[str, str]) -> Any:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
-            raise ProviderProbeError("AUTH_FAILED", f"HTTP {exc.code}")
+            raise ProviderProbeError("AUTH_FAILED", f"HTTP {exc.code}") from exc
         if exc.code == 429:
-            raise ProviderProbeError("RATE_LIMITED", "HTTP 429")
-        raise ProviderProbeError("API_ERROR", f"HTTP {exc.code}")
+            raise ProviderProbeError("RATE_LIMITED", "HTTP 429") from exc
+        raise ProviderProbeError("API_ERROR", f"HTTP {exc.code}") from exc
     except (OSError, json.JSONDecodeError) as exc:
-        raise ProviderProbeError("INVALID_RESPONSE", str(exc))
+        raise ProviderProbeError("INVALID_RESPONSE", str(exc)) from exc
 
 
 def _asdict(report: ProviderLeagueStatsCoverage) -> dict[str, Any]:

@@ -170,7 +170,7 @@ def walk_forward(
 
         model = model_factory().fit(train)
         probs = model.predict_proba(test)
-        for match, prob in zip(test, probs):
+        for match, prob in zip(test, probs, strict=True):
             brier_sum += multiclass_brier(prob, match.outcome)
             logloss_sum += multiclass_logloss(prob, match.outcome)
             n_predictions += 1

@@ -4,8 +4,8 @@ from scorerecord.ingest import provider_stats_probe
 from scorerecord.ingest.provider_stats_probe import (
     ProviderProbeError,
     _provider_search_names,
-    _sportmonks_league_id,
     _sportmonks_has_corners,
+    _sportmonks_league_id,
     _thestatsapi_has_corners,
     run_provider_stats_probe,
 )

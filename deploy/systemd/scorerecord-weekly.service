@@ -1,5 +1,6 @@
 [Unit]
 Description=ScoreRecord weekly monitoring
+OnFailure=scorerecord-notify@%n.service
 
 [Service]
 Type=oneshot

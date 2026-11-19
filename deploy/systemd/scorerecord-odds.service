@@ -1,5 +1,6 @@
 [Unit]
 Description=ScoreRecord odds snapshots for upcoming club fixtures
+OnFailure=scorerecord-notify@%n.service
 
 [Service]
 Type=oneshot

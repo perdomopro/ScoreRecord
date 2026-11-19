@@ -423,7 +423,9 @@ def test_prune_keeps_latest_run_and_frozen_run() -> None:
     assert remaining == {frozen_run, latest_run}
 
 
-def test_backup_rotates_only_its_own_files(tmp_path: Path) -> None:
+def test_backup_is_compressed_and_keeps_daily_plus_weekly(tmp_path: Path) -> None:
+    import gzip as gz
+
     db_path = tmp_path / "data" / "scorerecord.db"
     conn = connect(db_path)
     init_db(conn)
@@ -431,19 +433,26 @@ def test_backup_rotates_only_its_own_files(tmp_path: Path) -> None:
     manual.parent.mkdir(parents=True)
     manual.write_bytes(b"keep me")
 
-    for day in (10, 11, 12):
+    # 21 daily backups, 2026-11-01 .. 2026-11-21 (Sunday to Saturday).
+    for day in range(1, 22):
         backup_database(
-            conn, db_path, keep=2, now_utc=datetime(2026, 11, day, 6, 0, tzinfo=UTC)
+            conn, db_path, keep=3, weekly=2, now_utc=datetime(2026, 11, day, 6, 0, tzinfo=UTC)
         )
 
     names = sorted(path.name for path in manual.parent.iterdir())
+    # Newest 3 daily copies, plus the newest copy of the previous ISO week
+    # (Nov 9-15); the manual backup is never rotated.
     assert names == [
-        "scorerecord_20261111T060000Z.db",
-        "scorerecord_20261112T060000Z.db",
+        "scorerecord_20261115T060000Z.db.gz",
+        "scorerecord_20261119T060000Z.db.gz",
+        "scorerecord_20261120T060000Z.db.gz",
+        "scorerecord_20261121T060000Z.db.gz",
         "scorerecord_pre_migration.db",
     ]
     assert latest_backup_age_hours(db_path) is not None
-    restored = sqlite3.connect(manual.parent / "scorerecord_20261112T060000Z.db")
+    restored_path = tmp_path / "restored.db"
+    restored_path.write_bytes(gz.decompress((manual.parent / names[-2]).read_bytes()))
+    restored = sqlite3.connect(restored_path)
     assert restored.execute("SELECT COUNT(*) FROM team").fetchone()[0] == 0
     restored.close()
     conn.close()
@@ -521,3 +530,75 @@ def test_sync_fixture_scores_uses_bridged_history_within_date_window() -> None:
     assert rows["no_history"] == (None, None, "scheduled")
     # A fixture scored from Football-Data must not be promoted a second time.
     assert promote_finished_fixtures(conn, leagues=("EPL",))["duplicates"] == 1
+
+
+def test_service_failures_are_read_from_the_alert_log(tmp_path: Path) -> None:
+    from scorerecord.health import db_health_checks
+
+    db_path = tmp_path / "scorerecord.db"
+    conn = connect(db_path)
+    init_db(conn)
+    checks = {c.name: c for c in db_health_checks(conn, include_integrity=False)}
+    assert checks["service_failures"].status == "OK"
+    assert "sqlite_integrity" not in checks
+    recent = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    (tmp_path / "alerts.log").write_text(
+        "2020-01-01T00:00:00Z old.service failed\n"
+        f"{recent} scorerecord-odds.service failed\n",
+        encoding="utf-8",
+    )
+    checks = {c.name: c for c in db_health_checks(conn)}
+    assert checks["service_failures"].status == "WARNING"
+    assert checks["service_failures"].value == "1"
+    assert "scorerecord-odds.service" in checks["service_failures"].details
+    assert "sqlite_integrity" in checks
+    conn.close()
+
+
+def test_apply_release_removes_files_dropped_by_the_new_release(tmp_path: Path) -> None:
+    import shutil
+    import subprocess
+    import tarfile
+
+    import pytest
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash not available")
+    script = Path(__file__).resolve().parents[1] / "deploy" / "apply_release.sh"
+    app = tmp_path / "app"
+    (app / "data").mkdir(parents=True)
+    (app / "data" / "scorerecord.db").write_text("db", encoding="utf-8")
+    (app / ".env").write_text("SECRET=1", encoding="utf-8")
+
+    def release(name: str, files: dict[str, str]) -> Path:
+        src = tmp_path / name
+        for rel, text in files.items():
+            (src / rel).parent.mkdir(parents=True, exist_ok=True)
+            (src / rel).write_text(text, encoding="utf-8")
+        archive = tmp_path / f"{name}.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            for rel in files:
+                tar.add(src / rel, arcname=rel)
+        return archive
+
+    def apply(archive: Path, *extra: str) -> None:
+        subprocess.run(
+            [bash, script.as_posix(), archive.as_posix(), app.as_posix(), *extra],
+            check=True,
+            capture_output=True,
+        )
+
+    # The first release lands on a tree that still has a file from an older deploy.
+    (app / "src").mkdir()
+    (app / "src" / "legacy.py").write_text("old", encoding="utf-8")
+    seed = tmp_path / "seed-manifest"
+    seed.write_text("src/legacy.py\n", encoding="utf-8")
+    apply(release("r1", {"src/a.py": "a", "deploy/systemd/old.timer": "t"}), seed.as_posix())
+    assert not (app / "src" / "legacy.py").exists()
+    assert (app / "deploy" / "systemd" / "old.timer").exists()
+
+    apply(release("r2", {"src/a.py": "a2"}))
+    assert (app / "src" / "a.py").read_text(encoding="utf-8") == "a2"
+    assert not (app / "deploy").exists()  # file removed, empty folders pruned
+    assert (app / "data" / "scorerecord.db").exists() and (app / ".env").exists()

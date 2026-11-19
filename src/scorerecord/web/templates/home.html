@@ -25,7 +25,12 @@
   <a class="day-step" href="{{ qs('/partidos', fecha=next_day.isoformat(), liga=league) }}" aria-label="Día siguiente">›</a>
 </nav>
 
-{% if not groups %}
+{% if quiet %}
+<section class="empty">
+  <h2>{{ league_name }} no tiene partidos programados</h2>
+  <p>No hay partidos en las próximas {{ quiet_days // 7 }} semanas: la liga está fuera de temporada o entre fases. Volverá a aparecer en cuanto el proveedor publique el calendario.</p>
+</section>
+{% elif not groups %}
 <section class="empty">
   <h2>No hay partidos este día</h2>
   <p>Elige otra fecha arriba. Las fechas listadas son las que tienen partidos cargados.</p>

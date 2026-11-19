@@ -1,9 +1,9 @@
 import json
 import sqlite3
 import urllib.request
-from datetime import datetime, UTC
-from typing import Any
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from scorerecord.aliases import normalize_key
 

@@ -1,5 +1,6 @@
 [Unit]
 Description=ScoreRecord daily club forecast refresh
+OnFailure=scorerecord-notify@%n.service
 After=network-online.target
 
 [Service]

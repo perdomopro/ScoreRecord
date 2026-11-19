@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gzip
+import shutil
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -9,6 +11,7 @@ from pathlib import Path
 
 BACKUP_PREFIX = "scorerecord_"
 BACKUP_SUFFIX = ".db"
+STAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 
 
 @dataclass(frozen=True)
@@ -79,26 +82,52 @@ def backup_database(
     db_path: Path,
     *,
     keep: int = 7,
+    weekly: int = 4,
+    compress: bool = True,
     now_utc: datetime | None = None,
 ) -> Path:
-    """Write a consistent copy of the database and rotate old copies."""
+    """Write a consistent, gzip-compressed copy of the database and rotate old copies.
+
+    Kept: the newest ``keep`` copies plus the newest copy of each of the last
+    ``weekly`` ISO weeks. Restore with ``gunzip -k <file>.db.gz``.
+    """
     target_dir = backup_dir_for(db_path)
     target_dir.mkdir(parents=True, exist_ok=True)
-    stamp = (now_utc or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
-    target = target_dir / f"{BACKUP_PREFIX}{stamp}{BACKUP_SUFFIX}"
-    destination = sqlite3.connect(target)
+    stamp = (now_utc or datetime.now(UTC)).strftime(STAMP_FORMAT)
+    raw = target_dir / f"{BACKUP_PREFIX}{stamp}{BACKUP_SUFFIX}"
+    destination = sqlite3.connect(raw)
     try:
         conn.backup(destination)
     finally:
         destination.close()
-    rotated = sorted(
-        path
-        for path in target_dir.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}")
-        if _is_rotating_backup(path)
-    )
-    for old in rotated[: max(len(rotated) - keep, 0)]:
-        old.unlink()
+    target = raw
+    if compress:
+        target = raw.with_name(raw.name + ".gz")
+        with raw.open("rb") as source, gzip.open(target, "wb", compresslevel=6) as sink:
+            shutil.copyfileobj(source, sink, length=1024 * 1024)
+        raw.unlink()
+    _rotate(target_dir, keep=keep, weekly=weekly)
     return target
+
+
+def _rotate(target_dir: Path, *, keep: int, weekly: int) -> None:
+    stamped = sorted(
+        ((stamp, path) for path in target_dir.iterdir() if (stamp := _backup_stamp(path))),
+        reverse=True,
+    )
+    keep_paths = {path for _, path in stamped[:keep]}
+    weeks_seen: list[tuple[int, int]] = []
+    for stamp, path in stamped:
+        week = stamp.isocalendar()[:2]
+        if week in weeks_seen:
+            continue
+        if len(weeks_seen) >= weekly:
+            break
+        weeks_seen.append(week)
+        keep_paths.add(path)
+    for _, path in stamped:
+        if path not in keep_paths:
+            path.unlink()
 
 
 def latest_backup_age_hours(db_path: Path, *, now_utc: datetime | None = None) -> float | None:
@@ -106,7 +135,11 @@ def latest_backup_age_hours(db_path: Path, *, now_utc: datetime | None = None) -
     if not target_dir.is_dir():
         return None
     newest = max(
-        (path.stat().st_mtime for path in target_dir.glob(f"*{BACKUP_SUFFIX}")),
+        (
+            path.stat().st_mtime
+            for path in target_dir.iterdir()
+            if path.name.endswith((BACKUP_SUFFIX, BACKUP_SUFFIX + ".gz"))
+        ),
         default=None,
     )
     if newest is None:
@@ -115,11 +148,16 @@ def latest_backup_age_hours(db_path: Path, *, now_utc: datetime | None = None) -
     return max(now - newest, 0.0) / 3600.0
 
 
-def _is_rotating_backup(path: Path) -> bool:
-    """Only rotate files this module named; manual backups are left alone."""
-    stamp = path.name.removeprefix(BACKUP_PREFIX).removesuffix(BACKUP_SUFFIX)
-    try:
-        datetime.strptime(stamp, "%Y%m%dT%H%M%SZ")
-    except ValueError:
-        return False
-    return True
+def _backup_stamp(path: Path) -> datetime | None:
+    """Timestamp of a backup this module wrote; manual backups are left alone."""
+    name = path.name
+    if not name.startswith(BACKUP_PREFIX):
+        return None
+    for suffix in (BACKUP_SUFFIX + ".gz", BACKUP_SUFFIX):
+        if name.endswith(suffix):
+            stamp = name.removeprefix(BACKUP_PREFIX).removesuffix(suffix)
+            try:
+                return datetime.strptime(stamp, STAMP_FORMAT).replace(tzinfo=UTC)
+            except ValueError:
+                return None
+    return None

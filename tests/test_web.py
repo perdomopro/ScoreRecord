@@ -339,3 +339,18 @@ def test_landing_page_presents_the_project(app: WebApp) -> None:
     assert 'class="topbar"' in inner and 'href="/partidos"' in inner
     no_db = WebApp(Path("missing.db"), clock=lambda: NOW)
     assert no_db.handle("GET", "/", {}).status == 200
+
+
+def test_league_without_upcoming_fixtures_is_marked_off_season(app: WebApp) -> None:
+    _, html = _get(app, "/partidos?liga=MLS")
+    assert "MLS no tiene partidos programados" in html
+    _, listing = _get(app, "/partidos")
+    assert "is-quiet" in listing  # MLS chip is muted on every page
+    _, epl = _get(app, "/partidos?liga=EPL")
+    assert "no tiene partidos programados" not in epl
+
+
+def test_status_page_skips_the_slow_integrity_scan(app: WebApp) -> None:
+    _, html = _get(app, "/estado")
+    assert "Integridad de la base" not in html
+    assert "Servicios con fallas" in html

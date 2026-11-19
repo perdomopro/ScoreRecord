@@ -109,6 +109,7 @@ h2 { font-size: 1.05rem; }
 .chip { flex: none; text-decoration: none; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 0.88rem; }
 .chip:hover { border-color: var(--accent); }
 .chip.is-active { background: var(--brand); border-color: var(--brand); color: var(--surface); }
+.chip.is-quiet:not(.is-active) { color: var(--muted); border-style: dashed; }
 .days { display: flex; align-items: stretch; gap: 6px; margin: 4px 0 18px; }
 .day-strip { display: flex; gap: 6px; overflow-x: auto; flex: 1; scrollbar-width: thin; }
 .day, .day-step { text-decoration: none; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius); }

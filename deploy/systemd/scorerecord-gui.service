@@ -1,6 +1,9 @@
 [Unit]
 Description=ScoreRecord forecast and health dashboard
+OnFailure=scorerecord-notify@%n.service
 After=network-online.target
+# Keep retrying: at boot the tailnet address may appear after the service starts.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -11,8 +14,9 @@ Environment=OPENBLAS_NUM_THREADS=1
 MemoryMax=350M
 Nice=10
 IOSchedulingClass=idle
-ExecStart=/home/adrian/scorerecord/.venv/bin/scorerecord gui --host 0.0.0.0 --port 8765
-Restart=on-failure
+# Address from SCORERECORD_GUI_HOST in .env (the tailnet IP); 127.0.0.1 if unset.
+ExecStart=/home/adrian/scorerecord/.venv/bin/scorerecord gui --port 8765
+Restart=always
 RestartSec=10
 
 [Install]

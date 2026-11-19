@@ -3,10 +3,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from scorerecord.db import init_db
 from scorerecord.ingest.epl_pilot_refresh import run_epl_pilot_refresh
 
-
-from scorerecord.db import init_db
 
 @pytest.fixture
 def mem_db():

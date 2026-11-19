@@ -1,7 +1,7 @@
 {% macro league_tabs(tabs, path, extra={}) %}
 <nav class="chips" aria-label="Liga">
   {% for tab in tabs %}
-  <a class="chip{% if tab.active %} is-active{% endif %}" href="{{ qs(path, liga=tab.code, **extra) }}" {% if tab.active %}aria-current="true"{% endif %}>{{ tab.label }}</a>
+  <a class="chip{% if tab.active %} is-active{% endif %}{% if tab.quiet %} is-quiet{% endif %}" href="{{ qs(path, liga=tab.code, **extra) }}" {% if tab.active %}aria-current="true"{% endif %}{% if tab.quiet %} data-tip="Sin partidos programados en las próximas semanas"{% endif %}>{{ tab.label }}{% if tab.quiet %}<span class="sr-only"> (sin partidos próximos)</span>{% endif %}</a>
   {% endfor %}
 </nav>
 {% endmacro %}

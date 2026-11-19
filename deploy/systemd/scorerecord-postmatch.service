@@ -1,5 +1,6 @@
 [Unit]
 Description=ScoreRecord post-match results and settlement
+OnFailure=scorerecord-notify@%n.service
 
 [Service]
 Type=oneshot

@@ -14,13 +14,37 @@ from scorerecord.web.data import MatchView
 RESULT_WINDOWS = (7, 14, 30, 90)
 
 
-def league_tabs(selected: str | None) -> list[dict[str, object]]:
-    tabs = [{"code": None, "label": "Todas", "active": selected is None}]
+def league_tabs(selected: str | None, quiet: set[str] | None = None) -> list[dict[str, object]]:
+    quiet = quiet or set()
+    tabs = [{"code": None, "label": "Todas", "active": selected is None, "quiet": False}]
     tabs += [
-        {"code": code, "label": league_label(code), "active": selected == code}
+        {
+            "code": code,
+            "label": league_label(code),
+            "active": selected == code,
+            "quiet": code in quiet,
+        }
         for code in GUI_LEAGUE_ORDER
     ]
     return tabs
+
+
+QUIET_HORIZON_DAYS = 21
+
+
+def quiet_leagues(conn: sqlite3.Connection, now: datetime) -> set[str]:
+    """Leagues with no fixture in the coming weeks: off-season or between phases."""
+    busy = {
+        code
+        for code in GUI_LEAGUE_ORDER
+        if data.match_days(
+            conn,
+            league=code,
+            start_utc=now,
+            end_utc=now + timedelta(days=QUIET_HORIZON_DAYS),
+        )
+    }
+    return set(GUI_LEAGUE_ORDER) - busy
 
 
 def group_by_league(matches: list[MatchView]) -> list[tuple[str, list[MatchView]]]:
@@ -39,6 +63,7 @@ def home(
     league: str | None,
 ) -> dict[str, object]:
     today = now.astimezone(data.display_tz()).date()
+    quiet = quiet_leagues(conn, now)
     days = data.match_days(
         conn, league=league, start_utc=now - timedelta(days=2), end_utc=now + timedelta(days=21)
     )
@@ -67,7 +92,10 @@ def home(
         "count": len(matches),
         "with_market": sum(1 for m in matches if m.uses_market),
         "league": league,
-        "tabs": league_tabs(league),
+        "league_name": league_label(league) if league else None,
+        "quiet": league in quiet,
+        "quiet_days": QUIET_HORIZON_DAYS,
+        "tabs": league_tabs(league, quiet),
         "previous_day": selected - timedelta(days=1),
         "next_day": selected + timedelta(days=1),
     }
@@ -171,6 +199,7 @@ STATUS_LABELS = {
     "forecast_snapshots": "Pronósticos congelados",
     "club_odds_capture": "Cuotas de próximos partidos",
     "backup_age": "Respaldo reciente",
+    "service_failures": "Servicios con fallas (7 días)",
 }
 
 JOBS = (
@@ -192,7 +221,7 @@ def status(conn: sqlite3.Connection) -> dict[str, object]:
             "value": check.value,
             "details": check.details,
         }
-        for check in db_health_checks(conn)
+        for check in db_health_checks(conn, include_integrity=False)
     ]
     runs = []
     for job, label in JOBS:

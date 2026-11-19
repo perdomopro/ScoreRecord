@@ -1,10 +1,10 @@
-import json
 import sqlite3
 import urllib.error
 from unittest import mock
 
-from scorerecord.db import _run_lightweight_migrations, init_db
+from scorerecord.db import init_db
 from scorerecord.ingest.fixtures_odds_api import ingest_fixtures_odds_api
+
 
 def test_ingest_fixtures_odds_api_dry_run():
     conn = sqlite3.connect(":memory:")
