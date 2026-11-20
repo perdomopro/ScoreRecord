@@ -8,8 +8,10 @@ WorkingDirectory=/home/adrian/scorerecord
 EnvironmentFile=/home/adrian/scorerecord/.env
 Environment=OMP_NUM_THREADS=1
 Environment=OPENBLAS_NUM_THREADS=1
-MemoryMax=300M
-Nice=10
+# About 2 seconds of CPU and 30 MB per run.
+CPUQuota=50%
+MemoryMax=150M
+Nice=19
 IOSchedulingClass=idle
 # Fixtures already carry the provider event id, so no league slug is needed.
 ExecStart=/home/adrian/scorerecord/.venv/bin/scorerecord fetch-odds --horizon-hours 48 --max-requests 60

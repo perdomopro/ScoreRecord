@@ -195,11 +195,11 @@ The daily production loop is `scripts/run_daily_club_forecast.sh`. Its steps can
 be run by hand:
 
 ```powershell
-scorerecord backup-db --keep 7
+scorerecord backup-db --keep 4
 scorerecord ingest-results --league EPL        # Football-Data -> match_history -> fixture scores
 scorerecord build-elo
 scorerecord run-club-pilot-refresh --league EPL --skip-elo --horizon-days 21 --json
-scorerecord freeze-forecast-snapshot --window-hours 36 --include-result
+scorerecord freeze-forecast-snapshot --window-hours 100 --include-result
 scorerecord settle-fixtures
 scorerecord settle-forecast-snapshots
 scorerecord prune-predictions --dry-run
@@ -310,9 +310,18 @@ their second-division rating. It is chosen only if it wins on validation and
 the whole tuned model then passes the test window; `pool_with` in
 `league_params.json` makes the daily publish train the same way.
 
-`scorerecord-model-compare.timer` runs the gate on the 1st of every month
-(about an hour of CPU at `Nice=15`). It refreshes the comparison on
-`/desempeno` and never writes `league_params.json`.
+In maintenance mode nothing runs the gate on a schedule. To refresh the
+comparison on `/desempeno` (about 40 minutes of CPU), run it capped and at low
+priority:
+
+```bash
+systemd-run --user --nice=19 -p CPUQuota=50% -p MemoryMax=600M \
+  --working-directory=/home/adrian/scorerecord \
+  /home/adrian/scorerecord/.venv/bin/scorerecord model-compare
+```
+
+The same applies to the retired weekly reports (`forecast-performance-report
+--record-quality`, `goal-markets`, `calibrator-drift`, `db-summary`).
 
 ## Homeserver Deploy
 
@@ -376,7 +385,7 @@ Read-only production checks that expose the silent failures:
 
 ```bash
 journalctl --user -u scorerecord-odds.service -n 5 --no-pager        # matched_events=0 means no odds
-journalctl --user -u scorerecord-postmatch.service -n 5 --no-pager   # settled=0 means no results
+journalctl --user -u scorerecord-club-refresh.service -n 40 --no-pager  # results, predictions, settlement
 cd /home/adrian/scorerecord && .venv/bin/python - <<'EOF'
 import sqlite3
 c = sqlite3.connect("file:data/scorerecord.db?mode=ro", uri=True)

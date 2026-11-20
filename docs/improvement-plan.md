@@ -5,6 +5,22 @@ Está ordenado por dependencia: cada fase deja el sistema en un estado útil y
 habilita la siguiente. Las fases 1 y 2 son correcciones; las fases 3 a 5 son
 lo que lleva el proyecto "al siguiente nivel".
 
+## Modo mantenimiento (2026-11-20)
+
+El proyecto queda como fase final y pieza de portafolio. En el homelab corre lo
+mínimo para que el panel siga al día:
+
+| Servicio | Antes | Ahora |
+| --- | --- | --- |
+| Corrida de pronósticos | diaria, hasta 600 MB | martes y viernes, máximo medio núcleo y 500 MB, prioridad mínima |
+| Cuotas | cada 3 horas | una vez al día |
+| Liquidación nocturna | diaria | retirada: la corrida ya carga resultados y liquida |
+| Reportes semanales | domingos | retirados: se corren a mano |
+| Puerta de modelos | mensual (~40 min de CPU) | retirada: se corre a mano |
+| Panel | siempre, hasta 350 MB | siempre, máximo medio núcleo y 200 MB |
+
+CPU al mes: de ~210 minutos a ~45. Ver [deployment.md](deployment.md).
+
 ## Fase 4 — resultado (2026-11-20)
 
 Puerta única: `scorerecord model-compare`. Walk-forward con reajuste cada 28

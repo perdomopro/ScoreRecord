@@ -24,14 +24,17 @@ database. It is **not deployed yet**; the homeserver still runs the old code.
 ## How Production Runs
 
 ```text
-05:35 daily   club-refresh   backup -> results (Football-Data) -> Elo -> fixtures (odds-api.io)
-                             -> Dixon-Coles + Platt -> predictions (next 21 days)
-                             -> freeze next 36 h -> settle -> prune -> db-health
-every 3 h     odds           fetch-odds for fixtures in the next 48 h -> odds_snapshots
-23:30 daily   postmatch      results -> settle-fixtures -> settle-forecast-snapshots
-Sun 09:00     weekly         performance report, goal-market gates, calibrator drift
-always on     gui            read-only dashboard on port 8765
+Tue, Fri 05:35  club-refresh  backup -> results (Football-Data) -> Elo -> fixtures (odds-api.io)
+                              -> Dixon-Coles + Platt -> predictions (next 21 days)
+                              -> freeze next 100 h -> settle -> prune -> db-health
+12:10 daily     odds          fetch-odds for fixtures in the next 48 h -> odds_snapshots
+always on       gui           read-only dashboard on port 8765
 ```
+
+The project is in maintenance mode: every unit is capped at half a CPU core and
+runs at low priority so the homeserver stays free for other work. Evaluation
+jobs (`model-compare`, performance reports, calibrator drift) run by hand; see
+[docs/runbook.md](docs/runbook.md).
 
 All jobs are systemd user timers on the homeserver and share one SQLite file,
 `data/scorerecord.db`. The GUI only reads. See

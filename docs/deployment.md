@@ -22,17 +22,22 @@ indefinitely.
 
 | Unit | Schedule | Does |
 | --- | --- | --- |
-| `scorerecord-club-refresh.timer` | daily 05:35 (+20 min jitter) | `scripts/run_daily_club_forecast.sh`: `backup-db`, `ingest-results` per league, `build-elo` once, `run-club-pilot-refresh --skip-elo --horizon-days 21` per league, `freeze-forecast-snapshot --window-hours 36 --include-result`, `settle-fixtures`, `settle-forecast-snapshots`, `prune-predictions`, `db-health` |
-| `scorerecord-odds.timer` | every 3 h | `fetch-odds --horizon-hours 48 --max-requests 60` by provider event id |
-| `scorerecord-postmatch.timer` | daily 23:30 | `ingest-results`, `settle-fixtures`, `settle-forecast-snapshots` |
-| `scorerecord-weekly.timer` | Sunday 09:00 | performance report, `goal-markets`, `calibrator-drift`, `db-summary` |
-| `scorerecord-model-compare.timer` | 1st of the month 01:30 | `model-compare` (evidence for `/desempeno`; does not change production settings) |
-| `scorerecord-gui.service` | always on | read-only dashboard (`src/scorerecord/web`) |
-| `scorerecord-notify@.service` | on failure | see "Failure alerts" |
+The project is in maintenance mode (since 2026-11-20): the fewest runs that
+keep the dashboard current, each capped so the homeserver stays free.
 
-All units run as systemd user services with `Nice=10`, idle IO, one or two BLAS
-threads, and `MemoryMax` between 300 and 900 MB. The daily loop peaks around
-420 MB; the dashboard uses about 50 MB.
+| Unit | Schedule | Does | Limits |
+| --- | --- | --- | --- |
+| `scorerecord-club-refresh.timer` | Tuesday and Friday 05:35 (+20 min jitter) | `scripts/run_daily_club_forecast.sh`: `backup-db --keep 4`, `ingest-results` per league, `build-elo` once, `run-club-pilot-refresh --skip-elo --horizon-days 21` per league, `freeze-forecast-snapshot --window-hours 100 --include-result`, `settle-fixtures`, `settle-forecast-snapshots`, `prune-predictions`, `db-health` | `CPUQuota=50%`, `MemoryMax=500M`, `Nice=19`; ~5 min CPU per run |
+| `scorerecord-odds.timer` | daily 12:10 | `fetch-odds --horizon-hours 48 --max-requests 60` by provider event id | `CPUQuota=50%`, `MemoryMax=150M`, `Nice=19`; ~2 s CPU |
+| `scorerecord-gui.service` | always on | read-only dashboard (`src/scorerecord/web`) | `CPUQuota=50%`, `MemoryMax=200M`; ~60 MB |
+| `scorerecord-notify@.service` | on failure | see "Failure alerts" | `CPUQuota=25%`, `MemoryMax=50M` |
+
+Retired on 2026-11-20 (the deploy disables them and removes the installed
+copies): `scorerecord-postmatch` (the refresh already loads results and
+settles), `scorerecord-weekly` and `scorerecord-model-compare` (evaluation,
+now run by hand; see the runbook). The freeze window of 100 hours covers the
+longest gap between refreshes, Friday to Tuesday, and the health checks allow
+120 hours for results and backups.
 
 Logs:
 
@@ -153,8 +158,7 @@ nano .env                                  # ODDS_API_IO_KEY, SCORERECORD_GUI_HO
 .venv/bin/scorerecord ingest-results            # every dashboard league
 .venv/bin/scorerecord build-elo
 systemctl --user start scorerecord-gui.service scorerecord-club-refresh.timer \
-  scorerecord-odds.timer scorerecord-postmatch.timer scorerecord-weekly.timer \
-  scorerecord-model-compare.timer
+  scorerecord-odds.timer
 systemctl --user start scorerecord-club-refresh.service   # first full run by hand
 ```
 

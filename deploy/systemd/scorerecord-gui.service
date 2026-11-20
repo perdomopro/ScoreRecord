@@ -11,7 +11,9 @@ WorkingDirectory=/home/adrian/scorerecord
 EnvironmentFile=/home/adrian/scorerecord/.env
 Environment=OMP_NUM_THREADS=1
 Environment=OPENBLAS_NUM_THREADS=1
-MemoryMax=350M
+# Uses about 60 MB; at most half a core so other services keep the machine.
+CPUQuota=50%
+MemoryMax=200M
 Nice=10
 IOSchedulingClass=idle
 # Address from SCORERECORD_GUI_HOST in .env (the tailnet IP); 127.0.0.1 if unset.

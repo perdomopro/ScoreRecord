@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Daily forecast loop for the club leagues.
+# Forecast loop for the club leagues. In maintenance mode it runs on Tuesday
+# and Friday mornings (scorerecord-club-refresh.timer); the snapshot freeze
+# window covers the longest gap between runs.
 #
 #   backup -> results -> Elo -> fixtures + predictions -> freeze -> settle -> prune -> health
 #
@@ -11,8 +13,8 @@ APP_DIR="${SCORERECORD_APP_DIR:-/home/adrian/scorerecord}"
 LEAGUES="${SCORERECORD_DAILY_CLUB_LEAGUES:-LIGA_MX MLS EPL LA_LIGA SERIE_A BUNDESLIGA LIGUE_1 CHAMPIONSHIP ARGENTINA BRASILEIRAO}"
 MAX_REQUESTS="${SCORERECORD_DAILY_CLUB_MAX_REQUESTS:-1}"
 HORIZON_DAYS="${SCORERECORD_PREDICTION_HORIZON_DAYS:-21}"
-FREEZE_WINDOW_HOURS="${SCORERECORD_FREEZE_WINDOW_HOURS:-36}"
-BACKUP_KEEP="${SCORERECORD_BACKUP_KEEP:-7}"
+FREEZE_WINDOW_HOURS="${SCORERECORD_FREEZE_WINDOW_HOURS:-100}"
+BACKUP_KEEP="${SCORERECORD_BACKUP_KEEP:-4}"
 CLI=".venv/bin/scorerecord"
 
 cd "$APP_DIR" || exit 1

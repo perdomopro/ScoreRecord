@@ -10,12 +10,14 @@ from scorerecord.db import schema_version
 from scorerecord.league_config import GUI_LEAGUE_ORDER
 from scorerecord.maintenance import latest_backup_age_hours
 
-RESULT_GRACE_HOURS = 48
+# Results and backups arrive with the club refresh, which runs twice a week
+# (Tuesday and Friday); the longest gap plus Football-Data's delay is ~5 days.
+RESULT_GRACE_HOURS = 120
 # Fixtures still unscored after this long were postponed or re-issued by the
 # provider under another id; they stop counting as a freshness problem.
 RESULT_WINDOW_DAYS = 21
 HISTORY_LAG_DAYS = 3
-BACKUP_MAX_AGE_HOURS = 48
+BACKUP_MAX_AGE_HOURS = 120
 SNAPSHOT_WINDOW_HOURS = 20
 ODDS_WINDOW_HOURS = 24
 

@@ -487,7 +487,7 @@ def test_pipeline_health_flags_open_loop() -> None:
     conn.execute(
         "INSERT INTO fixture (fixture_id, kickoff_utc, home_id, away_id, league_code, "
         "source, status) "
-        "VALUES ('played', datetime('now', '-5 days'), 1, 2, 'EPL', 'odds_api_io', 'scheduled')"
+        "VALUES ('played', datetime('now', '-6 days'), 1, 2, 'EPL', 'odds_api_io', 'scheduled')"
     )
     _fixture(conn, "postponed", "2026-01-01T15:00:00Z", home=2, away=3)
     conn.execute(
@@ -623,3 +623,31 @@ def test_apply_release_removes_files_dropped_by_the_new_release(tmp_path: Path) 
     assert (app / "src" / "a.py").read_text(encoding="utf-8") == "a2"
     assert not (app / "deploy").exists()  # file removed, empty folders pruned
     assert (app / "data" / "scorerecord.db").exists() and (app / ".env").exists()
+
+
+def test_units_are_capped_and_cover_the_gap_between_refreshes() -> None:
+    import re
+
+    from scorerecord import health
+
+    root = Path(__file__).resolve().parents[1]
+    units = root / "deploy" / "systemd"
+    for service in units.glob("*.service"):
+        text = service.read_text(encoding="utf-8")
+        assert "CPUQuota=" in text and "MemoryMax=" in text, service.name
+    for timer in units.glob("*.timer"):
+        assert (units / timer.name.replace(".timer", ".service")).exists(), timer.name
+
+    timer = (units / "scorerecord-club-refresh.timer").read_text(encoding="utf-8")
+    days = re.search(r"OnCalendar=([A-Za-z,]+) ", timer).group(1).split(",")
+    order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    runs = sorted(order.index(day) for day in days)
+    gap_hours = 24 * max((b - a) % 7 or 7 for a, b in zip(runs, runs[1:] + runs[:1], strict=True))
+
+    script = (root / "scripts" / "run_daily_club_forecast.sh").read_text(encoding="utf-8")
+    freeze = int(re.search(r"SCORERECORD_FREEZE_WINDOW_HOURS:-(\d+)", script).group(1))
+    # Every match kicking off before the next refresh is frozen by this one,
+    # and health does not warn between two scheduled runs.
+    assert freeze >= gap_hours
+    assert health.RESULT_GRACE_HOURS >= gap_hours
+    assert health.BACKUP_MAX_AGE_HOURS >= gap_hours

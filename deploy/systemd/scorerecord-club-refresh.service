@@ -1,5 +1,5 @@
 [Unit]
-Description=ScoreRecord daily club forecast refresh
+Description=ScoreRecord club forecast refresh (Tuesday and Friday)
 OnFailure=scorerecord-notify@%n.service
 After=network-online.target
 
@@ -10,7 +10,10 @@ EnvironmentFile=/home/adrian/scorerecord/.env
 Environment=OMP_NUM_THREADS=1
 Environment=OPENBLAS_NUM_THREADS=1
 Environment=SCORERECORD_DAILY_CLUB_MAX_REQUESTS=1
-MemoryMax=600M
-Nice=10
+# Maintenance mode: at most half a core, lowest priority. A run takes about
+# 5 minutes of CPU and peaks near 420 MB.
+CPUQuota=50%
+MemoryMax=500M
+Nice=19
 IOSchedulingClass=idle
 ExecStart=/bin/bash /home/adrian/scorerecord/scripts/run_daily_club_forecast.sh

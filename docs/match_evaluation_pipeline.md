@@ -105,6 +105,10 @@ Cadence on the homeserver and what each timer actually achieves today:
 | Daily 23:30 | `scorerecord-postmatch.timer` | Settle predictions and frozen snapshots from local scores. | `settled=0`; club fixtures never get scores. |
 | Sunday 09:00 | `scorerecord-weekly.timer` | Persist performance evidence, gates, drift checks. | Runs. Drift compares runs from different leagues and raises false alerts. |
 
+Since 2026-11-20 the project runs in maintenance mode: the club refresh runs
+on Tuesday and Friday, odds once a day, and the postmatch, weekly and
+model-compare timers are retired. See [deployment.md](deployment.md).
+
 Daily refresh is enough for fixture discovery because odds-api.io returns many
 pending events beyond the next three days. Hourly polling should be reserved for
 odds freshness, not full model rebuilds.

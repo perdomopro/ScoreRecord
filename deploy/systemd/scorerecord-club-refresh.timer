@@ -1,8 +1,10 @@
 [Unit]
-Description=Run ScoreRecord club forecast refresh daily
+Description=Run the ScoreRecord club refresh on Tuesday and Friday mornings
 
 [Timer]
-OnCalendar=*-*-* 05:35:00
+# Friday prepares the weekend round, Tuesday the midweek one. The freeze window
+# in scripts/run_daily_club_forecast.sh spans the longest gap (Friday to Tuesday).
+OnCalendar=Tue,Fri 05:35:00
 Persistent=true
 RandomizedDelaySec=20m
 

@@ -1,8 +1,9 @@
 [Unit]
-Description=Run ScoreRecord odds fetch every three hours
+Description=Run the ScoreRecord odds fetch once a day
 
 [Timer]
-OnCalendar=*-*-* 00/3:10:00
+# With a 48-hour horizon every match is captured on the two days before it.
+OnCalendar=*-*-* 12:10:00
 Persistent=true
 RandomizedDelaySec=10m
 
