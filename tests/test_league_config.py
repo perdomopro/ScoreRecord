@@ -61,3 +61,16 @@ def test_european_leagues_are_configured_end_to_end() -> None:
     assert normalize_league_code("ligue-1") == "LIGUE_1"
     # Every dashboard league can be refreshed by the daily loop.
     assert set(GUI_LEAGUE_ORDER) <= set(CLUB_FORECAST_LEAGUES)
+
+
+def test_daily_loop_covers_every_dashboard_league() -> None:
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    script = (root / "scripts" / "run_daily_club_forecast.sh").read_text(encoding="utf-8")
+    default = re.search(r'LEAGUES="\$\{SCORERECORD_DAILY_CLUB_LEAGUES:-([^}]*)\}"', script)
+    assert default and set(default.group(1).split()) == set(GUI_LEAGUE_ORDER)
+    # A unit that pins the list silently drops leagues added later.
+    for unit in (root / "deploy" / "systemd").glob("*.service"):
+        assert "SCORERECORD_DAILY_CLUB_LEAGUES" not in unit.read_text(encoding="utf-8"), unit.name

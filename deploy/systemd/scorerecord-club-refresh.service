@@ -9,7 +9,6 @@ WorkingDirectory=/home/adrian/scorerecord
 EnvironmentFile=/home/adrian/scorerecord/.env
 Environment=OMP_NUM_THREADS=1
 Environment=OPENBLAS_NUM_THREADS=1
-Environment="SCORERECORD_DAILY_CLUB_LEAGUES=LIGA_MX MLS EPL ARGENTINA BRASILEIRAO"
 Environment=SCORERECORD_DAILY_CLUB_MAX_REQUESTS=1
 MemoryMax=600M
 Nice=10
