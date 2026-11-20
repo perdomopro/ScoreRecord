@@ -51,7 +51,8 @@ Next server-side steps:
    systemctl --user restart scorerecord-gui.service
 4. Start the timers:
    systemctl --user start scorerecord-club-refresh.timer
-   systemctl --user start scorerecord-postmatch.timer scorerecord-weekly.timer \n     scorerecord-model-compare.timer
+   systemctl --user start scorerecord-postmatch.timer scorerecord-weekly.timer
+   systemctl --user start scorerecord-model-compare.timer
 5. Run the daily loop once by hand to check it end to end:
    systemctl --user start scorerecord-club-refresh.service
    journalctl --user -u scorerecord-club-refresh.service -n 80 --no-pager
