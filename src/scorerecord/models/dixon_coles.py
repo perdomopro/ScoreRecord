@@ -14,7 +14,13 @@ _DEFAULT_XI = math.log(2.0) / (_DEFAULT_HALF_LIFE_YEARS * 365.0)
 
 
 class DixonColes:
-    """Numpy-only Dixon-Coles model with Adam and ridge shrinkage."""
+    """Numpy-only Dixon-Coles model with ridge shrinkage.
+
+    ``solver="adam"`` is the original fixed-epoch optimizer. ``solver="newton"``
+    maximizes the same penalized, time-weighted Poisson likelihood exactly
+    (the objective is concave), which is faster and does not depend on how many
+    epochs were run.
+    """
 
     def __init__(
         self,
@@ -26,7 +32,12 @@ class DixonColes:
         max_goals: int = 10,
         rho_grid: int = 81,
         seed: int = 0,
+        solver: str = "adam",
+        max_iter: int = 60,
+        tol: float = 1e-8,
     ) -> None:
+        if solver not in ("adam", "newton"):
+            raise ValueError(f"Unknown solver: {solver}")
         self.xi = xi
         self.l2 = l2
         self.epochs = epochs
@@ -34,6 +45,10 @@ class DixonColes:
         self.max_goals = max_goals
         self.rho_grid = rho_grid
         self.seed = seed
+        self.solver = solver
+        self.max_iter = max_iter
+        self.tol = tol
+        self.iterations = 0
         self._team_index: dict[int, int] = {}
         self._attack: np.ndarray | None = None
         self._defense: np.ndarray | None = None
@@ -65,6 +80,17 @@ class DixonColes:
         ordinals = np.array([_date_ordinal(match.match_date) for match in matches], dtype=float)
         days_ago = ordinals.max() - ordinals
         weights = np.exp(-self.xi * days_ago)
+
+        if self.solver == "newton":
+            mu, gamma, attack, defense = self._fit_newton(
+                home, away, home_goals, away_goals, is_home, weights, n_teams
+            )
+            self._attack = attack
+            self._defense = defense
+            self._mu = mu
+            self._gamma = gamma
+            self._rho = self._fit_rho(home_goals, away_goals, home, away, is_home, weights)
+            return self
 
         rng = np.random.default_rng(self.seed)
         attack = rng.normal(0.0, 0.01, n_teams)
@@ -106,6 +132,80 @@ class DixonColes:
         self._gamma = float(gamma)
         self._rho = self._fit_rho(home_goals, away_goals, home, away, is_home, weights)
         return self
+
+    def _fit_newton(
+        self,
+        home: np.ndarray,
+        away: np.ndarray,
+        home_goals: np.ndarray,
+        away_goals: np.ndarray,
+        is_home: np.ndarray,
+        weights: np.ndarray,
+        n_teams: int,
+    ) -> tuple[float, float, np.ndarray, np.ndarray]:
+        """Newton-Raphson on the penalized weighted Poisson log-likelihood.
+
+        Rows are the home-goal and away-goal observations of every match;
+        columns are mu, gamma (home advantage), attack[n] and defense[n].
+        """
+        n = len(home)
+        p = 2 + 2 * n_teams
+        rows = np.arange(n)
+        x = np.zeros((2 * n, p))
+        x[:, 0] = 1.0
+        x[:n, 1] = is_home
+        x[rows, 2 + home] = 1.0
+        x[rows, 2 + n_teams + away] = -1.0
+        x[n + rows, 2 + away] = 1.0
+        x[n + rows, 2 + n_teams + home] = -1.0
+        y = np.concatenate([home_goals, away_goals])
+        w = np.concatenate([weights, weights])
+        penalty = np.full(p, float(self.l2))
+        penalty[:2] = 1e-9  # keeps the system solvable when no match has home advantage
+
+        def objective(beta: np.ndarray) -> float:
+            eta = x @ beta
+            return float(np.sum(w * (y * eta - np.exp(eta))) - 0.5 * np.sum(penalty * beta * beta))
+
+        beta = np.zeros(p)
+        beta[0] = math.log(max(float(np.average(y, weights=w)), 1e-3))
+        current = objective(beta)
+        self.iterations = 0
+        for _ in range(self.max_iter):
+            self.iterations += 1
+            lam = np.exp(x @ beta)
+            grad = x.T @ (w * (y - lam)) - penalty * beta
+            hess = (x * (w * lam)[:, None]).T @ x + np.diag(penalty)
+            step = np.linalg.solve(hess, grad)
+            scale = 1.0
+            candidate = beta + step
+            value = objective(candidate)
+            while value < current and scale > 1e-4:
+                scale *= 0.5
+                candidate = beta + scale * step
+                value = objective(candidate)
+            beta, current = candidate, value
+            if float(np.max(np.abs(scale * step))) < self.tol:
+                break
+        return float(beta[0]), float(beta[1]), beta[2 : 2 + n_teams], beta[2 + n_teams :]
+
+    def penalized_loglik(self, matches: list[MatchFeature]) -> float:
+        """Objective value of the fitted parameters on ``matches`` (rho excluded)."""
+        if self._attack is None or self._defense is None:
+            raise RuntimeError("Model is not fitted")
+        ordinals = np.array([_date_ordinal(m.match_date) for m in matches], dtype=float)
+        weights = np.exp(-self.xi * (ordinals.max() - ordinals))
+        total = 0.0
+        for weight, match in zip(weights, matches, strict=True):
+            ha, hd = self._team_params(match.home_id)
+            aa, ad = self._team_params(match.away_id)
+            eta_h = self._mu + self._gamma * match.home_field + ha - ad
+            eta_a = self._mu + aa - hd
+            total += weight * (
+                match.home_score * eta_h - math.exp(eta_h) + match.away_score * eta_a - math.exp(eta_a)
+            )
+        penalty = 0.5 * self.l2 * (float(np.sum(self._attack**2)) + float(np.sum(self._defense**2)))
+        return total - penalty
 
     def _fit_rho(
         self,

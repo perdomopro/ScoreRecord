@@ -259,6 +259,23 @@ The audit is allowed to return warnings while the EPL artifact has not been
 published yet. It should not return `CRITICAL` or `ERROR` before Phase 13 is
 considered closed.
 
+## Model Changes
+
+Every model change goes through the comparison gate:
+
+```powershell
+scorerecord model-compare                 # all dashboard leagues, about 10 minutes
+scorerecord model-compare --leagues EPL --half-lives 1,2,3 --l2s 1,3
+scorerecord model-compare --write-params  # also rewrite models/league_params.json
+```
+
+It writes `outputs/benchmarks/model_compare_<stamp>.json|.md` and records one
+`data_quality` row per league, which `/desempeno` shows. Run it on a copy of
+the production database, review the report, then commit
+`src/scorerecord/models/league_params.json` and deploy. Publishing reads that
+file on every run; a league without an entry uses the defaults (three-year
+half-life, ridge 1, uncalibrated 1X2, market weight 0.7).
+
 ## Homeserver Deploy
 
 Commit first; only `HEAD` is deployed. Then:

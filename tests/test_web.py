@@ -194,7 +194,8 @@ def test_home_opens_next_day_with_matches_and_blends_market(app: WebApp) -> None
     assert response.status == 200
     assert "<h1>" in html and "Sábado 21 de noviembre" in html
     assert "Arsenal" in html and "Fulham" in html
-    assert "modelo + mercado" in html
+    # EPL reads from the market alone (weight 1.0 in models/league_params.json).
+    assert "según el mercado" in html or "modelo + mercado" in html
     assert "Chelsea" not in html  # the finished match is on another day
     assert 'role="img"' in html
 
@@ -257,8 +258,8 @@ def test_api_match_blend_is_between_model_and_market(app: WebApp) -> None:
     blend, model, market = payload["blend_1x2"], payload["model"], payload["market"]
     assert math.isclose(sum(blend.values()), 1.0)
     low, high = sorted((model["home"], market["home"]))
-    assert low <= blend["home"] <= high
-    assert payload["market_weight"] == data.MARKET_WEIGHT
+    assert low - 1e-9 <= blend["home"] <= high + 1e-9
+    assert payload["market_weight"] == data.model_config("EPL").market_weight
     assert payload["expected_goals"] == [1.6, 1.1]
     assert payload["pick"]["key"] == "home"
     _, listing = _get(app, "/api/partidos?fecha=2026-11-21")
@@ -354,3 +355,9 @@ def test_status_page_skips_the_slow_integrity_scan(app: WebApp) -> None:
     _, html = _get(app, "/estado")
     assert "Integridad de la base" not in html
     assert "Servicios con fallas" in html
+
+
+def test_status_reports_recent_forecast_skill(app: WebApp) -> None:
+    _, html = _get(app, "/estado")
+    assert "Ventaja sobre el promedio de liga (8 semanas)" in html
+    assert "too few settled matches" in html

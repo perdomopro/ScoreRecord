@@ -5,6 +5,47 @@ Está ordenado por dependencia: cada fase deja el sistema en un estado útil y
 habilita la siguiente. Las fases 1 y 2 son correcciones; las fases 3 a 5 son
 lo que lleva el proyecto "al siguiente nivel".
 
+## Fase 4 — resultado (2026-11-20)
+
+Puerta única: `scorerecord model-compare`. Walk-forward con reajuste cada 28
+días; parámetros elegidos en 2023-07 → 2025-06 y juzgados en 2025-07 →
+2026-11 (3,073 partidos), con intervalos al 95% por bootstrap de semanas. Un
+cambio solo se adopta si mejora el log-loss combinado con intervalo bajo cero.
+Reporte completo: `docs/reports/model_compare_20261120T175153Z.json`.
+Decisiones vigentes: `src/scorerecord/models/league_params.json`.
+
+| Liga | Modelo adoptado | Ajustado − actual (combinado) | Modelo vs promedio liga (1X2) | Mercado (cierre) vs modelo, 1X2 | Peso del mercado |
+| --- | --- | --- | --- | --- | --- |
+| Liga MX | actual | +0.005 [−0.008, +0.018] | 1.031 vs 1.075 | 1.001 vs 1.031 | 100% |
+| MLS | **ajustado** (vida media 1 año, ridge 3) | **−0.013 [−0.026, −0.001]** | 1.044 vs 1.066 | 1.016 vs 1.044 | 100% |
+| Premier | actual | −0.003 [−0.011, +0.005] | 1.042 vs 1.082 | 1.012 vs 1.042 | 100% |
+| Argentina | actual | +0.008 [−0.001, +0.018] | 1.064 vs 1.090 | 1.053 vs 1.064 | 85% |
+| Brasileirao | **ajustado** (vida media 2 años, ridge 3) | **−0.004 [−0.007, −0.002]** | 0.998 vs 1.046 | 0.980 vs 0.998 | 100% |
+
+Lo que dicen los datos:
+
+- El modelo supera al promedio de la liga en 1X2 en las cinco ligas.
+- En Más/Menos 2.5 solo supera al promedio en MLS; en ambos anotan, en
+  ninguna. La GUI ya no resalta esas etiquetas donde el modelo no aporta.
+- El mercado (cuotas de cierre) supera al modelo en 1X2 por 0.015-0.030 de
+  log-loss. Por eso la lectura usa el mercado cuando hay cuotas (peso 100%,
+  85% en Argentina) y el modelo cuando no las hay. El peso se ajustó con cuotas
+  de cierre; las capturadas en vivo (Unibet, horas antes) son menos precisas,
+  así que es un límite superior.
+- La calibración 1X2 (temperatura + sesgo de empate y visita) no mejoró el
+  log-loss en validación salvo en Argentina, donde tampoco pasó la prueba.
+- Adam ya convergía al óptimo exacto; el ajuste Newton da los mismos
+  parámetros 4 veces más rápido y es el que se usa ahora.
+- Equipos recién llegados: en la Premier el modelo es peor que el promedio de
+  la liga en esos partidos (1.171 contra 1.088, 38 partidos). Es el siguiente
+  candidato: un prior para ascendidos usando la Championship.
+
+Pendiente de la fase 4: prior para ascendidos, tiros/xG (Football-Data solo
+trae xG de la Premier desde esta temporada), ensamble e intervalos por
+bootstrap de parámetros. Monitoreo: `db-health` y `/estado` incluyen
+`forecast_skill`, que avisa si en las últimas 8 semanas el modelo deja de
+superar al promedio de la liga en 1X2.
+
 ## Correcciones tras la verificación (2026-11-19)
 
 | Hueco | Corrección |
@@ -83,7 +124,8 @@ pipeline de apuestas en papel.
 | 1.7 Health | Hecho: siete checks nuevos en `db-health` y `/health`. Falta `OnFailure=` con notificación |
 | 2 Higiene | Hecho salvo los 256 avisos de `ruff` y la división de `cli.py` |
 | 3 GUI | Hecho en código (ver abajo); sin desplegar |
-| 4-5 | Sin empezar |
+| 4 | Puerta y decisiones por liga hechas (ver «Fase 4 — resultado») |
+| 5 | Sin empezar |
 
 Fase 3, implementada el 2026-11-19 en `src/scorerecord/web` (reemplaza a
 `gui.py`): Jinja2 sobre el servidor de la librería estándar (una sola dependencia

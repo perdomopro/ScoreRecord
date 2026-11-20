@@ -48,7 +48,7 @@
       {% if m.xg %}<span class="xg" data-tip="Goles esperados por el modelo">xG {{ '%.1f'|format(m.xg[0]) }} – {{ '%.1f'|format(m.xg[1]) }}</span>{% endif %}
       {{ lean_chip(m.goals_lean) }}
       {{ lean_chip(m.btts_lean) }}
-      {% if m.uses_market %}<span class="src" data-tip="Combina el modelo con las cuotas del mercado">modelo + mercado</span>{% else %}<span class="src muted" data-tip="Aún no hay cuotas capturadas para este partido">solo modelo</span>{% endif %}
+      {% if m.uses_market %}{% if m.market_weight >= 0.99 %}<span class="src" data-tip="En esta liga el mercado pronosticó mejor que el modelo, así que la lectura usa sus cuotas">según el mercado</span>{% else %}<span class="src" data-tip="Combina el modelo con las cuotas del mercado">modelo + mercado</span>{% endif %}{% else %}<span class="src muted" data-tip="Aún no hay cuotas capturadas para este partido">solo modelo</span>{% endif %}
     </div>
     {% if m.finished %}
     <div class="match-verdicts">{% for v in m.verdicts %}{{ verdict_chip(v) }}{% endfor %}</div>

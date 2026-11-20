@@ -8,9 +8,11 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+from scorerecord.evaluate import model_compare
 from scorerecord.evaluate.goal_markets import _walk_forward_predictions, build_goal_markets
 from scorerecord.features.build import MatchFeature, load_match_features
 from scorerecord.league_config import CLUB_FORECAST_LEAGUES
+from scorerecord.models import league_params
 from scorerecord.models.calibration import PlattCalibrator
 from scorerecord.models.dixon_coles import DixonColes
 from scorerecord.models.manifest import (
@@ -22,15 +24,17 @@ from scorerecord.models.manifest import (
 )
 from scorerecord.models.markets import (
     btts_probability,
-    double_chance_probabilities,
     one_x_two_probabilities,
     over_probability,
     top_exact_scores,
 )
+from scorerecord.models.result_calibration import ResultCalibrator
 from scorerecord.runs import ingest_run, record_quality
 from scorerecord.time_utils import parse_kickoff_utc
 
 DEFAULT_OU_LINES = (1.5, 2.5, 3.5)
+CLUB_OOF_SPAN = timedelta(days=4 * 365)
+CLUB_REFIT_DAYS = 28
 GRID_MAX_GOALS = 6
 CLUB_TRAINING_POLICY_ID = "club-rolling-v1"
 CLUB_TOURNAMENTS = set(CLUB_FORECAST_LEAGUES)
@@ -127,8 +131,22 @@ def publish_fixture_predictions(
         "calibrator_scope": training_tournament,
     }
 
-    model = DixonColes().fit(training_matches)
-    calibrators = _fit_goal_market_calibrators(training_matches, ou_lines=ou_lines)
+    result_calibrator: ResultCalibrator | None = None
+    if training_scope == "club" and training_matches:
+        config = league_params.league_config(artifact_league)
+        training_policy_dict["model_config"] = config.as_dict()
+        training_policy_dict["calibration_source"] = (
+            f"walk_forward_refit_{CLUB_REFIT_DAYS}d_over_{CLUB_OOF_SPAN.days}d"
+        )
+        model = DixonColes(
+            xi=model_compare.xi_for(config.half_life_years), l2=config.l2, solver="newton"
+        ).fit(training_matches)
+        calibrators, result_calibrator = _club_calibrators(
+            training_matches, config, as_of=as_of.date(), ou_lines=ou_lines
+        )
+    else:
+        model = DixonColes().fit(training_matches)
+        calibrators = _fit_goal_market_calibrators(training_matches, ou_lines=ou_lines)
     expected_markets = [f"OU{line}" for line in ou_lines] + ["BTTS"]
     generated_utc = as_of.isoformat(timespec="seconds")
     horizon_end = as_of + timedelta(days=horizon_days) if horizon_days is not None else None
@@ -138,7 +156,11 @@ def publish_fixture_predictions(
             conn,
             prediction_run_id=run_id,
             calibration_coefficients=_calibration_coefficients(
-                calibrators, expected_markets, training_tournament, trained_until
+                calibrators,
+                expected_markets,
+                training_tournament,
+                trained_until,
+                result_calibrator=result_calibrator,
             ),
             training_policy=training_policy_dict,
             training_rows=len(training_matches),
@@ -203,6 +225,7 @@ def publish_fixture_predictions(
                 ou_lines=ou_lines,
                 exact_top_n=exact_top_n,
                 calibrators=calibrators,
+                result_calibrator=result_calibrator,
             )
             for market, selection, prob in rows:
                 conn.execute(
@@ -262,8 +285,17 @@ def _calibration_coefficients(
     expected_markets: list[str],
     calibrator_scope: str,
     calibrator_until: str,
+    *,
+    result_calibrator: ResultCalibrator | None = None,
 ) -> dict[str, dict[str, object]]:
-    coeffs = {}
+    coeffs: dict[str, dict[str, object]] = {}
+    if result_calibrator is not None:
+        coeffs["1X2"] = {
+            "status": "CALIBRATED",
+            "calibrator": "temperature_and_bias",
+            **result_calibrator.as_dict(),
+            "calibrator_scope": calibrator_scope,
+        }
     for market in expected_markets:
         if market in calibrators:
             artifact = calibrators[market]
@@ -407,14 +439,14 @@ def _prediction_rows(
     ou_lines: tuple[float, ...],
     exact_top_n: int,
     calibrators: dict[str, CalibratorArtifact],
+    result_calibrator: ResultCalibrator | None = None,
 ) -> list[tuple[str, str, float]]:
     del fixture_id
     rows: list[tuple[str, str, float]] = []
-    for selection, prob in zip(
-        ("home", "draw", "away"),
-        one_x_two_probabilities(score_grid),
-        strict=True,
-    ):
+    result = dict(zip(("home", "draw", "away"), one_x_two_probabilities(score_grid), strict=True))
+    if result_calibrator is not None:
+        result = result_calibrator.transform(result)
+    for selection, prob in result.items():
         rows.append(("1X2", selection, prob))
     for line in ou_lines:
         market = f"OU{line}"
@@ -424,7 +456,12 @@ def _prediction_rows(
     btts = _calibrate("BTTS", btts_probability(score_grid), calibrators)
     rows.append(("BTTS", "yes", btts))
     rows.append(("BTTS", "no", 1.0 - btts))
-    for selection, prob in double_chance_probabilities(score_grid).items():
+    # Double chance follows the (possibly calibrated) 1X2 probabilities.
+    for selection, prob in (
+        ("1X", result["home"] + result["draw"]),
+        ("12", result["home"] + result["away"]),
+        ("X2", result["draw"] + result["away"]),
+    ):
         rows.append(("double_chance", selection, prob))
     for score in top_exact_scores(score_grid, top_n=exact_top_n):
         rows.append(("exact_score", score.selection, score.prob))
@@ -465,6 +502,62 @@ def _fit_goal_market_calibrators(
             observed_rate=sum(labels) / len(labels),
         )
     return calibrators
+
+
+def _club_calibrators(
+    training_matches: list[MatchFeature],
+    config: league_params.ModelConfig,
+    *,
+    as_of: date,
+    ou_lines: tuple[float, ...],
+) -> tuple[dict[str, CalibratorArtifact], ResultCalibrator | None]:
+    """Calibrators fitted the way ``model-compare`` evaluates them.
+
+    Out-of-sample forecasts come from a walk-forward refit every 28 days over
+    the last four years; goal-market Platt scalers use the window in
+    ``config.goal_calibration_days`` and the 1X2 calibrator, when enabled,
+    ``config.result_calibration_days``.
+    """
+    oof = model_compare.oof_forecasts(
+        training_matches,
+        config,
+        start=as_of - CLUB_OOF_SPAN,
+        until=as_of,
+        refit_days=CLUB_REFIT_DAYS,
+    )
+    goal_hist = model_compare._window(oof, as_of, config.goal_calibration_days)
+    attrs = {1.5: "over15", 2.5: "over25", 3.5: "over35"}
+    calibrators: dict[str, CalibratorArtifact] = {}
+    if len(goal_hist) >= model_compare.MIN_CALIBRATION:
+        targets: list[tuple[str, str, float | None]] = [
+            (f"OU{line}", attrs[line], line) for line in ou_lines if line in attrs
+        ]
+        targets.append(("BTTS", "btts", None))
+        for market, attr, line in targets:
+            probs = [getattr(f, attr) for f in goal_hist]
+            if line is None:
+                labels = [int(f.match.home_score > 0 and f.match.away_score > 0) for f in goal_hist]
+            else:
+                labels = [int(f.match.home_score + f.match.away_score > line) for f in goal_hist]
+            calibrator = PlattCalibrator().fit(probs, labels)
+            calibrated = [calibrator.transform(p) for p in probs]
+            calibrators[market] = CalibratorArtifact(
+                market=market,
+                calibrator=calibrator,
+                n=len(probs),
+                raw_mean=sum(probs) / len(probs),
+                calibrated_mean=sum(calibrated) / len(calibrated),
+                observed_rate=sum(labels) / len(labels),
+            )
+    result_calibrator = None
+    if config.calibrate_result:
+        result_hist = model_compare._window(oof, as_of, config.result_calibration_days)
+        if len(result_hist) >= model_compare.MIN_CALIBRATION:
+            result_calibrator = ResultCalibrator().fit(
+                [[f.home, f.draw, f.away] for f in result_hist],
+                [model_compare._outcome(f.match) for f in result_hist],
+            )
+    return calibrators, result_calibrator
 
 
 def _calibrate(

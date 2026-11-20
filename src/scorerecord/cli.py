@@ -704,6 +704,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     ss_audit.add_argument("--json", action="store_true")
 
+    compare = subparsers.add_parser(
+        "model-compare",
+        help="Walk-forward comparison of model configurations per league (phase 4 gate).",
+    )
+    compare.add_argument("--leagues", help="Comma-separated league codes. Default: dashboard leagues.")
+    compare.add_argument("--oof-from", default="2022-07-01")
+    compare.add_argument("--validate-from", default="2023-07-01")
+    compare.add_argument("--test-from", default="2025-07-01")
+    compare.add_argument("--until", help="End of the test window, YYYY-MM-DD. Default: today.")
+    compare.add_argument("--refit-days", type=int, default=28)
+    compare.add_argument("--half-lives", default="1,2,3,5")
+    compare.add_argument("--l2s", default="0.3,1,3")
+    compare.add_argument("--bootstrap", type=int, default=1000)
+    compare.add_argument(
+        "--write-params",
+        action="store_true",
+        help="Write the decided per-league settings to models/league_params.json.",
+    )
+    compare.add_argument("--json", action="store_true", help="Print the full report as JSON.")
     ml_readiness = subparsers.add_parser(
         "multi-league-readiness-report",
         help="Audit readiness for daily multi-league forecast pipeline.",
@@ -1366,6 +1385,63 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=Path.cwd(),
             )
             print(summary.as_row())
+            return 0
+
+        if args.command == "model-compare":
+            from scorerecord.evaluate import model_compare
+            from scorerecord.models.league_params import write_params
+
+            leagues = tuple(
+                code.strip().upper() for code in (args.leagues or ",".join(GUI_LEAGUE_ORDER)).split(",")
+            )
+            windows = model_compare.Windows(
+                oof_from=date.fromisoformat(args.oof_from),
+                validate_from=date.fromisoformat(args.validate_from),
+                test_from=date.fromisoformat(args.test_from),
+                until=date.fromisoformat(args.until) if args.until else date.today(),
+            )
+            with ingest_run(conn, "model-compare", source="match_history", cwd=Path.cwd()) as run_id:
+                report = model_compare.run(
+                    conn,
+                    leagues,
+                    windows,
+                    half_lives=tuple(float(v) for v in args.half_lives.split(",")),
+                    l2s=tuple(float(v) for v in args.l2s.split(",")),
+                    refit_days=args.refit_days,
+                    bootstrap=args.bootstrap,
+                )
+                json_path, md_path = model_compare.write_report(report, Path.cwd() / "outputs")
+                for row in report["leagues"]:
+                    record_quality(
+                        conn,
+                        run_id,
+                        "model_compare",
+                        row["league"],
+                        1.0 if row["decision"]["promote_tuned"] else 0.0,
+                        json.dumps(
+                            {
+                                "chosen": row["chosen"],
+                                "decision": row["decision"],
+                                "n_test": row["n_test"],
+                                "test": row["test"],
+                                "market": row["market"],
+                                "combined_delta": row["deltas"]["tuned_vs_current"]["combined"],
+                                "report": json_path.name,
+                                "windows": report["windows"],
+                            },
+                            sort_keys=True,
+                        ),
+                    )
+                conn.commit()
+            if args.write_params:
+                write_params(
+                    model_compare.production_configs(report),
+                    source="scorerecord model-compare",
+                    report=json_path.name,
+                    generated_utc=report["generated_utc"],
+                )
+            print(json.dumps(report, indent=2, default=str) if args.json else model_compare.markdown(report))
+            print(f"report={json_path} summary={md_path}")
             return 0
 
         if args.command == "calibrator-drift":

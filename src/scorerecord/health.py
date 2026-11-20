@@ -106,6 +106,7 @@ def pipeline_health_checks(conn: sqlite3.Connection) -> list[HealthCheck]:
         _club_odds_check(conn),
         _backup_check(conn),
         _service_failure_check(conn),
+        _forecast_skill_check(conn),
     ]
 
 
@@ -326,6 +327,33 @@ def _service_failure_check(conn: sqlite3.Connection) -> HealthCheck:
         str(len(recent)),
         " ".join(units) + (f" last={recent[-1][0]}" if recent else ""),
     )
+
+
+SKILL_WINDOW_DAYS = 56
+SKILL_MIN_MATCHES = 40
+
+
+def _forecast_skill_check(conn: sqlite3.Connection) -> HealthCheck:
+    """Did the published 1X2 forecasts beat the league average over the last 8 weeks?"""
+    from scorerecord.web import data as web_data  # local import: health must stay light
+
+    now = datetime.now(UTC)
+    try:
+        matches = web_data.load_matches(
+            conn, start_utc=now - timedelta(days=SKILL_WINDOW_DAYS), end_utc=now, finished=True
+        )
+    except sqlite3.Error as exc:
+        return HealthCheck("forecast_skill", "WARNING", "unavailable", type(exc).__name__)
+    perf = web_data.performance(matches)
+    scores = perf.by_market
+    result = scores["1X2"]
+    details = " ".join(
+        f"{market}={score.skill:+.3f}" for market, score in scores.items() if score.skill is not None
+    )
+    if result.n < SKILL_MIN_MATCHES:
+        return HealthCheck("forecast_skill", "OK", f"n={result.n}", "too few settled matches")
+    status = "OK" if (result.skill or 0.0) >= 0 else "WARNING"
+    return HealthCheck("forecast_skill", status, f"n={result.n}", details)
 
 
 def _backup_check(conn: sqlite3.Connection) -> HealthCheck:

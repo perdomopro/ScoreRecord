@@ -36,7 +36,8 @@
 
 <section class="card">
   <h2>Modelo, mercado y combinado</h2>
-  <p class="muted small">Solo partidos con cuotas capturadas antes del inicio. El combinado pondera mercado {{ (market_weight * 100)|round|int }}% y modelo {{ ((1 - market_weight) * 100)|round|int }}% (ponderación provisional).</p>
+  <p class="muted small">Solo partidos con cuotas capturadas antes del inicio. Peso del mercado en el combinado, por liga:
+    {% for name, weight in market_weights %}{{ name }} {{ (weight * 100)|round|int }}%{% if not loop.last %} · {% endif %}{% endfor %}.</p>
   <table class="plain metrics">
     <thead><tr><th scope="col">Mercado</th><th scope="col">Partidos</th><th scope="col">Modelo</th><th scope="col">Mercado</th><th scope="col">Combinado</th></tr></thead>
     <tbody>
@@ -70,6 +71,32 @@
     </table>
   </details>
 </section>
+
+{% if model_compare %}
+<section class="card">
+  <h2>Comparación de modelos</h2>
+  <p class="muted small">Prueba fuera de muestra de {{ model_compare[0].windows.test_from }} a {{ model_compare[0].windows.until }}, con parámetros elegidos en el periodo anterior. Log-loss del resultado (1X2); menor es mejor.</p>
+  <table class="plain metrics">
+    <thead><tr><th scope="col">Liga</th><th scope="col">Partidos</th><th scope="col">Promedio liga</th><th scope="col">Modelo actual</th><th scope="col">Ajustado</th><th scope="col">Mercado</th><th scope="col">Combinado</th><th scope="col">Decisión</th></tr></thead>
+    <tbody>
+      {% for row in model_compare %}
+      {% set mk = row.market.logloss_1x2 if row.market and row.market.logloss_1x2 else {} %}
+      <tr>
+        <th scope="row">{{ row.league_name }}</th>
+        <td class="num">{{ row.n_test }}</td>
+        <td class="num">{{ row.test.base['1X2'].logloss|num }}</td>
+        <td class="num">{{ row.test.current['1X2'].logloss|num }}</td>
+        <td class="num">{{ row.test.tuned['1X2'].logloss|num }}</td>
+        <td class="num">{{ mk.market|num if mk else '—' }}</td>
+        <td class="num">{{ mk.blend|num if mk else '—' }}</td>
+        <td>{{ 'Se adopta el ajustado' if row.decision.promote_tuned else 'Se mantiene el actual' }} · mercado {{ (row.decision.market_weight * 100)|round|int }}%</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small">«Mercado» son las cuotas de cierre promedio de varias casas, sin su margen. Un cambio de modelo solo se adopta si mejora con un intervalo de confianza del 95% que excluye el cero.</p>
+</section>
+{% endif %}
 
 {% if leagues|length > 1 %}
 <section class="card">

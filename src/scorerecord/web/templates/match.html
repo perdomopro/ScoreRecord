@@ -23,7 +23,8 @@
     <p class="eyebrow">Lectura</p>
     <p class="lectura-pick">{{ p.label }} <b>{{ p.prob|pct }}</b></p>
     <p class="muted">{{ p.strength }} ·
-      {% if m.uses_market %}combina el modelo ({{ ((1 - market_weight) * 100)|round|int }}%) con las cuotas de {{ m.market_meta.bookmaker }} ({{ (market_weight * 100)|round|int }}%).
+      {% if m.uses_market and market_weight >= 0.99 %}usa las cuotas de {{ m.market_meta.bookmaker }}: en esta liga el mercado pronosticó mejor que el modelo. La tabla muestra ambos.
+      {% elif m.uses_market %}combina el modelo ({{ ((1 - market_weight) * 100)|round|int }}%) con las cuotas de {{ m.market_meta.bookmaker }} ({{ (market_weight * 100)|round|int }}%).
       {% else %}solo modelo: aún no hay cuotas para este partido.{% endif %}
     </p>
   </div>

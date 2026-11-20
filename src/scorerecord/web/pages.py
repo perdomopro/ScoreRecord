@@ -116,7 +116,7 @@ def match(conn: sqlite3.Connection, *, fixture_id: str, now: datetime) -> dict[s
         "elo_home": data.elo_history(conn, view.home_id),
         "elo_away": data.elo_history(conn, view.away_id),
         "provenance": data.model_provenance(conn, view.artifact_id),
-        "market_weight": data.MARKET_WEIGHT,
+        "market_weight": view.market_weight,
     }
 
 
@@ -172,7 +172,10 @@ def performance(
         "league": league,
         "tabs": league_tabs(league),
         "perf": perf,
-        "market_weight": data.MARKET_WEIGHT,
+        "market_weights": [
+            (league_label(code), data.model_config(code).market_weight) for code in GUI_LEAGUE_ORDER
+        ],
+        "model_compare": data.latest_model_compare(conn),
         "base_days": data.BASE_RATE_DAYS,
         "leagues": [
             (league_label(code), perf.by_league[code])
@@ -200,6 +203,7 @@ STATUS_LABELS = {
     "club_odds_capture": "Cuotas de próximos partidos",
     "backup_age": "Respaldo reciente",
     "service_failures": "Servicios con fallas (7 días)",
+    "forecast_skill": "Ventaja sobre el promedio de liga (8 semanas)",
 }
 
 JOBS = (

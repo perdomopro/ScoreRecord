@@ -19,13 +19,14 @@ from zoneinfo import ZoneInfo
 
 from scorerecord.forecast_policy import result_signal_strength
 from scorerecord.league_config import GUI_LEAGUE_ORDER, league_label
+from scorerecord.models.league_params import league_config as model_config
 from scorerecord.time_utils import parse_datetime_utc, parse_kickoff_utc
 
 DEFAULT_DISPLAY_TZ = "America/Mexico_City"
 # Weight of the market in the model+market blend (logarithmic pooling).
 # Provisional: the club OU2.5 benchmark found the market ahead of the model;
 # the weight is to be fitted in the model-comparison phase.
-MARKET_WEIGHT = 0.7
+MARKET_WEIGHT = 0.7  # fallback; each league's weight comes from models/league_params.json
 BASE_RATE_DAYS = 730
 RESULT_KEYS = ("home", "draw", "away")
 EPS = 1e-6
@@ -212,6 +213,10 @@ class MatchView:
         return "draw" if self.home_score == self.away_score else "away"
 
     @property
+    def market_weight(self) -> float:
+        return model_config(self.league_code).market_weight
+
+    @property
     def uses_market(self) -> bool:
         return bool(self.market and all(key in self.market for key in RESULT_KEYS))
 
@@ -222,7 +227,9 @@ class MatchView:
             return None
         model = {key: self.model[key] for key in RESULT_KEYS}
         if self.uses_market:
-            return log_pool(model, {key: self.market[key] for key in RESULT_KEYS}, MARKET_WEIGHT)
+            return log_pool(
+                model, {key: self.market[key] for key in RESULT_KEYS}, self.market_weight
+            )
         return model
 
     @property
@@ -234,7 +241,7 @@ class MatchView:
             pooled = log_pool(
                 {"yes": model, "no": 1 - model},
                 {"yes": self.market["btts"], "no": 1 - self.market["btts"]},
-                MARKET_WEIGHT,
+                self.market_weight,
             )
             return pooled["yes"]
         return model
@@ -266,6 +273,7 @@ class MatchView:
             self.base["over25"] if self.base else None,
             yes="Más de 2.5 goles",
             no="Menos de 2.5 goles",
+            skilled=model_config(self.league_code).ou_beats_base,
         )
 
     @property
@@ -278,6 +286,7 @@ class MatchView:
             self.base["btts"] if self.base else None,
             yes="Ambos anotan",
             no="No anotan ambos",
+            skilled=model_config(self.league_code).btts_beats_base,
         )
 
     @property
@@ -323,7 +332,7 @@ class MatchView:
             "market_source": self.market_meta,
             "blend_1x2": self.result_probs,
             "blend_btts": self.btts_prob,
-            "market_weight": MARKET_WEIGHT if self.uses_market else 0.0,
+            "market_weight": self.market_weight if self.uses_market else 0.0,
             "base_rates": self.base,
             "expected_goals": list(self.xg) if self.xg else None,
             "top_scores": self.top_scores,
@@ -335,7 +344,9 @@ class MatchView:
         }
 
 
-def _lean(prob: float, base: float | None, *, yes: str, no: str) -> dict[str, object]:
+def _lean(
+    prob: float, base: float | None, *, yes: str, no: str, skilled: bool = True
+) -> dict[str, object]:
     """Describe a binary forecast by its likelier side, against the league rate.
 
     ``prob`` and ``base`` are always the probability of the ``yes`` event; the
@@ -345,6 +356,8 @@ def _lean(prob: float, base: float | None, *, yes: str, no: str) -> dict[str, ob
     diff = None if base is None else prob - base
     if diff is None:
         note = "sin promedio de liga"
+    elif not skilled:
+        note = "en esta liga el modelo no ha superado al promedio en este mercado"
     elif abs(diff) < 0.04:
         note = "en línea con la liga"
     elif abs(diff) < 0.08:
@@ -359,7 +372,8 @@ def _lean(prob: float, base: float | None, *, yes: str, no: str) -> dict[str, ob
         "base": base,
         "diff": diff,
         "note": note,
-        "highlight": diff is not None and abs(diff) >= 0.04,
+        "highlight": skilled and diff is not None and abs(diff) >= 0.04,
+        "skilled": skilled,
     }
 
 
@@ -785,7 +799,9 @@ class PerformanceData:
             "matches": self.matches,
             "from": self.first_day.isoformat() if self.first_day else None,
             "to": self.last_day.isoformat() if self.last_day else None,
-            "market_weight_in_blend": MARKET_WEIGHT,
+            "market_weight_by_league": {
+                code: model_config(code).market_weight for code in GUI_LEAGUE_ORDER
+            },
             "by_market": {k: v.as_json() for k, v in self.by_market.items()},
             "by_league": {
                 league: {k: v.as_json() for k, v in markets.items()}
@@ -891,3 +907,35 @@ def _bin(cells: list[list[float]], prob: float, happened: int) -> None:
     cells[index][0] += prob
     cells[index][1] += happened
     cells[index][2] += 1
+
+
+# ------------------------------------------------------------ model gate
+
+
+def latest_model_compare(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    """Per-league rows of the most recent ``model-compare`` run, if any."""
+    row = conn.execute(
+        """
+        SELECT MAX(run_id) FROM data_quality WHERE check_name = 'model_compare'
+        """
+    ).fetchone()
+    if not row or row[0] is None:
+        return []
+    out = []
+    for record in conn.execute(
+        """
+        SELECT metric_name, details_json FROM data_quality
+        WHERE check_name = 'model_compare' AND run_id = ?
+        ORDER BY metric_name
+        """,
+        (row[0],),
+    ):
+        try:
+            details = json.loads(str(record["details_json"] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        details["league"] = str(record["metric_name"])
+        details["league_name"] = league_label(details["league"])
+        out.append(details)
+    order = {code: index for index, code in enumerate(GUI_LEAGUE_ORDER)}
+    return sorted(out, key=lambda item: order.get(item["league"], 99))

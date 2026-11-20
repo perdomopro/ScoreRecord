@@ -1,0 +1,57 @@
+{
+  "generated_utc": "2026-11-20T17:51:53+00:00",
+  "source": "scorerecord model-compare (2026-11-20 run on a production copy)",
+  "report": "model_compare_20261120T175153Z.json",
+  "leagues": {
+    "ARGENTINA": {
+      "half_life_years": 3.0,
+      "l2": 1.0,
+      "goal_calibration_days": null,
+      "calibrate_result": false,
+      "result_calibration_days": 730,
+      "market_weight": 0.85,
+      "ou_beats_base": false,
+      "btts_beats_base": false
+    },
+    "BRASILEIRAO": {
+      "half_life_years": 2.0,
+      "l2": 3.0,
+      "goal_calibration_days": null,
+      "calibrate_result": false,
+      "result_calibration_days": 730,
+      "market_weight": 1.0,
+      "ou_beats_base": false,
+      "btts_beats_base": false
+    },
+    "EPL": {
+      "half_life_years": 3.0,
+      "l2": 1.0,
+      "goal_calibration_days": null,
+      "calibrate_result": false,
+      "result_calibration_days": 730,
+      "market_weight": 1.0,
+      "ou_beats_base": false,
+      "btts_beats_base": false
+    },
+    "LIGA_MX": {
+      "half_life_years": 3.0,
+      "l2": 1.0,
+      "goal_calibration_days": null,
+      "calibrate_result": false,
+      "result_calibration_days": 730,
+      "market_weight": 1.0,
+      "ou_beats_base": false,
+      "btts_beats_base": false
+    },
+    "MLS": {
+      "half_life_years": 1.0,
+      "l2": 3.0,
+      "goal_calibration_days": null,
+      "calibrate_result": false,
+      "result_calibration_days": 730,
+      "market_weight": 1.0,
+      "ou_beats_base": true,
+      "btts_beats_base": false
+    }
+  }
+}

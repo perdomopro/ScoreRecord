@@ -27,7 +27,7 @@ scorerecord = "scorerecord.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-scorerecord = ["sql/*.sql", "web/templates/*.html", "web/static/*"]
+scorerecord = ["sql/*.sql", "web/templates/*.html", "web/static/*", "models/*.json"]
 
 [tool.ruff]
 line-length = 100
