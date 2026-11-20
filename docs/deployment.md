@@ -26,6 +26,7 @@ indefinitely.
 | `scorerecord-odds.timer` | every 3 h | `fetch-odds --horizon-hours 48 --max-requests 40` by provider event id |
 | `scorerecord-postmatch.timer` | daily 23:30 | `ingest-results`, `settle-fixtures`, `settle-forecast-snapshots` |
 | `scorerecord-weekly.timer` | Sunday 09:00 | performance report, `goal-markets`, `calibrator-drift`, `db-summary` |
+| `scorerecord-model-compare.timer` | 1st of the month 01:30 | `model-compare` (evidence for `/desempeno`; does not change production settings) |
 | `scorerecord-gui.service` | always on | read-only dashboard (`src/scorerecord/web`) |
 | `scorerecord-notify@.service` | on failure | see "Failure alerts" |
 
@@ -150,7 +151,8 @@ nano .env                                  # ODDS_API_IO_KEY, SCORERECORD_GUI_HO
 for L in LIGA_MX MLS EPL ARGENTINA BRASILEIRAO; do .venv/bin/scorerecord ingest-results --league $L; done
 .venv/bin/scorerecord build-elo
 systemctl --user start scorerecord-gui.service scorerecord-club-refresh.timer \
-  scorerecord-odds.timer scorerecord-postmatch.timer scorerecord-weekly.timer
+  scorerecord-odds.timer scorerecord-postmatch.timer scorerecord-weekly.timer \
+  scorerecord-model-compare.timer
 systemctl --user start scorerecord-club-refresh.service   # first full run by hand
 ```
 

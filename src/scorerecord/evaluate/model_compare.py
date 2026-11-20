@@ -11,6 +11,11 @@ For each club league it builds out-of-sample predictions with a walk-forward
 * ``blend``: logarithmic pooling of ``tuned`` and ``market`` with a weight
   chosen on the validation window.
 
+Leagues listed in ``POOLS`` also try a pooled variant: the model is trained
+on the league together with its second division, with a goal-level offset per
+division, so promoted teams keep the rating they earned there. It competes
+with the unpooled options on the same validation matches.
+
 Parameters are selected on ``[validate_from, test_from)`` and judged on
 ``[test_from, until)``; the test window is never used to choose anything.
 Differences are paired per match with 95% intervals from a bootstrap that
@@ -46,6 +51,8 @@ MIN_TRAIN = 200
 MIN_CALIBRATION = 150
 BASE_DAYS = 730
 NEWCOMER_MATCHES = 19
+# Competitions trained together with a league when the pooled variant is tried.
+POOLS: dict[str, tuple[str, ...]] = {"EPL": ("CHAMPIONSHIP",)}
 
 
 @dataclass(frozen=True)
@@ -79,8 +86,11 @@ class Forecast:
 # ----------------------------------------------------------------- data
 
 
-def league_matches(conn: sqlite3.Connection, league: str) -> list[MatchFeature]:
-    return [m for m in load_match_features(conn) if m.tournament == league]
+def league_matches(
+    conn: sqlite3.Connection, league: str, pool_with: tuple[str, ...] = ()
+) -> list[MatchFeature]:
+    wanted = {league, *pool_with}
+    return [m for m in load_match_features(conn) if m.tournament in wanted]
 
 
 def closing_odds(conn: sqlite3.Connection, league: str) -> dict[str, dict[str, float]]:
@@ -144,8 +154,14 @@ def oof_forecasts(
     start: date,
     until: date,
     refit_days: int = 28,
+    reference: str | None = None,
 ) -> list[Forecast]:
-    """Raw Dixon-Coles forecasts for matches in [start, until), refit per block."""
+    """Raw Dixon-Coles forecasts for matches in [start, until), refit per block.
+
+    With ``reference`` set, ``matches`` may include other competitions: they
+    are used for training (each with its own goal level) but only matches of
+    ``reference`` are forecast.
+    """
     ordered = sorted(matches, key=lambda m: m.match_date)
     dates = [m.match_date[:10] for m in ordered]
     out: list[Forecast] = []
@@ -156,9 +172,14 @@ def oof_forecasts(
         hi = bisect.bisect_left(dates, block_end.isoformat())
         if hi > lo and lo >= MIN_TRAIN:
             model = DixonColes(
-                xi=xi_for(config.half_life_years), l2=config.l2, solver="newton"
+                xi=xi_for(config.half_life_years),
+                l2=config.l2,
+                solver="newton",
+                reference_tournament=reference,
             ).fit(ordered[:lo])
             for match in ordered[lo:hi]:
+                if reference is not None and match.tournament != reference:
+                    continue
                 grid = model.score_matrix(match)
                 home, draw, away = one_x_two_probabilities(grid)
                 out.append(
@@ -404,6 +425,7 @@ class LeagueReport:
     market: dict[str, object]
     newcomers: dict[str, object]
     decision: dict[str, object] = field(default_factory=dict)
+    pooling: dict[str, object] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -418,6 +440,7 @@ class LeagueReport:
             "market": self.market,
             "newcomers": self.newcomers,
             "decision": self.decision,
+            "pooling": self.pooling,
         }
 
 
@@ -440,8 +463,16 @@ def evaluate_league(
     bootstrap: int = 1000,
     matches: list[MatchFeature] | None = None,
     odds: dict[str, dict[str, float]] | None = None,
+    pool_with: tuple[str, ...] = (),
+    pool_matches: list[MatchFeature] | None = None,
 ) -> LeagueReport:
-    matches = matches if matches is not None else league_matches(conn, league)
+    if matches is None:
+        loaded = league_matches(conn, league, pool_with)
+        matches = [m for m in loaded if m.tournament == league]
+        if pool_matches is None:
+            pool_matches = [m for m in loaded if m.tournament != league]
+    elif pool_with and pool_matches is None:
+        pool_matches = [m for m in league_matches(conn, league, pool_with) if m.tournament != league]
     odds = odds if odds is not None else closing_odds(conn, league)
     span = {"start": windows.oof_from, "until": windows.until, "refit_days": refit_days}
 
@@ -481,7 +512,33 @@ def evaluate_league(
     for option in options:
         val = _in(calibrate(raw, option), windows.validate_from, windows.test_from)
         scored_options.append((float(_combined(losses(val)).mean()), option.key, option))
+    best_unpooled = min(scored_options, key=lambda item: (item[0], item[1]))
+
+    # 2b. Pooled variant: same strength, trained with the second division too.
+    pooled_raw: list[Forecast] = []
+    best_pooled = None
+    if pool_with and pool_matches:
+        same = {f.match.source_match_id for f in raw}
+        pooled_raw = [
+            f
+            for f in oof_forecasts(
+                matches + pool_matches,
+                replace(best_unpooled[2], pool_with=tuple(pool_with)),
+                reference=league,
+                **span,
+            )
+            if f.match.source_match_id in same
+        ]
+        pooled_scores = []
+        for option in options:
+            option = replace(option, pool_with=tuple(pool_with))
+            val = _in(calibrate(pooled_raw, option), windows.validate_from, windows.test_from)
+            pooled_scores.append((float(_combined(losses(val)).mean()), option.key, option))
+        best_pooled = min(pooled_scores, key=lambda item: (item[0], item[1]))
+        scored_options.extend(pooled_scores)
     chosen = min(scored_options, key=lambda item: (item[0], item[1]))[2]
+    if chosen.pool_with:
+        raw = pooled_raw
 
     # 3. Market weight, chosen on validation where closing odds exist.
     tuned_all = calibrate(raw, chosen)
@@ -533,8 +590,53 @@ def evaluate_league(
         market=_market_section(tuned, current, odds, chosen.market_weight, bootstrap),
         newcomers=_newcomer_section(matches, tuned, current, base),
     )
+    if best_pooled is not None:
+        unpooled_raw = raw_by_key[(hl, l2)]
+        report.pooling = _pooling_section(
+            matches,
+            pool_with,
+            unpooled=_in(calibrate(unpooled_raw, best_unpooled[2]), windows.test_from, windows.until),
+            pooled=_in(calibrate(pooled_raw, best_pooled[2]), windows.test_from, windows.until),
+            validate={"unpooled": best_unpooled[0], "pooled": best_pooled[0]},
+            bootstrap=bootstrap,
+        )
     report.decision = decide(report)
     return report
+
+
+def _pooling_section(
+    matches: list[MatchFeature],
+    pool_with: tuple[str, ...],
+    *,
+    unpooled: list[Forecast],
+    pooled: list[Forecast],
+    validate: dict[str, float],
+    bootstrap: int,
+) -> dict[str, object]:
+    """Pooled against unpooled on the test window, overall and for newcomers."""
+    by_id = {f.match.source_match_id: f for f in unpooled}
+    pooled = [f for f in pooled if f.match.source_match_id in by_id]
+    unpooled = [by_id[f.match.source_match_id] for f in pooled]
+    out: dict[str, object] = {
+        "pool_with": list(pool_with),
+        "validate_combined": validate,
+        "n_test": len(pooled),
+    }
+    if not pooled:
+        return out
+    weeks = [f.day.isocalendar()[:2] for f in pooled]
+    lp, lu = losses(pooled), losses(unpooled)
+    delta = {m: paired_delta(lp[m], lu[m], weeks, samples=bootstrap) for m in MARKETS}
+    delta["combined"] = paired_delta(_combined(lp), _combined(lu), weeks, samples=bootstrap)
+    out["pooled_vs_unpooled"] = delta
+    newcomers = _newcomer_section(matches, pooled, unpooled, unpooled)
+    if newcomers.get("n"):
+        out["newcomers"] = {
+            "n": newcomers["n"],
+            "pooled": newcomers["tuned"],
+            "unpooled": newcomers["current"],
+        }
+    return out
 
 
 def _best_weight(forecasts: list[Forecast], odds: dict[str, dict[str, float]]) -> float | None:
@@ -670,9 +772,14 @@ def run(
     conn: sqlite3.Connection,
     leagues: tuple[str, ...],
     windows: Windows,
+    pools: dict[str, tuple[str, ...]] | None = None,
     **kwargs: object,
 ) -> dict[str, object]:
-    reports = [evaluate_league(conn, league, windows, **kwargs).as_dict() for league in leagues]
+    pools = POOLS if pools is None else pools
+    reports = [
+        evaluate_league(conn, league, windows, pool_with=pools.get(league, ()), **kwargs).as_dict()
+        for league in leagues
+    ]
     return {
         "generated_utc": datetime.now(UTC).isoformat(timespec="seconds"),
         "windows": {k: v.isoformat() for k, v in windows.__dict__.items()},
@@ -685,7 +792,9 @@ def production_configs(report: dict[str, object]) -> dict[str, ModelConfig]:
     out = {}
     for row in report["leagues"]:
         decision = row["decision"]
-        base = ModelConfig(**row["chosen"]) if decision["promote_tuned"] else DEFAULT_CONFIG
+        chosen = dict(row["chosen"])
+        chosen["pool_with"] = tuple(chosen.get("pool_with") or ())
+        base = ModelConfig(**chosen) if decision["promote_tuned"] else DEFAULT_CONFIG
         out[row["league"]] = replace(
             base,
             market_weight=float(decision["market_weight"]),
@@ -733,6 +842,27 @@ def markdown(report: dict[str, object]) -> str:
                 f"| {row['league']} | {market} | {t['base'][market]['logloss']:.4f} | "
                 f"{t['current'][market]['logloss']:.4f} | {t['tuned'][market]['logloss']:.4f} | "
                 f"{mcol} | {bcol} |"
+            )
+    pooled_rows = [row for row in report["leagues"] if row.get("pooling", {}).get("n_test")]
+    if pooled_rows:
+        lines += [
+            "",
+            "| League | Pooled with | Validation unpooled / pooled | Test pooled - unpooled (95% CI) "
+            "| Newcomers 1X2 unpooled / pooled (n) |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        for row in pooled_rows:
+            p = row["pooling"]
+            v = p["validate_combined"]
+            c = p["pooled_vs_unpooled"]["combined"]
+            nc = p.get("newcomers")
+            ncol = (
+                f"{nc['unpooled']['1X2']:.4f} / {nc['pooled']['1X2']:.4f} ({nc['n']})" if nc else "—"
+            )
+            lines.append(
+                f"| {row['league']} | {'+'.join(p['pool_with'])} | "
+                f"{v['unpooled']:.4f} / {v['pooled']:.4f} | "
+                f"{c['delta']:+.4f} [{c['ci_low']:+.4f}, {c['ci_high']:+.4f}] | {ncol} |"
             )
     lines += [
         "",

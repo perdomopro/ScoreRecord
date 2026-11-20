@@ -912,6 +912,30 @@ def _bin(cells: list[list[float]], prob: float, happened: int) -> None:
 # ------------------------------------------------------------ model gate
 
 
+def _pooling_note(details: dict[str, object]) -> str | None:
+    """One sentence on the pooled variant (league trained with its second division)."""
+    pooling = details.get("pooling") or {}
+    combined = (pooling.get("pooled_vs_unpooled") or {}).get("combined")
+    if not combined:
+        return None
+    pool = ", ".join(
+        label.title() if label == code else label
+        for code in pooling.get("pool_with", [])
+        for label in (league_label(code),)
+    )
+    adopted = bool((details.get("decision") or {}).get("promote_tuned")) and bool(
+        (details.get("chosen") or {}).get("pool_with")
+    )
+    better = combined["ci_high"] < 0
+    return (
+        f"{details['league_name']}: se probó entrenar también con la {pool} para que los "
+        "recién ascendidos no empiecen con el promedio de la liga. "
+        f"{'Mejora' if better else 'No mejora de forma clara'} el log-loss combinado "
+        f"({combined['delta']:+.3f}; IC 95% {combined['ci_low']:+.3f} a {combined['ci_high']:+.3f}), "
+        f"así que {'se adopta' if adopted else 'no se adopta'}."
+    )
+
+
 def latest_model_compare(conn: sqlite3.Connection) -> list[dict[str, object]]:
     """Per-league rows of the most recent ``model-compare`` run, if any."""
     row = conn.execute(
@@ -936,6 +960,7 @@ def latest_model_compare(conn: sqlite3.Connection) -> list[dict[str, object]]:
             continue
         details["league"] = str(record["metric_name"])
         details["league_name"] = league_label(details["league"])
+        details["pooling_note"] = _pooling_note(details)
         out.append(details)
     order = {code: index for index, code in enumerate(GUI_LEAGUE_ORDER)}
     return sorted(out, key=lambda item: order.get(item["league"], 99))

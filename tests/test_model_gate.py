@@ -169,3 +169,124 @@ def test_dashboard_lean_is_not_highlighted_without_skill() -> None:
     lean = data._lean(0.40, 0.55, yes="Ambos anotan", no="No anotan ambos", skilled=False)
     assert not lean["highlight"] and "no ha superado" in lean["note"]
     assert data._lean(0.40, 0.55, yes="Ambos anotan", no="No anotan ambos")["highlight"]
+
+
+def _two_divisions(
+    n_seasons: int = 4, teams: int = 12, movers: int = 2, offset: float = 0.2, seed: int = 11
+) -> list[MatchFeature]:
+    """Two divisions on one strength scale; ``movers`` teams swap divisions each season.
+
+    The lower division ("LOW") scores ``offset`` more goals (log scale) than the
+    top one ("TOP") for the same ratings.
+    """
+    rng = np.random.default_rng(seed)
+    n = 2 * teams
+    attack = np.concatenate([rng.normal(0.3, 0.15, teams), rng.normal(-0.3, 0.15, teams)])
+    defense = np.concatenate([rng.normal(0.3, 0.15, teams), rng.normal(-0.3, 0.15, teams)])
+    top, low = list(range(teams)), list(range(teams, n))
+    out = []
+    day = date(2021, 1, 4)
+    for season in range(n_seasons):
+        for name, members, level in (("TOP", top, 0.0), ("LOW", low, offset)):
+            pairs = [(h, a) for h in members for a in members if h != a]
+            rng.shuffle(pairs)
+            for k, (h, a) in enumerate(pairs):
+                lh = math.exp(0.2 + level + 0.25 + attack[h] - defense[a])
+                la = math.exp(0.2 + level + attack[a] - defense[h])
+                out.append(
+                    MatchFeature(
+                        source_match_id=f"{name}-s{season}-{h}-{a}",
+                        match_date=(day + timedelta(days=k // 6)).isoformat(),
+                        home_id=int(h),
+                        away_id=int(a),
+                        home_score=int(rng.poisson(lh)),
+                        away_score=int(rng.poisson(la)),
+                        neutral=0,
+                        tournament=name,
+                        elo_home_pre=1500.0,
+                        elo_away_pre=1500.0,
+                    )
+                )
+        day += timedelta(days=365)
+        down = list(rng.choice(top, movers, replace=False))
+        up = list(rng.choice(low, movers, replace=False))
+        top = [t for t in top if t not in down] + up
+        low = [t for t in low if t not in up] + down
+    return out
+
+
+def test_division_offset_is_recovered_and_only_the_reference_is_forecast() -> None:
+    matches = _two_divisions()
+    pooled = DixonColes(xi=0.0, solver="newton", reference_tournament="TOP").fit(matches)
+    assert set(pooled._offsets) == {"LOW"}
+    assert abs(pooled._offsets["LOW"] - 0.2) < 0.1
+    probe = next(m for m in matches if m.tournament == "TOP")
+    as_low = MatchFeature(**{**probe.__dict__, "tournament": "LOW"})
+    assert pooled.score_matrix(as_low)[0, 0] < pooled.score_matrix(probe)[0, 0]
+    assert math.isfinite(pooled.penalized_loglik(matches))
+
+    top_only = [m for m in matches if m.tournament == "TOP"]
+    plain = DixonColes(xi=0.0, solver="newton").fit(top_only)
+    same = DixonColes(xi=0.0, solver="newton", reference_tournament="TOP").fit(top_only)
+    assert same._offsets == {}
+    assert np.allclose(plain.score_matrix(probe), same.score_matrix(probe))
+
+    config = ModelConfig(pool_with=("LOW",))
+    forecasts = mc.oof_forecasts(
+        matches, config, start=date(2023, 1, 1), until=date(2025, 1, 1), reference="TOP"
+    )
+    assert forecasts and all(f.match.tournament == "TOP" for f in forecasts)
+
+
+def test_gate_reports_the_pooled_variant_and_publishes_it_as_a_tuple(tmp_path: Path) -> None:
+    matches = _two_divisions()
+    row = mc.evaluate_league(
+        None,  # type: ignore[arg-type]
+        "TOP",
+        mc.Windows(date(2022, 1, 1), date(2023, 1, 1), date(2024, 1, 1), date(2025, 1, 1)),
+        half_lives=(3.0,),
+        l2s=(1.0,),
+        bootstrap=50,
+        matches=[m for m in matches if m.tournament == "TOP"],
+        odds={},
+        pool_with=("LOW",),
+        pool_matches=[m for m in matches if m.tournament == "LOW"],
+    ).as_dict()
+    pooling = row["pooling"]
+    assert pooling["pool_with"] == ["LOW"] and pooling["n_test"] > 0
+    assert set(pooling["validate_combined"]) == {"unpooled", "pooled"}
+    assert "combined" in pooling["pooled_vs_unpooled"]
+    assert "Pooled with" in mc.markdown(
+        {"generated_utc": "x", "windows": {k: "d" for k in ("validate_from", "test_from", "until")}, "leagues": [row]}
+    )
+
+    # A pooled choice survives the JSON round trip as a tuple.
+    stored = json.loads(json.dumps(row))
+    stored["chosen"]["pool_with"] = ["LOW"]
+    stored["decision"]["promote_tuned"] = True
+    config = mc.production_configs({"leagues": [stored]})["TOP"]
+    assert config.pool_with == ("LOW",) and config.key.endswith("_poolLOW")
+    path = tmp_path / "league_params.json"
+    league_params.write_params(
+        {"TOP": config}, source="t", report="r", generated_utc="2026-11-20T00:00:00+00:00", path=path
+    )
+    assert league_params.league_config("TOP", path=path) == config
+
+
+def test_dashboard_explains_the_pooled_variant() -> None:
+    from scorerecord.web import data
+
+    details = {
+        "league_name": "Premier League",
+        "decision": {"promote_tuned": False},
+        "chosen": {"pool_with": []},
+        "pooling": {
+            "pool_with": ["CHAMPIONSHIP"],
+            "pooled_vs_unpooled": {
+                "combined": {"delta": -0.0015, "ci_low": -0.0283, "ci_high": 0.0235}
+            },
+        },
+    }
+    note = data._pooling_note(details)
+    assert note and "Championship" in note and "no se adopta" in note
+    assert data._pooling_note({"league_name": "MLS"}) is None

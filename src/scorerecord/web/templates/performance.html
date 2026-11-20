@@ -95,6 +95,7 @@
     </tbody>
   </table>
   <p class="muted small">«Mercado» son las cuotas de cierre promedio de varias casas, sin su margen. Un cambio de modelo solo se adopta si mejora con un intervalo de confianza del 95% que excluye el cero.</p>
+  {% for row in model_compare if row.pooling_note %}<p class="muted small">{{ row.pooling_note }}</p>{% endfor %}
 </section>
 {% endif %}
 

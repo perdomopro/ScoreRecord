@@ -718,6 +718,11 @@ def main(argv: list[str] | None = None) -> int:
     compare.add_argument("--l2s", default="0.3,1,3")
     compare.add_argument("--bootstrap", type=int, default=1000)
     compare.add_argument(
+        "--no-pool",
+        action="store_true",
+        help="Skip the pooled variant (league trained together with its second division).",
+    )
+    compare.add_argument(
         "--write-params",
         action="store_true",
         help="Write the decided per-league settings to models/league_params.json.",
@@ -1409,6 +1414,7 @@ def main(argv: list[str] | None = None) -> int:
                     l2s=tuple(float(v) for v in args.l2s.split(",")),
                     refit_days=args.refit_days,
                     bootstrap=args.bootstrap,
+                    pools={} if args.no_pool else None,
                 )
                 json_path, md_path = model_compare.write_report(report, Path.cwd() / "outputs")
                 for row in report["leagues"]:
@@ -1426,6 +1432,7 @@ def main(argv: list[str] | None = None) -> int:
                                 "test": row["test"],
                                 "market": row["market"],
                                 "combined_delta": row["deltas"]["tuned_vs_current"]["combined"],
+                                "pooling": row.get("pooling") or None,
                                 "report": json_path.name,
                                 "windows": report["windows"],
                             },

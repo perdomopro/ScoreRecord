@@ -35,6 +35,7 @@ class DixonColes:
         solver: str = "adam",
         max_iter: int = 60,
         tol: float = 1e-8,
+        reference_tournament: str | None = None,
     ) -> None:
         if solver not in ("adam", "newton"):
             raise ValueError(f"Unknown solver: {solver}")
@@ -46,6 +47,11 @@ class DixonColes:
         self.rho_grid = rho_grid
         self.seed = seed
         self.solver = solver
+        # With several competitions in the training set (for example a league
+        # and its second division), each one other than the reference gets its
+        # own goal-level offset; teams keep a single rating across them.
+        self.reference_tournament = reference_tournament
+        self._offsets: dict[str, float] = {}
         self.max_iter = max_iter
         self.tol = tol
         self.iterations = 0
@@ -82,14 +88,26 @@ class DixonColes:
         weights = np.exp(-self.xi * days_ago)
 
         if self.solver == "newton":
-            mu, gamma, attack, defense = self._fit_newton(
-                home, away, home_goals, away_goals, is_home, weights, n_teams
+            others: list[str] = []
+            group = np.zeros(len(matches), dtype=int)
+            if self.reference_tournament is not None:
+                others = sorted(
+                    {m.tournament or "" for m in matches} - {self.reference_tournament}
+                )
+                index = {name: i + 1 for i, name in enumerate(others)}
+                group = np.array([index.get(m.tournament or "", 0) for m in matches])
+            mu, gamma, attack, defense, offsets = self._fit_newton(
+                home, away, home_goals, away_goals, is_home, weights, n_teams, group, len(others)
             )
             self._attack = attack
             self._defense = defense
             self._mu = mu
             self._gamma = gamma
-            self._rho = self._fit_rho(home_goals, away_goals, home, away, is_home, weights)
+            self._offsets = {name: float(offsets[i]) for i, name in enumerate(others)}
+            row_offset = np.concatenate([[0.0], offsets])[group]
+            self._rho = self._fit_rho(
+                home_goals, away_goals, home, away, is_home, weights, row_offset
+            )
             return self
 
         rng = np.random.default_rng(self.seed)
@@ -142,14 +160,18 @@ class DixonColes:
         is_home: np.ndarray,
         weights: np.ndarray,
         n_teams: int,
-    ) -> tuple[float, float, np.ndarray, np.ndarray]:
+        group: np.ndarray | None = None,
+        n_groups: int = 0,
+    ) -> tuple[float, float, np.ndarray, np.ndarray, np.ndarray]:
         """Newton-Raphson on the penalized weighted Poisson log-likelihood.
 
         Rows are the home-goal and away-goal observations of every match;
-        columns are mu, gamma (home advantage), attack[n] and defense[n].
+        columns are mu, gamma (home advantage), attack[n], defense[n] and one
+        goal-level offset per non-reference competition.
         """
         n = len(home)
-        p = 2 + 2 * n_teams
+        t = 2 + 2 * n_teams
+        p = t + n_groups
         rows = np.arange(n)
         x = np.zeros((2 * n, p))
         x[:, 0] = 1.0
@@ -158,10 +180,15 @@ class DixonColes:
         x[rows, 2 + n_teams + away] = -1.0
         x[n + rows, 2 + away] = 1.0
         x[n + rows, 2 + n_teams + home] = -1.0
+        if n_groups and group is not None:
+            pooled = group > 0
+            x[rows[pooled], t + group[pooled] - 1] = 1.0
+            x[n + rows[pooled], t + group[pooled] - 1] = 1.0
         y = np.concatenate([home_goals, away_goals])
         w = np.concatenate([weights, weights])
         penalty = np.full(p, float(self.l2))
         penalty[:2] = 1e-9  # keeps the system solvable when no match has home advantage
+        penalty[t:] = 1e-6
 
         def objective(beta: np.ndarray) -> float:
             eta = x @ beta
@@ -187,7 +214,13 @@ class DixonColes:
             beta, current = candidate, value
             if float(np.max(np.abs(scale * step))) < self.tol:
                 break
-        return float(beta[0]), float(beta[1]), beta[2 : 2 + n_teams], beta[2 + n_teams :]
+        return (
+            float(beta[0]),
+            float(beta[1]),
+            beta[2 : 2 + n_teams],
+            beta[2 + n_teams : t],
+            beta[t:],
+        )
 
     def penalized_loglik(self, matches: list[MatchFeature]) -> float:
         """Objective value of the fitted parameters on ``matches`` (rho excluded)."""
@@ -199,8 +232,9 @@ class DixonColes:
         for weight, match in zip(weights, matches, strict=True):
             ha, hd = self._team_params(match.home_id)
             aa, ad = self._team_params(match.away_id)
-            eta_h = self._mu + self._gamma * match.home_field + ha - ad
-            eta_a = self._mu + aa - hd
+            level = self._mu + self._offsets.get(match.tournament or "", 0.0)
+            eta_h = level + self._gamma * match.home_field + ha - ad
+            eta_a = level + aa - hd
             total += weight * (
                 match.home_score * eta_h - math.exp(eta_h) + match.away_score * eta_a - math.exp(eta_a)
             )
@@ -215,14 +249,16 @@ class DixonColes:
         away: np.ndarray,
         is_home: np.ndarray,
         weights: np.ndarray,
+        row_offset: np.ndarray | None = None,
     ) -> float:
         if self._attack is None or self._defense is None:
             raise RuntimeError("Model is not fitted")
+        extra = row_offset if row_offset is not None else 0.0
 
         home_lambda = np.exp(
-            self._mu + self._gamma * is_home + self._attack[home] - self._defense[away]
+            self._mu + extra + self._gamma * is_home + self._attack[home] - self._defense[away]
         )
-        away_lambda = np.exp(self._mu + self._attack[away] - self._defense[home])
+        away_lambda = np.exp(self._mu + extra + self._attack[away] - self._defense[home])
         low_score = (home_goals <= 1) & (away_goals <= 1)
         if not low_score.any():
             return 0.0
@@ -262,10 +298,9 @@ class DixonColes:
         goals = np.arange(self.max_goals + 1)
         home_attack, home_defense = self._team_params(match.home_id)
         away_attack, away_defense = self._team_params(match.away_id)
-        home_lambda = math.exp(
-            self._mu + self._gamma * match.home_field + home_attack - away_defense
-        )
-        away_lambda = math.exp(self._mu + away_attack - home_defense)
+        level = self._mu + self._offsets.get(match.tournament or "", 0.0)
+        home_lambda = math.exp(level + self._gamma * match.home_field + home_attack - away_defense)
+        away_lambda = math.exp(level + away_attack - home_defense)
 
         home_pmf = np.exp(-home_lambda) * home_lambda**goals / self._factorials
         away_pmf = np.exp(-away_lambda) * away_lambda**goals / self._factorials

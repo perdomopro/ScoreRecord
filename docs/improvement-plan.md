@@ -37,14 +37,41 @@ Lo que dicen los datos:
 - Adam ya convergía al óptimo exacto; el ajuste Newton da los mismos
   parámetros 4 veces más rápido y es el que se usa ahora.
 - Equipos recién llegados: en la Premier el modelo es peor que el promedio de
-  la liga en esos partidos (1.171 contra 1.088, 38 partidos). Es el siguiente
-  candidato: un prior para ascendidos usando la Championship.
+  la liga en esos partidos (1.171 contra 1.088, 38 partidos).
 
-Pendiente de la fase 4: prior para ascendidos, tiros/xG (Football-Data solo
-trae xG de la Premier desde esta temporada), ensamble e intervalos por
-bootstrap de parámetros. Monitoreo: `db-health` y `/estado` incluyen
-`forecast_skill`, que avisa si en las últimas 8 semanas el modelo deja de
-superar al promedio de la liga en 1X2.
+### Prior para ascendidos (4.2-c), probado y no adoptado
+
+La Premier ahora puede entrenarse junto con la Championship: un solo rating por
+equipo y un nivel de goles propio por división (`ModelConfig.pool_with`,
+`DixonColes(reference_tournament=...)`). Así un ascendido entra con lo que
+mostró en la Championship en vez de con el promedio de la Premier. El ajuste
+se comporta como se espera: la Championship queda en −0.08 de nivel de goles
+y Hull o Coventry, sin partidos previos en la Premier, empiezan por debajo del
+equipo medio en lugar de en el promedio.
+
+La puerta lo compara contra el modelo sin la Championship, con los mismos
+partidos de validación y prueba
+(`docs/reports/model_compare_20261120T183517Z.json`):
+
+| | Sin Championship | Con Championship |
+| --- | --- | --- |
+| Validación, log-loss combinado | 2.3096 | 2.3158 |
+| Prueba, diferencia combinada (IC 95%) | | −0.0015 [−0.028, +0.024] |
+| Recién llegados, 1X2 (38 partidos) | 1.184 | 1.204 |
+
+No mejora de forma medible, así que la Premier sigue sin la Championship. Con
+solo 38 partidos de equipos nuevos en la prueba no se puede descartar ni
+confirmar un efecto. La variante queda dentro de la puerta (`POOLS` en
+`evaluate/model_compare.py`) y vuelve a probarse en cada corrida: el timer
+mensual `scorerecord-model-compare` corre la puerta el día 1 y actualiza la
+tabla de `/desempeno`, sin cambiar la configuración de producción. Si algún
+día se adopta, la publicación diaria ya entrena con la Championship
+(`predict/fixtures.py` lee `pool_with`).
+
+Pendiente de la fase 4: tiros/xG (Football-Data solo trae xG de la Premier
+desde esta temporada), ensamble e intervalos por bootstrap de parámetros.
+Monitoreo: `db-health` y `/estado` incluyen `forecast_skill`, que avisa si en
+las últimas 8 semanas el modelo deja de superar al promedio de la liga en 1X2.
 
 ## Correcciones tras la verificación (2026-11-19)
 
@@ -124,7 +151,7 @@ pipeline de apuestas en papel.
 | 1.7 Health | Hecho: siete checks nuevos en `db-health` y `/health`. Falta `OnFailure=` con notificación |
 | 2 Higiene | Hecho salvo los 256 avisos de `ruff` y la división de `cli.py` |
 | 3 GUI | Hecho en código (ver abajo); sin desplegar |
-| 4 | Puerta y decisiones por liga hechas (ver «Fase 4 — resultado») |
+| 4 | Puerta, decisiones por liga y prior para ascendidos (probado, no adoptado) hechos; corrida mensual de la puerta. Faltan tiros/xG, ensamble e intervalos |
 | 5 | Sin empezar |
 
 Fase 3, implementada el 2026-11-19 en `src/scorerecord/web` (reemplaza a
@@ -408,12 +435,11 @@ rediseño depende de tener resultados y pronósticos liquidados que mostrar.
 
 ## Decisiones pendientes
 
-1. **Exposición pública.** ¿La GUI debe seguir abierta a internet por Funnel o
-   solo dentro del tailnet?
-2. **Stack de la GUI.** ¿Aceptas añadir Starlette + Jinja2 + uvicorn, o
-   prefieres seguir solo con librería estándar y dividir el archivo?
-3. **Cuotas en la interfaz.** ¿Quieres mostrar la probabilidad del mercado y un
-   pronóstico de consenso junto al del modelo?
-4. **Pipeline de apuestas en papel.** ¿Se archiva (edge, recommend, CLV,
-   `/audit`) o se conserva oculto?
-5. **Ligas.** ¿Se añaden ya las cinco europeas que tienen histórico?
+1. **Exposición pública.** Resuelto: solo dentro del tailnet.
+2. **Stack de la GUI.** Resuelto: Jinja2 sobre el servidor de la librería
+   estándar, sin Starlette ni uvicorn.
+3. **Cuotas en la interfaz.** Resuelto: modelo, mercado y una lectura combinada.
+4. **Pipeline de apuestas en papel.** Resuelto: archivado.
+5. **Ligas.** Pendiente: ¿se añaden ya las cinco europeas que tienen histórico?
+   Cada liga suma una petición diaria al proveedor de cuotas y unos 2 minutos
+   de CPU a la corrida diaria.

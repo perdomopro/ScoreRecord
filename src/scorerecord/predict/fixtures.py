@@ -101,10 +101,13 @@ def publish_fixture_predictions(
         training_tournament = artifact_league
         policy_id = CLUB_TRAINING_POLICY_ID
         cutoff = as_of.date().isoformat()
+        # A league may train together with its second division (see
+        # ``ModelConfig.pool_with``); only the league's own fixtures are forecast.
+        trained_on = {artifact_league, *league_params.league_config(artifact_league).pool_with}
         training_matches = [
             match
             for match in features
-            if match.tournament == artifact_league and match.match_date[:10] < cutoff
+            if match.tournament in trained_on and match.match_date[:10] < cutoff
         ]
         # Recorded cutoff is the day after the last training match, so the
         # artifact id only changes when new results actually arrive.
@@ -138,11 +141,15 @@ def publish_fixture_predictions(
         training_policy_dict["calibration_source"] = (
             f"walk_forward_refit_{CLUB_REFIT_DAYS}d_over_{CLUB_OOF_SPAN.days}d"
         )
+        reference = artifact_league if config.pool_with else None
         model = DixonColes(
-            xi=model_compare.xi_for(config.half_life_years), l2=config.l2, solver="newton"
+            xi=model_compare.xi_for(config.half_life_years),
+            l2=config.l2,
+            solver="newton",
+            reference_tournament=reference,
         ).fit(training_matches)
         calibrators, result_calibrator = _club_calibrators(
-            training_matches, config, as_of=as_of.date(), ou_lines=ou_lines
+            training_matches, config, as_of=as_of.date(), ou_lines=ou_lines, reference=reference
         )
     else:
         model = DixonColes().fit(training_matches)
@@ -510,6 +517,7 @@ def _club_calibrators(
     *,
     as_of: date,
     ou_lines: tuple[float, ...],
+    reference: str | None = None,
 ) -> tuple[dict[str, CalibratorArtifact], ResultCalibrator | None]:
     """Calibrators fitted the way ``model-compare`` evaluates them.
 
@@ -524,6 +532,7 @@ def _club_calibrators(
         start=as_of - CLUB_OOF_SPAN,
         until=as_of,
         refit_days=CLUB_REFIT_DAYS,
+        reference=reference,
     )
     goal_hist = model_compare._window(oof, as_of, config.goal_calibration_days)
     attrs = {1.5: "over15", 2.5: "over25", 3.5: "over35"}

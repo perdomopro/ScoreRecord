@@ -33,12 +33,17 @@ class ModelConfig:
     # label when it does.
     ou_beats_base: bool = True
     btts_beats_base: bool = True
+    # Other competitions trained together with this league (for example its
+    # second division), each with its own goal level, so promoted teams start
+    # from their previous rating instead of the league average.
+    pool_with: tuple[str, ...] = ()
 
     @property
     def key(self) -> str:
         cal = "all" if self.goal_calibration_days is None else f"{self.goal_calibration_days}d"
         res = f"cal{self.result_calibration_days}d" if self.calibrate_result else "raw"
-        return f"hl{self.half_life_years:g}_l2{self.l2:g}_goals{cal}_1x2{res}"
+        pool = f"_pool{'+'.join(self.pool_with)}" if self.pool_with else ""
+        return f"hl{self.half_life_years:g}_l2{self.l2:g}_goals{cal}_1x2{res}{pool}"
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -61,7 +66,10 @@ def league_config(league: str, *, path: Path = PARAMS_PATH) -> ModelConfig:
     if not isinstance(entry, dict):
         return DEFAULT_CONFIG
     allowed = set(ModelConfig.__dataclass_fields__)
-    return ModelConfig(**{key: value for key, value in entry.items() if key in allowed})
+    values = {key: value for key, value in entry.items() if key in allowed}
+    if "pool_with" in values:
+        values["pool_with"] = tuple(values["pool_with"])
+    return ModelConfig(**values)
 
 
 def params_source(*, path: Path = PARAMS_PATH) -> dict[str, object]:

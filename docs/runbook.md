@@ -267,6 +267,7 @@ Every model change goes through the comparison gate:
 scorerecord model-compare                 # all dashboard leagues, about 10 minutes
 scorerecord model-compare --leagues EPL --half-lives 1,2,3 --l2s 1,3
 scorerecord model-compare --write-params  # also rewrite models/league_params.json
+scorerecord model-compare --no-pool       # skip the pooled variant (faster)
 ```
 
 It writes `outputs/benchmarks/model_compare_<stamp>.json|.md` and records one
@@ -275,6 +276,17 @@ the production database, review the report, then commit
 `src/scorerecord/models/league_params.json` and deploy. Publishing reads that
 file on every run; a league without an entry uses the defaults (three-year
 half-life, ridge 1, uncalibrated 1X2, market weight 0.7).
+
+Leagues listed in `POOLS` (`evaluate/model_compare.py`; today the EPL with the
+Championship) also try a pooled variant: one rating per team across both
+divisions and a goal-level offset per division, so promoted teams start from
+their second-division rating. It is chosen only if it wins on validation and
+the whole tuned model then passes the test window; `pool_with` in
+`league_params.json` makes the daily publish train the same way.
+
+`scorerecord-model-compare.timer` runs the gate on the 1st of every month
+(about an hour of CPU at `Nice=15`). It refreshes the comparison on
+`/desempeno` and never writes `league_params.json`.
 
 ## Homeserver Deploy
 

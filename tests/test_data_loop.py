@@ -279,6 +279,27 @@ def test_artifact_is_reused_when_no_new_results() -> None:
     assert conn.execute("SELECT COUNT(*) FROM model_artifact").fetchone()[0] == 1
 
 
+def test_pooled_league_trains_on_its_second_division_and_forecasts_its_own_fixtures(
+    monkeypatch,
+) -> None:
+    from scorerecord.models import league_params
+
+    pooled = league_params.ModelConfig(pool_with=("CHAMPIONSHIP",))
+    monkeypatch.setattr(league_params, "league_config", lambda league, path=None: pooled)
+    conn = _conn()
+    for index in range(40):
+        _history(conn, f"epl-{index}", "2026-05-01")
+    for index in range(10):
+        _history(conn, f"ch-{index}", "2026-04-01", league="CHAMPIONSHIP")
+    _fixture(conn, "soon", "2026-11-15T15:00:00Z")
+
+    summary = publish_fixture_predictions(conn, league="EPL", as_of_utc=NOW, horizon_days=21)
+
+    assert summary.predicted_fixtures == 1
+    artifact = conn.execute("SELECT training_rows FROM model_artifact").fetchone()
+    assert artifact["training_rows"] == 50
+
+
 # -------------------------------------------------------------- snapshots
 
 
