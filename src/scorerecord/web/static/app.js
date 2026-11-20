@@ -28,11 +28,13 @@
     });
   }
 
-  // Keep the selected day visible in the horizontal date strip.
-  var activeDay = document.querySelector(".day.is-active");
-  if (activeDay && activeDay.parentElement) {
-    var strip = activeDay.parentElement;
-    strip.scrollLeft = activeDay.offsetLeft - strip.offsetLeft - (strip.clientWidth - activeDay.offsetWidth) / 2;
+  // Keep the selected day and league visible in their horizontal strips
+  // (ten league chips do not fit on a phone).
+  var active = document.querySelectorAll(".day.is-active, .chips .chip.is-active");
+  for (var i = 0; i < active.length; i++) {
+    var strip = active[i].parentElement;
+    if (!strip || strip.scrollWidth <= strip.clientWidth) continue;
+    strip.scrollLeft = active[i].offsetLeft - strip.offsetLeft - (strip.clientWidth - active[i].offsetWidth) / 2;
   }
 
   // Tooltips for any element with data-tip (chart marks, chips).

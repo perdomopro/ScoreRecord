@@ -157,9 +157,11 @@ historical ROI harness, not a direct World Cup profitability proof.
 Mexico/Liga MX, MLS, Brazil Serie A, and Argentina Liga Profesional are wired as
 Football-Data `/new/*.csv` current feeds. Use one explicit `--season` label and audit
 coverage before treating them as anything more than forecasting/product candidates.
-Argentina and Brasileirao are configured as domestic pilot candidates. Champions
-League, Europa League, Libertadores, and Sudamericana are provider watchlist
-competitions until ScoreRecord has league-scoped historical artifacts for them.
+The dashboard and the daily loop cover ten leagues: Liga MX, MLS, Premier League,
+LaLiga, Serie A, Bundesliga, Ligue 1, Championship, Argentina and Brasileirao.
+Champions League, Europa League, Libertadores, and Sudamericana are provider
+watchlist competitions until ScoreRecord has league-scoped historical artifacts
+for them. See "Adding a league" in `docs/runbook.md`.
 See `docs/data_sources.md` and `docs/match_evaluation_pipeline.md`.
 Use `--season` on historical backtests only when you intentionally want to evaluate one
 season; omit it to evaluate all loaded seasons inside `--from/--to`.

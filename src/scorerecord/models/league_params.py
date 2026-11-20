@@ -85,11 +85,21 @@ def write_params(
     generated_utc: str,
     path: Path = PARAMS_PATH,
 ) -> None:
+    """Write the settings of ``leagues``, keeping every other league already in the file.
+
+    Each league records the report it came from, so a run over a subset of
+    leagues does not erase or misattribute the others.
+    """
+    existing: dict[str, object] = {}
+    if path.exists():
+        existing = dict(json.loads(path.read_text(encoding="utf-8")).get("leagues") or {})
+    for league, config in leagues.items():
+        existing[league] = {**config.as_dict(), "report": report}
     payload = {
         "generated_utc": generated_utc,
         "source": source,
         "report": report,
-        "leagues": {league: config.as_dict() for league, config in sorted(leagues.items())},
+        "leagues": dict(sorted(existing.items())),
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
     _load.cache_clear()

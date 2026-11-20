@@ -290,3 +290,20 @@ def test_dashboard_explains_the_pooled_variant() -> None:
     note = data._pooling_note(details)
     assert note and "Championship" in note and "no se adopta" in note
     assert data._pooling_note({"league_name": "MLS"}) is None
+
+
+def test_write_params_keeps_leagues_outside_the_run(tmp_path: Path) -> None:
+    path = tmp_path / "league_params.json"
+    epl = ModelConfig(half_life_years=2.0, l2=3.0)
+    league_params.write_params(
+        {"EPL": epl}, source="t", report="first.json", generated_utc="2026-11-20T00:00:00+00:00", path=path
+    )
+    serie_a = ModelConfig(half_life_years=1.0, ou_beats_base=False)
+    league_params.write_params(
+        {"SERIE_A": serie_a}, source="t", report="second.json", generated_utc="2026-11-21T00:00:00+00:00", path=path
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["leagues"]["EPL"]["report"] == "first.json"
+    assert data["leagues"]["SERIE_A"]["report"] == "second.json"
+    assert league_params.league_config("EPL", path=path) == epl
+    assert league_params.league_config("SERIE_A", path=path) == serie_a

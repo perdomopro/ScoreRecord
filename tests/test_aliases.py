@@ -136,3 +136,25 @@ def test_brasileirao_provider_aliases_resolve_to_seeded_clubs() -> None:
         team_id = get_or_create_team(conn, provider_name)
         row = conn.execute("SELECT canonical FROM team WHERE team_id = ?", (team_id,)).fetchone()
         assert row["canonical"] == canonical
+
+
+def test_seeded_aliases_have_unique_keys_and_join_provider_and_football_data_names() -> None:
+    from scorerecord.aliases import SEED_ALIASES
+
+    owners: dict[str, str] = {}
+    for canonical, aliases in SEED_ALIASES.items():
+        for name in (canonical, *aliases):
+            key = normalize_key(name)
+            assert owners.setdefault(key, canonical) == canonical, (name, owners[key], canonical)
+
+    conn = _conn()
+    # Football-Data history already holds "Inter" and "Paris SG".
+    inter_id = get_or_create_team(conn, "Inter")
+    psg_id = get_or_create_team(conn, "Paris SG")
+    seed_team_aliases(conn)
+    assert get_or_create_team(conn, "Inter Milano") == inter_id
+    assert get_or_create_team(conn, "Paris Saint-Germain") == psg_id
+    # A promoted club new to the database gets one team for both spellings.
+    assert get_or_create_team(conn, "RC Deportivo de A Coruna") == get_or_create_team(
+        conn, "La Coruna"
+    )

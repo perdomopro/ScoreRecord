@@ -37,3 +37,27 @@ def test_odds_api_io_slugs_are_catalog_backed() -> None:
         league_config("EUROPA_LEAGUE").odds_api_io_slug
         == "international-clubs-uefa-europa-league-qualification"
     )
+
+
+def test_european_leagues_are_configured_end_to_end() -> None:
+    from scorerecord.ingest.football_data import FOOTBALL_DATA_LEAGUES
+    from scorerecord.league_config import CLUB_FORECAST_LEAGUES
+
+    expected = {
+        "LA_LIGA": ("spain-laliga", "SP1", "LaLiga"),
+        "SERIE_A": ("italy-serie-a", "I1", "Serie A"),
+        "BUNDESLIGA": ("germany-bundesliga", "D1", "Bundesliga"),
+        "LIGUE_1": ("france-ligue-1", "F1", "Ligue 1"),
+        "CHAMPIONSHIP": ("england-championship", "E1", "Championship"),
+    }
+    for code, (slug, fd_code, label) in expected.items():
+        config = league_config(code)
+        assert config.odds_api_io_slug == slug
+        assert FOOTBALL_DATA_LEAGUES[config.football_data_alias] == fd_code
+        assert league_label(code) == label
+        assert code in GUI_LEAGUE_ORDER and code in CLUB_FORECAST_LEAGUES
+        assert gui_league_filter(slug.replace("-", "_")) in (code, "ALL")
+    assert normalize_league_code("laliga") == "LA_LIGA"
+    assert normalize_league_code("ligue-1") == "LIGUE_1"
+    # Every dashboard league can be refreshed by the daily loop.
+    assert set(GUI_LEAGUE_ORDER) <= set(CLUB_FORECAST_LEAGUES)

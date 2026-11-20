@@ -309,6 +309,7 @@ def main(argv: list[str] | None = None) -> int:
     fixtures_odds_io.add_argument(
         "--dry-run", action="store_true", help="Do not write fixture changes"
     )
+    fixtures_odds_io.add_argument("--json", action="store_true", help="Print the result as JSON")
 
     epl_pilot = subparsers.add_parser(
         "run-epl-pilot-refresh", help="Controlled daily refresh for EPL pilot."
@@ -758,6 +759,9 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "migrate-db":
             version = migrate_db(conn)
+            # Reference data travels with the code: new SEED_ALIASES reach the
+            # server on the next deploy, which always runs migrate-db.
+            seed_team_aliases(conn)
             print(f"Applied database migrations through version {version}")
             return 0
 

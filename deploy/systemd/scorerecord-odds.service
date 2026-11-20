@@ -12,4 +12,4 @@ MemoryMax=300M
 Nice=10
 IOSchedulingClass=idle
 # Fixtures already carry the provider event id, so no league slug is needed.
-ExecStart=/home/adrian/scorerecord/.venv/bin/scorerecord fetch-odds --horizon-hours 48 --max-requests 40
+ExecStart=/home/adrian/scorerecord/.venv/bin/scorerecord fetch-odds --horizon-hours 48 --max-requests 60

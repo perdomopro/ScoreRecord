@@ -152,7 +152,7 @@ pipeline de apuestas en papel.
 | 2 Higiene | Hecho salvo los 256 avisos de `ruff` y la división de `cli.py` |
 | 3 GUI | Hecho en código (ver abajo); sin desplegar |
 | 4 | Puerta, decisiones por liga y prior para ascendidos (probado, no adoptado) hechos; corrida mensual de la puerta. Faltan tiros/xG, ensamble e intervalos |
-| 5 | Sin empezar |
+| 5 | Ligas europeas hechas (ver «Fase 5»). Faltan copas, córners y tarjetas, notificación diaria |
 
 Fase 3, implementada el 2026-11-19 en `src/scorerecord/web` (reemplaza a
 `gui.py`): Jinja2 sobre el servidor de la librería estándar (una sola dependencia
@@ -414,8 +414,38 @@ mercado y consenso — sin lenguaje de valor ni de apuesta.
 
 ## Fase 5 — Ampliaciones
 
-- La Liga, Serie A, Bundesliga, Ligue 1 y Championship ya tienen histórico con
-  tiros en la base; solo faltan slugs del proveedor y alias.
+### Ligas europeas — hecho (2026-11-20)
+
+LaLiga, Serie A, Bundesliga, Ligue 1 y Championship están en el panel, en la
+corrida diaria y en `ingest-results`. Slugs verificados contra `/leagues` de
+odds-api.io; los 102 nombres de equipo del proveedor se resuelven por
+`SEED_ALIASES`, que `migrate-db` aplica en cada deploy (crea con su nombre de
+Football-Data los 8 ascendidos que no estaban en la base). El procedimiento
+quedó en el runbook («Adding a league»).
+
+Puerta de comparación con la temporada 2026-27 incluida
+(`docs/reports/model_compare_20261120T192341Z.json`, prueba desde 2025-07):
+
+| Liga | Partidos de prueba | Modelo vs promedio liga (1X2) | Mercado (cierre), 1X2 | Más/Menos y ambos anotan |
+| --- | --- | --- | --- | --- |
+| LaLiga | 499 | 0.963 vs 1.057 | 0.951 | no superan al promedio |
+| Serie A | 490 | 0.975 vs 1.081 | 0.962 | no superan al promedio |
+| Bundesliga | 387 | 0.975 vs 1.068 | 0.955 | no superan al promedio |
+| Ligue 1 | 396 | 0.988 vs 1.067 | 0.969 | no superan al promedio |
+| Championship | 732 | 1.090 vs 1.082 | 1.040 | no superan al promedio |
+
+- Ningún ajuste superó al modelo por defecto: las cinco usan vida media de 3
+  años y ridge 1, y el mercado pesa 100% donde hay cuotas.
+- En las cuatro primeras divisiones el modelo aporta mucho más que en las
+  ligas americanas: el favorito es más claro.
+- En la Championship el modelo no supera al promedio de la liga. Ahí la
+  lectura depende de las cuotas; un candidato es entrenarla junto con la
+  Premier y la League One (sin datos de League One en la base todavía).
+- `write_params` ahora conserva las ligas que no están en la corrida y anota
+  el reporte de cada una.
+
+### Pendiente
+
 - Copas continentales con política de entrenamiento propia.
 - Córners y tarjetas una vez que 4.2-g dé cobertura de estadísticas.
 - Notificación diaria opcional con los partidos del día.
@@ -440,6 +470,4 @@ rediseño depende de tener resultados y pronósticos liquidados que mostrar.
    estándar, sin Starlette ni uvicorn.
 3. **Cuotas en la interfaz.** Resuelto: modelo, mercado y una lectura combinada.
 4. **Pipeline de apuestas en papel.** Resuelto: archivado.
-5. **Ligas.** Pendiente: ¿se añaden ya las cinco europeas que tienen histórico?
-   Cada liga suma una petición diaria al proveedor de cuotas y unos 2 minutos
-   de CPU a la corrida diaria.
+5. **Ligas.** Resuelto: se añadieron las cinco europeas (2026-11-20).

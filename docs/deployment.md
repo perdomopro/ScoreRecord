@@ -23,7 +23,7 @@ indefinitely.
 | Unit | Schedule | Does |
 | --- | --- | --- |
 | `scorerecord-club-refresh.timer` | daily 05:35 (+20 min jitter) | `scripts/run_daily_club_forecast.sh`: `backup-db`, `ingest-results` per league, `build-elo` once, `run-club-pilot-refresh --skip-elo --horizon-days 21` per league, `freeze-forecast-snapshot --window-hours 36 --include-result`, `settle-fixtures`, `settle-forecast-snapshots`, `prune-predictions`, `db-health` |
-| `scorerecord-odds.timer` | every 3 h | `fetch-odds --horizon-hours 48 --max-requests 40` by provider event id |
+| `scorerecord-odds.timer` | every 3 h | `fetch-odds --horizon-hours 48 --max-requests 60` by provider event id |
 | `scorerecord-postmatch.timer` | daily 23:30 | `ingest-results`, `settle-fixtures`, `settle-forecast-snapshots` |
 | `scorerecord-weekly.timer` | Sunday 09:00 | performance report, `goal-markets`, `calibrator-drift`, `db-summary` |
 | `scorerecord-model-compare.timer` | 1st of the month 01:30 | `model-compare` (evidence for `/desempeno`; does not change production settings) |
@@ -136,6 +136,8 @@ Set the odds API key without writing it to git or shell history:
   finish, so `ingest-results` downloads the current Football-Data file per
   league and copies scores onto fixtures by league, teams, and date (±2 days).
   Some feeds (Brasileirao, Liga MX) publish several days late.
+- **The odds plan allows 100 requests per hour.** The daily loop uses one per
+  league slug (13 for the ten leagues); each odds run uses at most 60.
 - **The odds plan allows one bookmaker (Unibet)** and returns 1X2 and
   both-teams-score, not totals. `fetch-odds` intersects `ODDS_API_IO_BOOKMAKERS`
   with `/bookmakers/selected`, because a single paid-only name makes the
@@ -148,7 +150,7 @@ cd /home/adrian/scorerecord
 bash deploy/bootstrap_homeserver.sh        # venv, .env from .env.example, units
 nano .env                                  # ODDS_API_IO_KEY, SCORERECORD_GUI_HOST
 .venv/bin/scorerecord ingest-history
-for L in LIGA_MX MLS EPL ARGENTINA BRASILEIRAO; do .venv/bin/scorerecord ingest-results --league $L; done
+.venv/bin/scorerecord ingest-results            # every dashboard league
 .venv/bin/scorerecord build-elo
 systemctl --user start scorerecord-gui.service scorerecord-club-refresh.timer \
   scorerecord-odds.timer scorerecord-postmatch.timer scorerecord-weekly.timer \

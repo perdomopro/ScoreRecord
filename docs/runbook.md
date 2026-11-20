@@ -174,13 +174,22 @@ scorerecord fixture-summary --limit 12
 
 Supported GUI club presets (`src/scorerecord/league_config.py`):
 
-- `LIGA_MX`: odds-api.io slug `mexico-liga-mx-apertura` (Apertura only; the
-  Clausura needs a different slug)
-- `MLS`: odds-api.io slug `usa-mls`
-- `EPL`: odds-api.io slug `england-premier-league`
-- `ARGENTINA`: odds-api.io slug `argentina-primera-lpf-clausura` (returns no
-  events as of 2026-11-13)
-- `BRASILEIRAO`: odds-api.io slug `brazil-brasileiro-serie-a`
+| Code | odds-api.io slugs | Football-Data file |
+| --- | --- | --- |
+| `LIGA_MX` | `mexico-liga-mx-apertura`, `mexico-liga-mx-clausura` | `new/MEX.csv` |
+| `MLS` | `usa-mls`, `usa-mls-playoffs` | `new/USA.csv` |
+| `EPL` | `england-premier-league` | `E0` |
+| `LA_LIGA` | `spain-laliga` | `SP1` |
+| `SERIE_A` | `italy-serie-a` | `I1` |
+| `BUNDESLIGA` | `germany-bundesliga` | `D1` |
+| `LIGUE_1` | `france-ligue-1` | `F1` |
+| `CHAMPIONSHIP` | `england-championship` | `E1` |
+| `ARGENTINA` | `argentina-primera-lpf-clausura`, `argentina-primera-lpf-clausura-playoffs` | `new/ARG.csv` |
+| `BRASILEIRAO` | `brazil-brasileiro-serie-a` | `new/BRA.csv` |
+
+Slugs are checked against odds-api.io `/leagues`. The account allows 100
+requests per hour: the daily loop uses one per slug (13), each `fetch-odds`
+run at most 60.
 
 The daily production loop is `scripts/run_daily_club_forecast.sh`. Its steps can
 be run by hand:
@@ -200,6 +209,23 @@ scorerecord db-health --strict
 `ingest-results` never creates teams. If Football-Data uses a club name with no
 alias, the bridge reports it under `missing_teams` and that league stays stale
 until the alias is added.
+
+### Adding a league
+
+1. Add a `LeagueConfig` in `src/scorerecord/league_config.py` with the
+   odds-api.io slug and the Football-Data code, and add the code to
+   `GUI_LEAGUE_ORDER` and to `LEAGUES` in `scripts/run_daily_club_forecast.sh`.
+2. Map every odds-api.io team name to the Football-Data name in
+   `SEED_ALIASES` (`src/scorerecord/aliases.py`). `run-club-pilot-refresh`
+   lists the names it cannot resolve under `unmapped_names`. Promoted clubs
+   that are new to the database are created by the seed with their
+   Football-Data name.
+3. Deploy. `migrate-db` (run by every deploy) seeds the aliases.
+4. On the server: `ingest-results --league <CODE>` and `build-elo`. Past
+   seasons, if missing, need `ingest-football-data` and `bridge-club-history`.
+5. `model-compare --leagues <CODE> --write-params` decides the league's
+   settings; other leagues in `league_params.json` are kept. Commit the file
+   and deploy again. Until then the league uses the defaults.
 
 First-time setup for Liga MX or MLS requires historical rows, bridge, ratings,
 fixtures, and predictions:
